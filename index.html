@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
-    <title>视频数据库 - monsnode</title>
+    <title>瑙嗛鏁版嵁搴?- monsnode</title>
     <style>
         :root {
             --bg: #0f0f11;
@@ -100,35 +100,35 @@
     <header class="header">
         <a href="/" class="header-logo">Video<span>DB</span></a>
         <div class="search-box">
-            <span class="search-icon">🔍</span>
-            <input type="text" id="searchInput" placeholder="搜索视频标题..." autocomplete="off">
+            <span class="search-icon">馃攳</span>
+            <input type="text" id="searchInput" placeholder="鎼滅储瑙嗛鏍囬..." autocomplete="off">
         </div>
-        <span class="header-stats" id="headerStats">加载中...</span>
-        <button id="refreshBtn" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);cursor:pointer;font-size:13px;">刷新</button>
+        <span class="header-stats" id="headerStats">鍔犺浇涓?..</span>
+        <button id="refreshBtn" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);cursor:pointer;font-size:13px;">鍒锋柊</button>
     </header>
 
     <main class="container">
         <div class="video-grid" id="videoGrid">
             <div class="loading" style="grid-column: 1 / -1;">
                 <div class="spinner"></div>
-                <p>正在连接数据库...</p>
+                <p>姝ｅ湪杩炴帴鏁版嵁搴?..</p>
             </div>
         </div>
         <div id="statusArea"></div>
         <div class="load-more-wrap" id="loadMoreWrap" style="display:none;">
-            <button class="load-more-btn" id="loadMoreBtn">加载更多</button>
+            <button class="load-more-btn" id="loadMoreBtn">鍔犺浇鏇村</button>
         </div>
     </main>
 
     <script>
     // ============================================================
-    // 配置
+    // 閰嶇疆
     // ============================================================
     const SUPABASE_URL = 'https://fejspvbckgkbmfyoxiub.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
 
     // ============================================================
-    // Supabase REST API 封装 (零外部依赖, 直接用 fetch)
+    // Supabase REST API 灏佽 (闆跺閮ㄤ緷璧? 鐩存帴鐢?fetch)
     // ============================================================
     const API = {
         _headers() {
@@ -139,12 +139,12 @@
             };
         },
 
-        // 查询视频列表 (支持搜索、分页)
+        // 鏌ヨ瑙嗛鍒楄〃 (鏀寔鎼滅储銆佸垎椤?
         async getVideos(page, search, pageSize) {
             var from = (page - 1) * pageSize;
             var to = from + pageSize - 1;
 
-            // 构建查询参数
+            // 鏋勫缓鏌ヨ鍙傛暟
             var params = 'select=*';
             if (search && search.trim()) {
                 params += '&title=ilike.*' + encodeURIComponent(search.trim()) + '*';
@@ -153,16 +153,16 @@
             params += '&limit=' + pageSize;
             params += '&offset=' + from;
 
-            // 同时发两个请求: 数据 + 总数
+            // 鍚屾椂鍙戜袱涓姹? 鏁版嵁 + 鎬绘暟
             var headers = this._headers();
 
-            // 数据请求
+            // 鏁版嵁璇锋眰
             var dataResp = fetch(
                 SUPABASE_URL + '/rest/v1/videos?' + params,
                 { method: 'GET', headers: headers }
             );
 
-            // 总数请求
+            // 鎬绘暟璇锋眰
             var countHeaders = Object.assign({}, headers, { 'Prefer': 'count=exact' });
             var countParams = 'select=*';
             if (search && search.trim()) {
@@ -196,7 +196,7 @@
             return { data: data || [], count: count };
         },
 
-        // 获取总数
+        // 鑾峰彇鎬绘暟
         async getCount() {
             var headers = Object.assign({}, this._headers(), { 'Prefer': 'count=exact' });
             var resp = await fetch(
@@ -215,8 +215,7 @@
     };
 
     // ============================================================
-    // 全局状态
-    // ============================================================
+    // 鍏ㄥ眬鐘舵€?    // ============================================================
     var PAGE_SIZE = 24;
     var currentPage = 1;
     var totalCount = 0;
@@ -235,7 +234,7 @@
     var headerStats = document.getElementById('headerStats');
 
     // ============================================================
-    // 渲染
+    // 娓叉煋
     // ============================================================
     function esc(str) {
         if (!str) return '';
@@ -279,9 +278,9 @@
             videoGrid.innerHTML =
                 '<div class="empty-state" style="grid-column: 1 / -1;">' +
                     '<div class="icon">No Data</div>' +
-                    '<p>' + (searchQuery ? '没有找到匹配的视频' : '暂无视频数据') + '</p>' +
+                    '<p>' + (searchQuery ? '娌℃湁鎵惧埌鍖归厤鐨勮棰? : '鏆傛棤瑙嗛鏁版嵁') + '</p>' +
                     '<p style="font-size:13px;margin-top:8px;">' +
-                        (searchQuery ? '试试其他关键词' : '等待爬虫首次运行后就会有数据啦') +
+                        (searchQuery ? '璇曡瘯鍏朵粬鍏抽敭璇? : '绛夊緟鐖櫕棣栨杩愯鍚庡氨浼氭湁鏁版嵁鍟?) +
                     '</p>' +
                 '</div>';
             loadMoreWrap.style.display = 'none';
@@ -296,7 +295,7 @@
     }
 
     // ============================================================
-    // 加载逻辑
+    // 鍔犺浇閫昏緫
     // ============================================================
     async function loadVideos(reset) {
         if (isLoading) return;
@@ -312,7 +311,7 @@
         try {
             var result = await API.getVideos(currentPage, searchQuery, PAGE_SIZE);
             totalCount = result.count;
-            headerStats.textContent = '共 ' + totalCount.toLocaleString() + ' 个视频';
+            headerStats.textContent = '鍏?' + totalCount.toLocaleString() + ' 涓棰?;
 
             renderVideos(result.data, currentPage > 1);
 
@@ -321,10 +320,10 @@
         } catch (e) {
             videoGrid.innerHTML =
                 '<div class="error-msg" style="grid-column: 1 / -1;">' +
-                    '<p>加载失败</p>' +
+                    '<p>鍔犺浇澶辫触</p>' +
                     '<p style="font-size:13px;margin-top:8px;">' + esc(e.message) + '</p>' +
                 '</div>';
-            headerStats.textContent = '连接失败';
+            headerStats.textContent = '杩炴帴澶辫触';
         } finally {
             isLoading = false;
             loadMoreBtn.disabled = false;
@@ -334,26 +333,26 @@
     async function loadMore() {
         currentPage++;
         loadMoreBtn.disabled = true;
-        loadMoreBtn.textContent = '加载中...';
+        loadMoreBtn.textContent = '鍔犺浇涓?..';
 
         try {
             var result = await API.getVideos(currentPage, searchQuery, PAGE_SIZE);
             totalCount = result.count;
-            headerStats.textContent = '共 ' + totalCount.toLocaleString() + ' 个视频';
+            headerStats.textContent = '鍏?' + totalCount.toLocaleString() + ' 涓棰?;
             renderVideos(result.data, true);
 
             var hasMore = result.data.length >= PAGE_SIZE;
             loadMoreWrap.style.display = hasMore ? 'block' : 'none';
         } catch (e) {
-            alert('加载失败: ' + e.message);
+            alert('鍔犺浇澶辫触: ' + e.message);
         } finally {
             loadMoreBtn.disabled = false;
-            loadMoreBtn.textContent = '加载更多';
+            loadMoreBtn.textContent = '鍔犺浇鏇村';
         }
     }
 
     // ============================================================
-    // 搜索
+    // 鎼滅储
     // ============================================================
     searchInput.addEventListener('input', function() {
         clearTimeout(searchTimer);
@@ -365,25 +364,25 @@
     });
 
     // ============================================================
-    // 事件
+    // 浜嬩欢
     // ============================================================
     loadMoreBtn.addEventListener('click', loadMore);
     document.getElementById('refreshBtn').addEventListener('click', function() { loadVideos(true); });
 
     // ============================================================
-    // 启动
+    // 鍚姩
     // ============================================================
     (async function boot() {
-        // 获取总数
+        // 鑾峰彇鎬绘暟
         try {
             var n = await API.getCount();
             totalCount = n;
-            headerStats.textContent = '共 ' + n.toLocaleString() + ' 个视频';
+            headerStats.textContent = '鍏?' + n.toLocaleString() + ' 涓棰?;
         } catch (e) {
-            headerStats.textContent = '连接失败';
+            headerStats.textContent = '杩炴帴澶辫触';
         }
 
-        // 加载视频列表
+        // 鍔犺浇瑙嗛鍒楄〃
         loadVideos(true);
     })();
     </script>
