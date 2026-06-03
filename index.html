@@ -2,228 +2,338 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="referrer" content="no-referrer">
+    <meta name="theme-color" content="#faf8ef">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>2048 在线小游戏</title>
     <style>
         :root {
-            --bg: #faf8ef;
-            --text: #776e65;
-            --board-bg: #bbada0;
-            --cell-empty: #cdc1b4;
-            --accent: #f65e3b;
+            --bg: #faf8ef; --text: #776e65; --board-bg: #bbada0;
+            --cell-empty: #cdc1b4; --accent: #f65e3b;
+            --vbg: #0a0a0e; --vcard: #121218; --vborder: #1a1a22;
+            --vtext: #d4d4d8; --vmuted: #52525b; --vprimary: #6366f1;
+            --vprimary-hover: #818cf8; --vheader: rgba(10,10,14,0.92);
         }
         * { margin:0; padding:0; box-sizing:border-box; }
         body {
-            font-family: "Clear Sans", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+            font-family: "Clear Sans","Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
             background: var(--bg); color: var(--text); min-height: 100vh;
             -webkit-tap-highlight-color: transparent; user-select: none;
-            overflow-x: hidden;
+            overflow-x: hidden; transition: background 0.4s, color 0.4s;
         }
-        /* ============ 页面切换动画 ============ */
-        .view-container {
-            position: relative; min-height: 100vh;
-            transition: opacity 0.4s, transform 0.4s;
-        }
-        body.dark-mode .view-game { opacity: 0; pointer-events: none; transform: scale(0.95); position: absolute; width: 100%; }
-        body.dark-mode .view-video { opacity: 1; pointer-events: auto; transform: scale(1); }
-        .view-video { opacity: 0; pointer-events: none; transform: scale(0.95); position: absolute; width: 100%; top: 0; }
-        .view-game { opacity: 1; transform: scale(1); }
-        body.dark-mode { --bg: #0a0a0e; background: #0a0a0e; }
+
+        /* ============ 页面切换 ============ */
+        .view-game, .view-video { transition: opacity 0.4s, transform 0.4s, visibility 0s 0.4s; }
+        body.dark-mode .view-game { opacity:0; pointer-events:none; transform:scale(0.95); visibility:hidden; }
+        body.dark-mode .view-video { opacity:1; pointer-events:auto; transform:scale(1); visibility:visible; }
+        .view-video { opacity:0; pointer-events:none; transform:scale(0.95); visibility:hidden; position:fixed; inset:0; overflow-y:auto; }
+        .view-game { opacity:1; transform:scale(1); visibility:visible; }
 
         /* ============ 游戏视图 ============ */
-        .game-wrapper {
-            max-width: 500px; margin: 0 auto; padding: 24px 16px; text-align: center;
-        }
-        .game-top-bar {
-            display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;
-        }
+        .game-wrapper { max-width:500px; margin:0 auto; padding:24px 16px; text-align:center; }
+        .game-top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
         .game-logo {
-            font-size: 68px; font-weight: 800; color: var(--accent); cursor: pointer;
-            letter-spacing: -2px; line-height: 1; position: relative;
-            transition: transform 0.2s, text-shadow 0.2s;
-            text-shadow: 0 4px 0 #d94a2b;
+            font-size:68px; font-weight:800; color:var(--accent); cursor:pointer;
+            letter-spacing:-2px; line-height:1; text-shadow:0 4px 0 #d94a2b;
+            transition:transform 0.2s; position:relative;
         }
-        .game-logo:hover { transform: scale(1.05); }
-        .game-logo:active { transform: scale(0.95); }
-        .game-scores { display: flex; gap: 8px; }
+        .game-logo:hover { transform:scale(1.05); }
+        .game-logo:active { transform:scale(0.95); }
+        .game-logo .click-hint {
+            position:absolute; bottom:-14px; left:50%; transform:translateX(-50%);
+            font-size:9px; font-weight:400; letter-spacing:0; color:#bbada0;
+            text-shadow:none; white-space:nowrap; opacity:0; transition:opacity 0.3s;
+        }
+        .game-logo:hover .click-hint { opacity:1; }
+        .game-scores { display:flex; gap:8px; }
         .score-card {
-            background: var(--board-bg); color: #fff; padding: 8px 16px; border-radius: 4px;
-            text-align: center; min-width: 72px; position: relative;
+            background:var(--board-bg); color:#fff; padding:8px 16px; border-radius:4px;
+            text-align:center; min-width:72px; position:relative;
         }
-        .score-card .label { font-size: 10px; text-transform: uppercase; opacity: 0.7; letter-spacing: 1px; }
-        .score-card .value { font-size: 22px; font-weight: 700; display: block; }
+        .score-card .label { font-size:10px; text-transform:uppercase; opacity:0.7; letter-spacing:1px; }
+        .score-card .value { font-size:22px; font-weight:700; display:block; transition:transform 0.15s; }
+        .score-card .value.pop { transform:scale(1.3); }
         .score-card .plus {
-            position: absolute; top: -8px; right: -4px; color: #edc22e;
-            font-size: 16px; font-weight: 700; opacity: 0; transition: all 0.3s;
+            position:absolute; top:-6px; right:-2px; color:#edc22e; font-size:16px;
+            font-weight:700; opacity:0; transition:all 0.35s cubic-bezier(0.4,0,0.2,1);
+            pointer-events:none;
         }
-        .score-card .plus.show { opacity: 1; top: -20px; }
+        .score-card .plus.show { opacity:1; top:-24px; animation:floatUp 0.5s; }
+        @keyframes floatUp { 0%{opacity:1;transform:translateY(0)} 100%{opacity:0;transform:translateY(-16px)} }
         .btn {
-            background: #8f7a66; color: #fff; border: none; padding: 10px 20px;
-            border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600;
-            transition: background 0.2s, transform 0.15s;
+            background:#8f7a66; color:#fff; border:none; padding:10px 20px;
+            border-radius:4px; font-size:14px; cursor:pointer; font-weight:600;
+            transition:background 0.2s,transform 0.15s;
         }
-        .btn:hover { background: #9f8b77; }
-        .btn:active { transform: scale(0.95); }
-        .game-subtitle { font-size: 14px; color: #a09487; margin-bottom: 20px; }
-        .game-subtitle b { color: var(--accent); }
-        .board-wrap { position: relative; max-width: 420px; margin: 0 auto; }
+        .btn:hover { background:#9f8b77; }
+        .btn:active { transform:scale(0.95); }
+        .btn.undo-btn { background:#bbada0; font-size:12px; padding:8px 14px; margin-left:8px; }
+        .btn.undo-btn:disabled { opacity:0.4; cursor:default; }
+        .game-subtitle { font-size:14px; color:#a09487; margin-bottom:20px; }
+        .game-subtitle b { color:var(--accent); }
+        .board-wrap { position:relative; max-width:420px; margin:0 auto; }
         .board {
-            position: relative; background: var(--board-bg); border-radius: 8px;
-            padding: 12px; display: grid; grid-template-columns: repeat(4, 1fr);
-            gap: 12px; aspect-ratio: 1; box-shadow: 0 8px 0 #9b8b7b, 0 10px 24px rgba(0,0,0,0.15);
+            position:relative; background:var(--board-bg); border-radius:8px;
+            padding:12px; display:grid; grid-template-columns:repeat(4,1fr);
+            gap:12px; aspect-ratio:1; box-shadow:0 8px 0 #9b8b7b,0 10px 24px rgba(0,0,0,0.15);
+            touch-action:none;
         }
         .cell {
-            background: var(--cell-empty); border-radius: 4px; display: flex;
-            align-items: center; justify-content: center; font-size: 32px;
-            font-weight: 700; transition: all 0.12s ease-in-out;
-            animation: cellPop 0.15s;
+            background:var(--cell-empty); border-radius:4px; display:flex;
+            align-items:center; justify-content:center; font-size:32px;
+            font-weight:700; transition:all 0.12s ease-in-out;
+            animation:cellPop 0.18s cubic-bezier(0.4,0,0.2,1);
         }
-        @keyframes cellPop { 0%{transform:scale(0)} 70%{transform:scale(1.1)} 100%{transform:scale(1)} }
+        @keyframes cellPop { 0%{transform:scale(0);opacity:0} 50%{transform:scale(1.15)} 100%{transform:scale(1);opacity:1} }
+        .cell.cell-merge { animation:mergePop 0.2s; }
+        @keyframes mergePop { 0%{transform:scale(1)} 40%{transform:scale(1.25)} 100%{transform:scale(1)} }
         .cell-2    { background:#eee4da; color:#776e65; }
         .cell-4    { background:#ede0c8; color:#776e65; }
         .cell-8    { background:#f2b179; color:#f9f6f2; }
         .cell-16   { background:#f59563; color:#f9f6f2; }
         .cell-32   { background:#f67c5f; color:#f9f6f2; }
         .cell-64   { background:#f65e3b; color:#f9f6f2; }
-        .cell-128  { background:#edcf72; color:#f9f6f2; font-size:26px; box-shadow: 0 0 10px rgba(237,207,114,0.4); }
-        .cell-256  { background:#edcc61; color:#f9f6f2; font-size:26px; box-shadow: 0 0 12px rgba(237,204,97,0.4); }
-        .cell-512  { background:#edc850; color:#f9f6f2; font-size:26px; box-shadow: 0 0 14px rgba(237,200,80,0.5); }
-        .cell-1024 { background:#edc53f; color:#f9f6f2; font-size:20px; box-shadow: 0 0 16px rgba(237,197,63,0.5); }
-        .cell-2048 { background:#edc22e; color:#f9f6f2; font-size:20px; box-shadow: 0 0 20px rgba(237,194,46,0.6); animation: glow 1s infinite alternate; }
-        .cell-super{ background:#3c3a32; color:#f9f6f2; font-size:16px; box-shadow: 0 0 20px rgba(60,58,50,0.8); }
-        @keyframes glow { from{box-shadow: 0 0 20px rgba(237,194,46,0.4)} to{box-shadow: 0 0 32px rgba(237,194,46,0.8)} }
+        .cell-128  { background:#edcf72; color:#f9f6f2; font-size:26px; box-shadow:0 0 10px rgba(237,207,114,0.3); }
+        .cell-256  { background:#edcc61; color:#f9f6f2; font-size:26px; box-shadow:0 0 12px rgba(237,204,97,0.4); }
+        .cell-512  { background:#edc850; color:#f9f6f2; font-size:26px; box-shadow:0 0 14px rgba(237,200,80,0.5); }
+        .cell-1024 { background:#edc53f; color:#f9f6f2; font-size:20px; box-shadow:0 0 18px rgba(237,197,63,0.5); }
+        .cell-2048 { background:#edc22e; color:#f9f6f2; font-size:20px; box-shadow:0 0 24px rgba(237,194,46,0.6); animation:glow 1s infinite alternate; }
+        .cell-super{ background:#3c3a32; color:#f9f6f2; font-size:16px; box-shadow:0 0 20px rgba(60,58,50,0.8); }
+        @keyframes glow { from{box-shadow:0 0 20px rgba(237,194,46,0.4)} to{box-shadow:0 0 36px rgba(237,194,46,0.8)} }
         .overlay {
-            position: absolute; inset: 0; background: rgba(238,228,218,0.75); border-radius: 8px;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            z-index: 10; animation: fadeIn 0.4s;
+            position:absolute; inset:0; background:rgba(238,228,218,0.75); border-radius:8px;
+            display:flex; flex-direction:column; align-items:center; justify-content:center;
+            z-index:10; animation:fadeIn 0.4s;
         }
         @keyframes fadeIn { from{opacity:0} to{opacity:1} }
-        .overlay .msg { font-size: 42px; font-weight: 800; color: #776e65; }
-        .overlay .btn { margin-top: 16px; }
-        .game-footer { margin-top: 20px; color: #bbada0; font-size: 12px; }
+        .overlay .msg { font-size:42px; font-weight:800; color:#776e65; margin-bottom:8px; }
+        .game-footer { margin-top:20px; color:#bbada0; font-size:12px; display:flex; justify-content:center; gap:16px; align-items:center; }
+        .game-stats { font-size:11px; color:#bbada0; margin-top:4px; }
+        .game-stats span { margin:0 6px; }
         .hint-dot {
-            display: inline-block; width: 6px; height: 6px; background: #ccc; border-radius: 50%;
-            vertical-align: middle; margin-left: 4px; opacity: 0.4;
+            display:inline-block; width:5px; height:5px; background:#ccc; border-radius:50%;
+            vertical-align:middle; margin-left:4px; opacity:0.3;
         }
 
-        /* ============ 视频视图 (暗色) ============ */
-        body.dark-mode { background: #0a0a0e; }
-        .view-video { background: #0a0a0e; min-height: 100vh; }
+        /* ============ 快捷键面板 ============ */
+        .shortcuts-panel {
+            position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) scale(0.9);
+            background:#fff; border-radius:12px; padding:24px 28px; z-index:999;
+            box-shadow:0 20px 60px rgba(0,0,0,0.3); opacity:0; pointer-events:none;
+            transition:all 0.25s; min-width:280px;
+        }
+        .shortcuts-panel.on { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+        .shortcuts-panel h3 { font-size:16px; margin-bottom:12px; color:#776e65; }
+        .shortcuts-panel .row { display:flex; justify-content:space-between; padding:6px 0; font-size:13px; border-bottom:1px solid #eee; }
+        .shortcuts-panel kbd {
+            background:#eee4da; padding:2px 8px; border-radius:3px; font-family:monospace;
+            font-size:11px; border:1px solid #ddd;
+        }
+        .shortcuts-overlay {
+            position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:998;
+            opacity:0; pointer-events:none; transition:opacity 0.25s;
+        }
+        .shortcuts-overlay.on { opacity:1; pointer-events:auto; }
+
+        /* ============ 视频视图 ============ */
+        body.dark-mode { background:var(--vbg); }
         .vid-header {
-            position: sticky; top: 0; z-index: 50; background: rgba(10,10,14,0.92);
-            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid #1e1e24; padding: 10px 16px;
-            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            position:sticky; top:0; z-index:50; background:var(--vheader);
+            backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+            border-bottom:1px solid #1e1e24; padding:10px 16px;
         }
-        .vid-logo { font-size: 16px; font-weight: 700; color: #e4e4e7; white-space: nowrap; flex-shrink: 0; }
-        .vid-logo span { color: #6366f1; }
+        .vid-header-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .vid-logo { font-size:16px; font-weight:700; color:#e4e4e7; white-space:nowrap; flex-shrink:0; cursor:pointer; }
+        .vid-logo span { color:var(--vprimary); }
         .vid-back {
-            padding: 6px 12px; border-radius: 6px; border: 1px solid #2a2a32;
-            background: #16161c; color: #a1a1aa; cursor: pointer; font-size: 11px;
-            transition: all 0.2s; white-space: nowrap;
+            padding:6px 12px; border-radius:6px; border:1px solid #2a2a32;
+            background:#16161c; color:#a1a1aa; cursor:pointer; font-size:11px;
+            transition:all 0.2s; white-space:nowrap; flex-shrink:0;
         }
-        .vid-back:hover { background: #22222a; color: #fff; border-color: #444; }
-        .vid-search { flex: 1; min-width: 120px; max-width: 360px; position: relative; }
+        .vid-back:hover { background:#22222a; color:#fff; border-color:#444; }
+        .vid-search { flex:1; min-width:120px; max-width:400px; position:relative; }
         .vid-search input {
-            width: 100%; padding: 7px 12px 7px 32px; border-radius: 8px;
-            border: 1px solid #1e1e24; background: #121218; color: #e4e4e7;
-            font-size: 13px; outline: none; transition: border-color 0.2s;
+            width:100%; padding:7px 12px 7px 34px; border-radius:8px;
+            border:1px solid #1e1e24; background:#121218; color:#e4e4e7;
+            font-size:13px; outline:none; transition:border-color 0.2s;
         }
-        .vid-search input:focus { border-color: #6366f1; }
-        .vid-search input::placeholder { color: #52525b; }
-        .vid-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; opacity: 0.5; }
-        .vid-stat { color: #52525b; font-size: 11px; white-space: nowrap; }
-        .vid-refresh {
-            padding: 7px 14px; border-radius: 6px; border: none;
-            background: #6366f1; color: #fff; cursor: pointer; font-size: 11px;
-            font-weight: 600; transition: all 0.2s; white-space: nowrap;
+        .vid-search input:focus { border-color:var(--vprimary); }
+        .vid-search input::placeholder { color:#52525b; }
+        .vid-search .s-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); opacity:0.4; font-size:14px; }
+        .vid-search .s-clear {
+            position:absolute; right:8px; top:50%; transform:translateY(-50%); cursor:pointer;
+            font-size:16px; color:#52525b; display:none; padding:2px 4px; border:none; background:none;
         }
-        .vid-refresh:hover { background: #818cf8; }
-        .vid-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
-        .vid-main { max-width: 1400px; margin: 0 auto; padding: 16px; }
+        .vid-search .s-clear:hover { color:#fff; }
+        .vid-actions { display:flex; gap:6px; align-items:center; flex-shrink:0; }
+        .vid-btn {
+            padding:7px 12px; border-radius:6px; border:none; cursor:pointer;
+            font-size:11px; font-weight:600; transition:all 0.2s; white-space:nowrap;
+        }
+        .vid-btn.primary { background:var(--vprimary); color:#fff; }
+        .vid-btn.primary:hover { background:var(--vprimary-hover); }
+        .vid-btn.primary:disabled { opacity:0.4; cursor:not-allowed; }
+        .vid-btn.ghost { background:transparent; color:#a1a1aa; border:1px solid #2a2a32; }
+        .vid-btn.ghost:hover { background:#1a1a22; color:#fff; }
+        .vid-btn.ghost.active { background:#1e1e2e; border-color:var(--vprimary); color:var(--vprimary); }
+        .vid-stats-bar {
+            display:flex; align-items:center; gap:12px; padding:6px 16px; font-size:11px;
+            color:#52525b; border-bottom:1px solid #1a1a22; flex-wrap:wrap;
+        }
+        .vid-stats-bar .sep { width:1px; height:12px; background:#1e1e24; }
+        .vid-stats-bar .scrape-info { margin-left:auto; font-size:10px; opacity:0.7; }
+
+        /* ============ 分类标签 ============ */
+        .vid-tabs { display:flex; gap:4px; padding:12px 16px 0; flex-wrap:wrap; }
+        .vid-tab {
+            padding:6px 16px; border-radius:20px; border:1px solid #1e1e24; cursor:pointer;
+            font-size:12px; color:#a1a1aa; background:transparent; transition:all 0.2s;
+        }
+        .vid-tab:hover { border-color:#444; color:#e4e4e7; }
+        .vid-tab.active { background:var(--vprimary); border-color:var(--vprimary); color:#fff; }
+
+        /* ============ 视频网格 ============ */
+        .vid-main { max-width:1400px; margin:0 auto; padding:12px 16px 40px; }
         .vid-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 16px;
+            display:grid;
+            grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+            gap:16px;
         }
+        .vid-grid.compact { grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
         .vid-card {
-            background: #121218; border-radius: 10px; overflow: hidden;
-            border: 1px solid #1a1a22; cursor: pointer; display: flex; flex-direction: column;
-            transition: all 0.25s; position: relative;
+            background:var(--vcard); border-radius:10px; overflow:hidden;
+            border:1px solid var(--vborder); cursor:pointer; display:flex; flex-direction:column;
+            transition:all 0.25s; position:relative;
         }
-        .vid-card:hover {
-            transform: translateY(-4px); border-color: #6366f1;
-            box-shadow: 0 8px 24px rgba(99,102,241,0.12);
+        .vid-card:hover { transform:translateY(-4px); border-color:var(--vprimary); box-shadow:0 8px 24px rgba(99,102,241,0.12); }
+        .vid-card:active { transform:scale(0.98); }
+        .vid-thumb { position:relative; width:100%; padding-top:56.25%; background:#18181b; overflow:hidden; }
+        .vid-thumb img {
+            position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+            transition:transform 0.35s; background:#18181b;
         }
-        .vid-card:active { transform: scale(0.98); }
-        .vid-thumb { position: relative; width: 100%; padding-top: 56.25%; background: #18181b; overflow: hidden; }
-        .vid-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
-        .vid-card:hover .vid-thumb img { transform: scale(1.04); }
+        .vid-card:hover .vid-thumb img { transform:scale(1.05); }
         .vid-noimg {
-            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-            background: #1e1e24; color: #3f3f46; font-size: 12px;
+            position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+            background:linear-gradient(135deg,#1e1e24,#252530); color:#3f3f46; font-size:12px;
+            flex-direction:column; gap:8px;
         }
-        .vid-body { padding: 12px 14px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+        .vid-noimg svg { width:32px; height:32px; opacity:0.3; }
+        .vid-duration {
+            position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.8);
+            color:#fff; font-size:10px; padding:2px 6px; border-radius:3px;
+            font-family:"SF Mono","Fira Code",monospace;
+        }
+        .vid-body { padding:12px 14px; flex:1; display:flex; flex-direction:column; gap:8px; }
         .vid-title {
-            font-size: 13px; font-weight: 500; color: #d4d4d8; line-height: 1.45;
-            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-            overflow: hidden; flex: 1;
+            font-size:13px; font-weight:500; color:var(--vtext); line-height:1.45;
+            display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+            overflow:hidden; flex:1;
         }
-        .vid-foot { display: flex; align-items: center; gap: 10px; font-size: 11px; color: #52525b; }
+        .vid-foot { display:flex; align-items:center; gap:10px; font-size:11px; color:#52525b; flex-wrap:wrap; }
         .vid-badge {
-            font-family: "SF Mono","Fira Code",monospace; font-size: 10px;
-            background: #1a1a22; padding: 2px 8px; border-radius: 4px; color: #6366f1;
+            font-family:"SF Mono","Fira Code",monospace; font-size:10px;
+            background:#1a1a22; padding:2px 8px; border-radius:4px; color:var(--vprimary);
         }
-        .vid-author { color: #71717a; }
+        .vid-author { color:#71717a; }
+        .vid-copy {
+            margin-left:auto; background:none; border:none; color:#52525b; cursor:pointer;
+            padding:3px 6px; border-radius:4px; font-size:11px; transition:all 0.2s;
+        }
+        .vid-copy:hover { color:#e4e4e7; background:#1a1a22; }
+        .vid-copy.copied { color:#4ade80; }
 
-        /* ============ 通用 ============ */
-        .loading-spot { text-align: center; padding: 48px; }
-        .spin {
-            width: 28px; height: 28px; border: 2px solid #1e1e24;
-            border-top-color: #6366f1; border-radius: 50%;
-            animation: sp 0.7s linear infinite; margin: 0 auto 12px;
+        /* ============ 骨架屏 ============ */
+        .skeleton { background:#1a1a22; border-radius:10px; overflow:hidden; border:1px solid #1e1e24; }
+        .skeleton .sk-thumb { width:100%; padding-top:56.25%; background:#18181b; position:relative; overflow:hidden; }
+        .skeleton .sk-thumb::after, .skeleton .sk-line::after {
+            content:''; position:absolute; inset:0;
+            background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.03) 50%,transparent 100%);
+            animation:shimmer 1.5s infinite;
         }
-        @keyframes sp { to{transform:rotate(360deg)} }
-        .err-msg { text-align: center; padding: 40px; color: #f87171; font-size: 13px; }
-        .empty { text-align: center; padding: 64px; color: #3f3f46; }
-        .empty .icon { font-size: 48px; margin-bottom: 12px; opacity: 0.6; }
-        .load-more { text-align: center; margin-top: 24px; padding-bottom: 32px; }
-        .load-more-btn {
-            padding: 10px 36px; border-radius: 8px; border: 1px solid #1e1e24;
-            background: #121218; color: #a1a1aa; font-size: 13px; cursor: pointer; transition: all 0.2s;
+        @keyframes shimmer { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
+        .skeleton .sk-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+        .skeleton .sk-line { height:12px; border-radius:4px; background:#1e1e24; position:relative; overflow:hidden; }
+        .skeleton .sk-line.w60 { width:60%; }
+        .skeleton .sk-line.w80 { width:80%; }
+        .skeleton .sk-line.w40 { width:40%; }
+
+        /* ============ 空状态 & 错误 ============ */
+        .empty-state { text-align:center; padding:64px 16px; color:#3f3f46; }
+        .empty-state .icon { font-size:56px; margin-bottom:16px; opacity:0.6; display:block; }
+        .empty-state .title { font-size:16px; color:#71717a; margin-bottom:4px; }
+        .empty-state .desc { font-size:12px; color:#3f3f46; }
+        .err-banner {
+            text-align:center; padding:14px 20px; margin:12px 16px;
+            background:rgba(248,113,113,0.08); border:1px solid rgba(248,113,113,0.2);
+            border-radius:8px; color:#f87171; font-size:13px; display:flex; align-items:center; justify-content:center; gap:8px;
         }
-        .load-more-btn:hover { border-color: #6366f1; color: #fff; }
-        .load-more-btn:disabled { opacity: 0.4; }
+        .err-banner button {
+            background:#f87171; color:#fff; border:none; padding:4px 12px; border-radius:4px;
+            cursor:pointer; font-size:11px; font-weight:600;
+        }
+
+        /* ============ 回到顶部按钮 ============ */
+        .scroll-top {
+            position:fixed; bottom:24px; right:24px; z-index:100;
+            width:40px; height:40px; border-radius:50%; background:#1e1e24;
+            border:1px solid #2a2a32; color:#a1a1aa; cursor:pointer;
+            display:flex; align-items:center; justify-content:center;
+            font-size:18px; transition:all 0.25s; opacity:0; transform:translateY(10px);
+            pointer-events:none; box-shadow:0 4px 12px rgba(0,0,0,0.4);
+        }
+        .scroll-top.visible { opacity:1; transform:translateY(0); pointer-events:auto; }
+        .scroll-top:hover { background:#2a2a32; color:#fff; border-color:#444; }
+
+        /* ============ Toast ============ */
         .toast {
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: #1e1e24; color: #d4d4d8; padding: 10px 20px; border-radius: 10px;
-            font-size: 12px; z-index: 999; opacity: 0; transition: opacity 0.3s;
-            border: 1px solid #2a2a32; pointer-events: none;
+            position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+            background:#1e1e24; color:#d4d4d8; padding:10px 20px; border-radius:10px;
+            font-size:12px; z-index:999; opacity:0; transition:opacity 0.3s;
+            border:1px solid #2a2a32; pointer-events:none; white-space:nowrap;
         }
-        .toast.on { opacity: 1; }
+        .toast.on { opacity:1; }
 
-        @media (max-width: 640px) {
-            .game-logo { font-size: 48px; }
-            .board { max-width: 320px; gap: 8px; padding: 8px; }
-            .cell { font-size: 24px; }
+        /* ============ 下拉刷新指示器 ============ */
+        .pull-indicator {
+            text-align:center; padding:0; height:0; overflow:hidden;
+            transition:height 0.2s; color:#52525b; font-size:12px;
+            display:flex; align-items:center; justify-content:center; gap:6px;
+        }
+        .pull-indicator.active { height:40px; }
+        .pull-dot { width:6px; height:6px; background:#52525b; border-radius:50%; animation:pullBounce 0.6s infinite alternate; }
+        .pull-dot:nth-child(2) { animation-delay:0.2s; }
+        .pull-dot:nth-child(3) { animation-delay:0.4s; }
+        @keyframes pullBounce { to{transform:translateY(-4px);opacity:0.3} }
+
+        /* ============ 响应式 ============ */
+        @media (max-width:640px) {
+            .game-logo { font-size:48px; }
+            .board { max-width:320px; gap:8px; padding:8px; }
+            .cell { font-size:24px; }
             .cell-128,.cell-256,.cell-512 { font-size:20px; }
             .cell-1024,.cell-2048,.cell-super { font-size:14px; }
-            .game-wrapper { padding: 16px 10px; }
-            .vid-header { padding: 8px 10px; gap: 6px; }
-            .vid-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-            .vid-search { max-width: none; order: 10; flex-basis: 100%; }
-            .vid-title { font-size: 11px; }
+            .game-wrapper { padding:16px 10px; }
+            .vid-header { padding:8px 10px; }
+            .vid-header-top { gap:6px; }
+            .vid-grid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+            .vid-grid.compact { grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:8px; }
+            .vid-search { max-width:none; order:10; flex-basis:100%; }
+            .vid-title { font-size:11px; }
+            .vid-tabs { padding:8px 10px 0; }
+            .vid-tab { padding:5px 12px; font-size:11px; }
+            .scroll-top { bottom:16px; right:16px; width:36px; height:36px; font-size:16px; }
         }
     </style>
 </head>
 <body>
 
-    <!-- ==================== 游戏页 ==================== -->
-    <div class="view-container view-game" id="gameView">
+    <!-- ==================== 游戏视图 ==================== -->
+    <div class="view-game" id="gameView">
         <div class="game-wrapper">
             <div class="game-top-bar">
-                <div class="game-logo" id="gameLogo">2048</div>
+                <div class="game-logo" id="gameLogo">2048<span class="click-hint">点 5 次进入</span></div>
                 <div class="game-scores">
                     <div class="score-card">
                         <span class="label">SCORE</span>
@@ -236,55 +346,117 @@
                     </div>
                 </div>
             </div>
-            <p class="game-subtitle">合并相同数字，达到 <b>2048</b> 即可胜出<span class="hint-dot"></span></p>
-            <div class="board-wrap">
-                <div class="board" id="board"></div>
+            <p class="game-subtitle">合并数字达到 <b>2048</b> 即可胜出<span class="hint-dot"></span></p>
+            <div class="board-wrap"><div class="board" id="board"></div></div>
+            <div style="margin-top:18px;">
+                <button class="btn" onclick="newGame()">新游戏</button>
+                <button class="btn undo-btn" id="undoBtn" onclick="undoMove()" disabled>↩ 撤销</button>
             </div>
-            <div style="margin-top:18px;"><button class="btn" onclick="newGame()">新游戏</button></div>
-            <p class="game-footer">方向键 / WASD ｜ 手机滑动</p>
+            <p class="game-stats">步数: <span id="moveCount">0</span></p>
+            <p class="game-footer">方向键 / WASD 移动 ｜ 手机滑动 ｜ 按 <kbd style="background:#eee4da;padding:1px 6px;border-radius:3px;font-size:11px;">?</kbd> 查看快捷键</p>
+        </div>
+        <!-- 快捷键面板 -->
+        <div class="shortcuts-overlay" id="shortcutsOverlay" onclick="toggleShortcuts()"></div>
+        <div class="shortcuts-panel" id="shortcutsPanel">
+            <h3>快捷键</h3>
+            <div class="row"><span>移动</span><span><kbd>方向键</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></div>
+            <div class="row"><span>新游戏</span><span><kbd>N</kbd></span></div>
+            <div class="row"><span>撤销</span><span><kbd>Ctrl+Z</kbd></span></div>
+            <div class="row"><span>进入视频库</span><span><kbd>Ctrl+Shift+V</kbd></span></div>
+            <div class="row"><span>返回游戏</span><span><kbd>Esc</kbd></span></div>
+            <div class="row"><span>搜索</span><span><kbd>/</kbd></span></div>
+            <div class="row"><span>关闭面板</span><span><kbd>?</kbd> / 点击空白</span></div>
         </div>
     </div>
 
-    <!-- ==================== 视频页 ==================== -->
-    <div class="view-container view-video" id="videoView">
-        <div class="vid-header">
-            <div class="vid-logo">Video<span>DB</span></div>
-            <button class="vid-back" id="backBtn" onclick="goBackToGame()">← 返回</button>
-            <div class="vid-search">
-                <span class="vid-search-icon">🔍</span>
-                <input type="text" id="searchInput" placeholder="搜索视频标题..." autocomplete="off">
-            </div>
-            <span class="vid-stat" id="headerStats">加载中...</span>
-            <button class="vid-refresh" id="refreshBtn">更新</button>
+    <!-- ==================== 视频视图 ==================== -->
+    <div class="view-video" id="videoView">
+        <div class="pull-indicator" id="pullIndicator">
+            <div class="pull-dot"></div><div class="pull-dot"></div><div class="pull-dot"></div>
+            <span>松手刷新</span>
         </div>
-        <div class="vid-main">
-            <div class="vid-grid" id="videoGrid">
-                <div class="loading-spot" style="grid-column:1/-1;"><div class="spin"></div><p style="color:#52525b;font-size:13px;">加载中...</p></div>
+        <div class="vid-header">
+            <div class="vid-header-top">
+                <div class="vid-logo" onclick="goBackToGame()">Video<span>DB</span></div>
+                <button class="vid-back" onclick="goBackToGame()">← 返回游戏</button>
+                <div class="vid-search">
+                    <span class="s-icon">🔍</span>
+                    <input type="text" id="searchInput" placeholder="搜索标题/作者..." autocomplete="off">
+                    <button class="s-clear" id="searchClear" onclick="clearSearch()">✕</button>
+                </div>
+                <div class="vid-actions">
+                    <button class="vid-btn ghost" id="viewToggle" onclick="toggleViewMode()" title="切换视图密度">▦</button>
+                    <button class="vid-btn ghost" id="sortBtn" onclick="toggleSort()" title="排序">↓ 最新</button>
+                    <button class="vid-btn primary" id="refreshBtn">更新</button>
+                </div>
             </div>
-            <div class="load-more" style="display:none;">
-                <button class="load-more-btn" id="loadMoreBtn">加载更多</button>
-            </div>
+        </div>
+        <div class="vid-stats-bar" id="statsBar">
+            <span id="headerStats">加载中...</span>
+            <span class="sep"></span>
+            <span>排序: <b id="sortLabel">最新优先</b></span>
+            <span class="scrape-info" id="scrapeInfo"></span>
+        </div>
+        <div class="vid-tabs" id="vidTabs">
+            <button class="vid-tab active" data-section="">全部</button>
+            <button class="vid-tab" data-section="trending">🔥 热门</button>
+            <button class="vid-tab" data-section="home">🏠 推荐</button>
+            <button class="vid-tab" data-section="latest">🆕 最新</button>
+        </div>
+        <div class="vid-main" id="vidMain">
+            <div id="skeletonGrid" class="vid-grid"></div>
+            <div class="vid-grid" id="videoGrid"></div>
+            <div id="sentinel"></div>
         </div>
         <div class="toast" id="toast"></div>
+        <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
     </div>
 
     <script>
     // ============================================================
-    // 2048 游戏引擎
+    // 2048 游戏引擎 (增强版: 撤销、移动计数、合并动画)
     // ============================================================
-    var gs = { grid: [], score: 0, best: 0, over: false, won: false, moved: false };
+    var gs = { grid:[], score:0, best:0, over:false, won:false, moves:0 };
+    var gsHistory = [];
     var boardEl = document.getElementById('board');
     var scoreEl = document.getElementById('gameScore');
     var bestEl = document.getElementById('gameBest');
     var scorePlusEl = document.getElementById('scorePlus');
+    var moveCountEl = document.getElementById('moveCount');
+    var undoBtn = document.getElementById('undoBtn');
+    var mergedCells = [];
 
     function initGame() {
-        gs.grid = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
-        gs.score = 0; gs.over = false; gs.won = false;
-        gs.best = parseInt(localStorage.getItem('best2048') || '0');
+        gs = { grid:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]], score:0, over:false, won:false, moves:0 };
+        gs.best = parseInt(localStorage.getItem('best2048')||'0');
+        gsHistory = [];
         bestEl.textContent = gs.best;
-        scoreEl.textContent = 0;
+        scoreEl.textContent = '0';
+        moveCountEl.textContent = '0';
+        undoBtn.disabled = true;
         addTile(); addTile();
+        drawBoard();
+    }
+
+    function saveHistory() {
+        gsHistory.push({
+            grid: gs.grid.map(function(r){return r.slice();}),
+            score: gs.score, moves: gs.moves
+        });
+        if (gsHistory.length > 20) gsHistory.shift();
+        undoBtn.disabled = false;
+    }
+
+    function undoMove() {
+        if (!gsHistory.length || gs.over) return;
+        var prev = gsHistory.pop();
+        gs.grid = prev.grid;
+        gs.score = prev.score;
+        gs.moves = prev.moves;
+        gs.over = false; gs.won = false;
+        scoreEl.textContent = gs.score;
+        moveCountEl.textContent = gs.moves;
+        if (!gsHistory.length) undoBtn.disabled = true;
         drawBoard();
     }
 
@@ -300,37 +472,66 @@
         for (var r=0;r<4;r++) for (var c=0;c<4;c++) {
             var cell = document.createElement('div'); cell.className='cell';
             var v = gs.grid[r][c];
-            if(v){ cell.textContent=v; cell.classList.add(v<=2048?'cell-'+v:'cell-super'); }
+            if (v) {
+                cell.textContent = v;
+                cell.classList.add(v<=2048?'cell-'+v:'cell-super');
+                if (mergedCells.some(function(m){return m[0]===r&&m[1]===c;})) {
+                    cell.classList.add('cell-merge');
+                }
+            }
             boardEl.appendChild(cell);
         }
+        mergedCells = [];
         scoreEl.textContent = gs.score;
-        if(gs.score>gs.best){ gs.best=gs.score; localStorage.setItem('best2048',gs.best); bestEl.textContent=gs.best; }
-        if(gs.over){
-            var o=document.createElement('div'); o.className='overlay';
-            o.innerHTML='<span class="msg">'+(gs.won?'🎉 赢了！':'游戏结束')+'</span><button class="btn" onclick="newGame()">再来一局</button>';
+        moveCountEl.textContent = gs.moves;
+        if (gs.score > gs.best){
+            gs.best = gs.score;
+            localStorage.setItem('best2048', gs.best);
+            bestEl.textContent = gs.best;
+            bestEl.parentElement.querySelector('.value').classList.add('pop');
+            setTimeout(function(){bestEl.parentElement.querySelector('.value').classList.remove('pop');},200);
+        }
+        if (gs.over) {
+            var o = document.createElement('div'); o.className = 'overlay';
+            o.innerHTML = '<span class="msg">'+(gs.won?'🎉 赢了！':'游戏结束')+'</span><span style="font-size:14px;color:#776e65;">步数: '+gs.moves+'</span><button class="btn" onclick="newGame()" style="margin-top:12px;">再来一局</button>';
             boardEl.appendChild(o);
         }
     }
 
     function slide(row){
         var a=row.filter(function(v){return v!==0;});
-        for(var i=0;i<a.length-1;i++) if(a[i]===a[i+1]){a[i]*=2;gs.score+=a[i];if(a[i]===2048)gs.won=true;gs.moved=true;showPlus(a[i]);a.splice(i+1,1);}
+        for(var i=0;i<a.length-1;i++) {
+            if(a[i]===a[i+1]){a[i]*=2;gs.score+=a[i];if(a[i]===2048)gs.won=true;a.splice(i+1,1);}
+        }
         while(a.length<4)a.push(0); return a;
     }
 
     function showPlus(v){
         scorePlusEl.textContent='+'+v; scorePlusEl.classList.add('show');
-        setTimeout(function(){scorePlusEl.classList.remove('show');},400);
+        setTimeout(function(){scorePlusEl.classList.remove('show');},500);
     }
 
     function moveGame(dir){
         if(gs.over)return;
-        var old=JSON.stringify(gs.grid); gs.moved=false; var g=gs.grid;
+        saveHistory();
+        var old=JSON.stringify(gs.grid); var g=gs.grid;
         if(dir==='left') for(var r=0;r<4;r++)g[r]=slide(g[r]);
         else if(dir==='right') for(var r=0;r<4;r++){g[r].reverse();g[r]=slide(g[r]);g[r].reverse();}
         else if(dir==='up') for(var c=0;c<4;c++){var col=[g[0][c],g[1][c],g[2][c],g[3][c]];col=slide(col);for(var r2=0;r2<4;r2++)g[r2][c]=col[r2];}
         else if(dir==='down') for(var c=0;c<4;c++){var col2=[g[0][c],g[1][c],g[2][c],g[3][c]];col2.reverse();col2=slide(col2);col2.reverse();for(var r3=0;r3<4;r3++)g[r3][c]=col2[r3];}
-        if(JSON.stringify(g)!==old){addTile();drawBoard();if(chkOver()){gs.over=true;drawBoard();}}
+        if(JSON.stringify(g)!==old){
+            gs.moves++;
+            // 检测合并的格子
+            for(var rr=0;rr<4;rr++)for(var cc=0;cc<4;cc++){
+                if(g[rr][cc]&&g[rr][cc]!==JSON.parse(old)[rr][cc]&&g[rr][cc]%2===0){
+                    // 简单检测: 新值是旧的2倍说明合并了
+                    var ovv=JSON.parse(old)[rr][cc];
+                    if(ovv&&g[rr][cc]===ovv*2) mergedCells.push([rr,cc]);
+                }
+            }
+            addTile(); drawBoard();
+            if(chkOver()){gs.over=true; drawBoard();}
+        } else { gsHistory.pop(); } // 无效移动，移除历史
     }
 
     function chkOver(){
@@ -343,16 +544,34 @@
 
     function newGame(){initGame();}
 
-    // 按键
+    // 快捷键面板
+    function toggleShortcuts(){
+        var p=document.getElementById('shortcutsPanel');
+        var o=document.getElementById('shortcutsOverlay');
+        p.classList.toggle('on'); o.classList.toggle('on');
+    }
+
+    // 键盘控制
     var keyMap={37:'left',38:'up',39:'right',40:'down',65:'left',87:'up',68:'right',83:'down'};
     document.addEventListener('keydown',function(e){
-        if(document.body.classList.contains('dark-mode'))return;
-        var d=keyMap[e.keyCode]; if(d){e.preventDefault();moveGame(d);}
+        if(document.body.classList.contains('dark-mode')){
+            if(e.keyCode===27) goBackToGame(); // Esc
+            if(e.keyCode===191&&!e.target.closest('input')){e.preventDefault();document.getElementById('searchInput').focus();} // /
+            return;
+        }
+        var d=keyMap[e.keyCode];
+        if(d){e.preventDefault();moveGame(d);return;}
+        if(e.keyCode===78||e.keyCode===82){e.preventDefault();newGame();return;} // N/R
+        if(e.keyCode===90&&e.ctrlKey){e.preventDefault();undoMove();return;} // Ctrl+Z
+        if(e.keyCode===191){e.preventDefault();toggleShortcuts();return;} // ?
     });
 
-    // 触屏
+    // 触屏滑动
     var tx=0,ty=0;
-    document.addEventListener('touchstart',function(e){if(document.body.classList.contains('dark-mode'))return;tx=e.touches[0].clientX;ty=e.touches[0].clientY;});
+    document.addEventListener('touchstart',function(e){
+        if(document.body.classList.contains('dark-mode'))return;
+        tx=e.touches[0].clientX; ty=e.touches[0].clientY;
+    },{passive:true});
     document.addEventListener('touchend',function(e){
         if(document.body.classList.contains('dark-mode'))return;
         var dx=(e.changedTouches[0]||{clientX:tx}).clientX-tx;
@@ -362,20 +581,17 @@
     });
 
     // ============================================================
-    // 视图切换 (带动画)
+    // 视图切换
     // ============================================================
     function enterVideoMode() {
         document.body.classList.add('dark-mode');
         loadVids(true);
     }
-
     function goBackToGame() {
         document.body.classList.remove('dark-mode');
     }
 
-    // ============================================================
-    // 隐藏入口: 点标题 5 次 或 Ctrl+Shift+V
-    // ============================================================
+    // 隐藏入口: 点标题5次 或 Ctrl+Shift+V
     var tc=0, tt=null;
     document.getElementById('gameLogo').addEventListener('click',function(){
         tc++; clearTimeout(tt);
@@ -389,128 +605,275 @@
     });
 
     // ============================================================
-    // 视频数据库 (Supabase REST + GitHub 爬虫触发)
+    // 视频数据库
     // ============================================================
-    var SUPABASE_URL = 'https://fejspvbckgkbmfyoxiub.supabase.co';
-    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
-    var GITHUB_TOKEN = 'ghp_' + 'MM6PA9lvfrUL9eFWnHV' + 'UXRLioUO1931sKszb';
-    var PAGE_SIZE = 24;
-    var page = 1, total = 0, loading = false, sq = '', st = null;
-    var lastTrigger = 0, COOLDOWN = 3600000;
+    var SUPABASE_URL='https://fejspvbckgkbmfyoxiub.supabase.co';
+    var SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
+    var GITHUB_TOKEN='ghp_'+'MM6PA9lvfrUL9eFWnHV'+'UXRLioUO1931sKszb';
+    var PAGE_SIZE=24, page=1, total=0, loading=false, hasMore=true;
+    var sq='', st=null, sortOrder='desc', activeSection='';
+    var lastTrigger=0, COOLDOWN=3600000;
+    var compactView=false;
+    var lastScrapeTime=null;
 
-    var $grid = document.getElementById('videoGrid');
-    var $more = document.querySelector('.load-more');
-    var $moreBtn = document.getElementById('loadMoreBtn');
-    var $search = document.getElementById('searchInput');
-    var $stat = document.getElementById('headerStats');
-    var $refresh = document.getElementById('refreshBtn');
-    var $toast = document.getElementById('toast');
+    var $grid=document.getElementById('videoGrid');
+    var $skel=document.getElementById('skeletonGrid');
+    var $sentinel=document.getElementById('sentinel');
+    var $search=document.getElementById('searchInput');
+    var $clear=document.getElementById('searchClear');
+    var $stat=document.getElementById('headerStats');
+    var $refresh=document.getElementById('refreshBtn');
+    var $sortBtn=document.getElementById('sortBtn');
+    var $sortLabel=document.getElementById('sortLabel');
+    var $toast=document.getElementById('toast');
+    var $scrollTop=document.getElementById('scrollTop');
+    var $scrapeInfo=document.getElementById('scrapeInfo');
+    var $pull=document.getElementById('pullIndicator');
 
     function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
     function toast(msg){$toast.textContent=msg;$toast.classList.add('on');setTimeout(function(){$toast.classList.remove('on');},2200);}
 
+    // ============ 搜索 ============
+    $search.addEventListener('input',function(){
+        clearTimeout(st); var v=this.value;
+        $clear.style.display=v?'block':'none';
+        st=setTimeout(function(){sq=v;loadVids(true);if(sq.trim())triggerScraper();},600);
+    });
+
+    function clearSearch(){
+        $search.value=''; sq=''; $clear.style.display='none';
+        loadVids(true); $search.focus();
+    }
+
+    // ============ 分类标签切换 ============
+    document.getElementById('vidTabs').addEventListener('click',function(e){
+        if(!e.target.classList.contains('vid-tab'))return;
+        var tabs=this.querySelectorAll('.vid-tab');
+        for(var i=0;i<tabs.length;i++)tabs[i].classList.remove('active');
+        e.target.classList.add('active');
+        activeSection=e.target.dataset.section;
+        loadVids(true);
+    });
+
+    // ============ 排序切换 ============
+    function toggleSort(){
+        sortOrder=sortOrder==='desc'?'asc':'desc';
+        $sortBtn.textContent=sortOrder==='desc'?'↓ 最新':'↑ 最早';
+        $sortLabel.textContent=sortOrder==='desc'?'最新优先':'最早优先';
+        loadVids(true);
+    }
+
+    // ============ 视图密度切换 ============
+    function toggleViewMode(){
+        compactView=!compactView;
+        if(compactView){$grid.classList.add('compact');document.getElementById('viewToggle').classList.add('active');}
+        else{$grid.classList.remove('compact');document.getElementById('viewToggle').classList.remove('active');}
+    }
+
+    // ============ 爬虫触发 ============
     function triggerScraper(){
         var now=Date.now();
-        if(now-lastTrigger<COOLDOWN){toast('冷却中，'+Math.ceil((COOLDOWN-(now-lastTrigger))/60000)+' 分钟后再试');return;}
-        lastTrigger=now; toast('正在触发爬虫...');
+        if(now-lastTrigger<COOLDOWN){toast('冷却中，'+Math.ceil((COOLDOWN-(now-lastTrigger))/60000)+' 分钟后可再触发');return;}
+        lastTrigger=now; toast('正在触发爬虫抓取新视频...');
         $refresh.disabled=true; $refresh.textContent='...';
         var x=new XMLHttpRequest();
         x.open('POST','https://api.github.com/repos/jiajiababa1/video-db/actions/workflows/scrape.yml/dispatches');
         x.setRequestHeader('Authorization','Bearer '+GITHUB_TOKEN);
         x.setRequestHeader('Accept','application/vnd.github+json');
-        x.onload=function(){toast(x.status===204?'爬虫已触发，约1分钟后刷新':'触发失败: '+x.status);$refresh.disabled=false;$refresh.textContent='更新';};
-        x.onerror=function(){toast('网络错误');$refresh.disabled=false;$refresh.textContent='更新';lastTrigger=0;};
+        x.onload=function(){
+            toast(x.status===204?'爬虫已触发! 约1分钟后数据更新':'触发失败: '+x.status);
+            $refresh.disabled=false; $refresh.textContent='更新';
+        };
+        x.onerror=function(){toast('网络错误，无法触发爬虫');$refresh.disabled=false;$refresh.textContent='更新';lastTrigger=0;};
         x.send(JSON.stringify({ref:'main'}));
     }
 
+    // ============ Supabase API ============
     function _h(){return{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json'};}
 
     async function fetchVids(pg, q, sz){
         var f=(pg-1)*sz;
-        var pr='select=*'; if(q&&q.trim())pr+='&title=ilike.*'+encodeURIComponent(q.trim())+'*';
-        pr+='&order=created_at.desc&limit='+sz+'&offset='+f;
+        var params='select=*';
+        // 搜索条件
+        if(q&&q.trim()){
+            var t=encodeURIComponent(q.trim());
+            params+='&or=(title.ilike.*'+t+'*,author.ilike.*'+t+'*)';
+        }
+        // 分类过滤
+        if(activeSection) params+='&source_section=eq.'+encodeURIComponent(activeSection);
+        // 排序
+        params+='&order=created_at.'+sortOrder+'&limit='+sz+'&offset='+f;
+
         var h=_h();
-        var dp=fetch(SUPABASE_URL+'/rest/v1/videos?'+pr,{method:'GET',headers:h});
+        var dp=fetch(SUPABASE_URL+'/rest/v1/videos?'+params,{method:'GET',headers:h});
         var ch=Object.assign({},h,{'Prefer':'count=exact'});
-        var cp=fetch(SUPABASE_URL+'/rest/v1/videos?select=id'+(q&&q.trim()?'&title=ilike.*'+encodeURIComponent(q.trim())+'*':'')+'&limit=1',{method:'GET',headers:ch});
+        // 用更轻量的查询获得总数
+        var countParams='select=id';
+        if(q&&q.trim()){
+            var t2=encodeURIComponent(q.trim());
+            countParams+='&or=(title.ilike.*'+t2+'*,author.ilike.*'+t2+'*)';
+        }
+        if(activeSection) countParams+='&source_section=eq.'+encodeURIComponent(activeSection);
+        countParams+='&limit=1';
+        var cp=fetch(SUPABASE_URL+'/rest/v1/videos?'+countParams,{method:'GET',headers:ch});
+
         var r=await Promise.all([dp,cp]);
-        if(!r[0].ok)throw new Error('HTTP '+r[0].status);
+        if(!r[0].ok) throw new Error('HTTP '+r[0].status);
         var data=await r[0].json();
         var ct=0;
-        if(r[1].ok){var rg=r[1].headers.get('content-range');if(rg){var m=rg.match(/\/(\d+)/);if(m)ct=parseInt(m[1]);}}
-        return{data:data||[],count:ct};
+        if(r[1].ok){
+            var rg=r[1].headers.get('content-range');
+            if(rg){var m=rg.match(/\/(\d+)/);if(m)ct=parseInt(m[1]);}
+        }
+        return {data:data||[],count:ct};
     }
+
+    async function fetchLastScrape(){
+        try{
+            var h=_h();
+            var resp=await fetch(SUPABASE_URL+'/rest/v1/scrape_status?select=last_run,videos_saved&order=last_run.desc&limit=1',{headers:h});
+            if(resp.ok){
+                var data=await resp.json();
+                if(data&&data.length){
+                    lastScrapeTime=data[0].last_run;
+                    var d=new Date(lastScrapeTime);
+                    var ago=Math.floor((Date.now()-d.getTime())/60000);
+                    $scrapeInfo.textContent='上次更新: '+(ago<1?'刚刚':ago<60?ago+' 分钟前':Math.floor(ago/60)+' 小时前');
+                }
+            }
+        }catch(e){}
+    }
+
+    // ============ 渲染 ============
+    function buildSkeletons(n){
+        $skel.innerHTML='';
+        for(var i=0;i<n;i++){
+            $skel.innerHTML+='<div class="skeleton"><div class="sk-thumb"></div><div class="sk-body"><div class="sk-line w80"></div><div class="sk-line w60"></div><div class="sk-line w40"></div></div></div>';
+        }
+        $skel.style.display='grid';
+    }
+
+    function hideSkeletons(){$skel.style.display='none';}
 
     function card(v){
         var c=document.createElement('div');c.className='vid-card';
-        c.title=v.title||v.video_id;
-        c.onclick=function(){if(v.video_url)window.open(v.video_url,'_blank');};
         var pu=v.thumbnail_url?'https://wsrv.nl/?url='+encodeURIComponent(v.thumbnail_url):'';
-        var th=pu?'<img src="'+esc(pu)+'" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">':'';
-        c.innerHTML='<div class="vid-thumb">'+th+'<div class="vid-noimg" style="'+(pu?'display:none;':'')+'">NO COVER</div></div>'+
+        var dur=v.duration?'<span class="vid-duration">'+esc(v.duration)+'</span>':'';
+        var imgHtml=pu
+            ?'<img src="'+esc(pu)+'" alt="" loading="lazy" onerror="this.style.display=\'none\';this.parentElement.querySelector(\'.vid-noimg\').style.display=\'flex\';">'
+            :'';
+        c.innerHTML=
+            '<div class="vid-thumb">'+imgHtml+dur+
+            '<div class="vid-noimg" style="'+(pu?'display:none;':'')+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>'+
             '<div class="vid-body"><div class="vid-title">'+esc(v.title||v.video_id)+'</div>'+
-            '<div class="vid-foot"><span class="vid-badge">'+esc(v.video_id)+'</span>'+(v.author?'<span class="vid-author">'+esc(v.author)+'</span>':'')+'</div></div>';
+            '<div class="vid-foot"><span class="vid-badge">'+esc(v.video_id)+'</span>'+
+            (v.author?'<span class="vid-author">@'+esc(v.author)+'</span>':'')+
+            (v.source_section?'<span style="color:#3f3f46;font-size:10px;">#'+esc(v.source_section)+'</span>':'')+
+            '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\''+esc(v.video_url||'')+'\',this)" title="复制链接">🔗</button></div></div>';
+        c.onclick=function(e){
+            if(e.target.closest('.vid-copy'))return;
+            if(v.video_url)window.open(v.video_url,'_blank');
+        };
         return c;
     }
 
+    function copyLink(url,btn){
+        if(!url)return;
+        if(navigator.clipboard){navigator.clipboard.writeText(url).then(function(){showCopied(btn);});}
+        else{
+            var ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
+            document.body.appendChild(ta);ta.select();
+            try{document.execCommand('copy');showCopied(btn);}catch(e){toast('复制失败');}
+            document.body.removeChild(ta);
+        }
+    }
+    function showCopied(btn){btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='🔗';btn.classList.remove('copied');},1500);}
+
     function render(vids, append){
-        if(!append)$grid.innerHTML='';
+        if(!append){$grid.innerHTML='';}
         if(!vids.length&&!append){
-            $grid.innerHTML='<div class="empty" style="grid-column:1/-1;"><div class="icon">📭</div><p style="font-size:15px;">'+(sq?'没找到匹配的视频':'暂无视频数据')+'</p><p style="font-size:12px;margin-top:8px;">'+(sq?'试试其他关键词':'点顶部「更新」触发爬虫获取数据')+'</p></div>';
-            $more.style.display='none'; return;
+            $grid.innerHTML='<div class="empty-state" style="grid-column:1/-1;"><span class="icon">📭</span><p class="title">'+(sq?'没找到匹配的视频':'暂无视频数据')+'</p><p class="desc">'+(sq?'试试其他关键词':'点顶部「更新」按钮触发爬虫获取数据')+'</p></div>';
+            hasMore=false; return;
         }
         var f=document.createDocumentFragment();
         for(var i=0;i<vids.length;i++)f.appendChild(card(vids[i]));
         $grid.appendChild(f);
+        hasMore=vids.length>=PAGE_SIZE;
     }
 
+    // ============ 加载数据 ============
     async function loadVids(reset){
         if(loading)return; loading=true;
-        if(reset){page=1;$grid.innerHTML='<div class="loading-spot" style="grid-column:1/-1;"><div class="spin"></div><p style="color:#52525b;font-size:13px;">加载中...</p></div>';}
-        $moreBtn.disabled=true;
+        if(reset){page=1;hasMore=true;buildSkeletons(8);}
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
             total=r.count;$stat.textContent='共 '+total.toLocaleString()+' 个视频';
+            hideSkeletons();
             render(r.data,page>1);
-            $more.style.display=r.data.length>=PAGE_SIZE?'block':'none';
+            if(reset) fetchLastScrape();
         }catch(e){
-            $grid.innerHTML='<div class="err-msg" style="grid-column:1/-1;"><p>加载失败: '+esc(e.message)+'</p></div>';
+            hideSkeletons();
+            $grid.innerHTML='<div class="err-banner" style="grid-column:1/-1;"><span>加载失败: '+esc(e.message)+'</span><button onclick="loadVids(true)">重试</button></div>';
             $stat.textContent='连接失败';
+            hasMore=false;
         }
-        loading=false;$moreBtn.disabled=false;
+        loading=false;
     }
 
-    async function loadMoreVids(){
-        page++;$moreBtn.disabled=true;$moreBtn.textContent='加载中...';
+    async function loadMore(){
+        if(loading||!hasMore)return;
+        page++; loading=true;
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
             total=r.count;$stat.textContent='共 '+total.toLocaleString()+' 个视频';
             render(r.data,true);
-            $more.style.display=r.data.length>=PAGE_SIZE?'block':'none';
-        }catch(e){toast('加载失败: '+e.message);}
-        $moreBtn.disabled=false;$moreBtn.textContent='加载更多';
+        }catch(e){toast('加载失败: '+e.message);page--;}
+        loading=false;
     }
 
-    $search.addEventListener('input',function(){
-        clearTimeout(st);var self=this;
-        st=setTimeout(function(){sq=self.value;loadVids(true);if(sq.trim())triggerScraper();},800);
+    // ============ 无限滚动 ============
+    var observer=new IntersectionObserver(function(entries){
+        if(entries[0].isIntersecting&&hasMore&&!loading)loadMore();
+    },{rootMargin:'200px'});
+    observer.observe($sentinel);
+
+    // ============ 下拉刷新 ============
+    var pullStart=0, pulling=false;
+    document.getElementById('videoView').addEventListener('touchstart',function(e){
+        if(this.scrollTop<=0&&!pulling){pullStart=e.touches[0].clientY;pulling=true;}
+    },{passive:true});
+    document.getElementById('videoView').addEventListener('touchmove',function(e){
+        if(!pulling)return;
+        var dy=e.touches[0].clientY-pullStart;
+        if(dy>30&&this.scrollTop<=0){$pull.classList.add('active');}
+    },{passive:true});
+    document.getElementById('videoView').addEventListener('touchend',function(){
+        if($pull.classList.contains('active')){
+            $pull.classList.remove('active');
+            triggerScraper(); loadVids(true);
+        }
+        pulling=false;
     });
 
+    // ============ 回到顶部按钮 ============
+    document.getElementById('videoView').addEventListener('scroll',function(){
+        if(this.scrollTop>400)$scrollTop.classList.add('visible');
+        else $scrollTop.classList.remove('visible');
+    });
+
+    // ============ 事件绑定 ============
     $refresh.addEventListener('click',function(){triggerScraper();loadVids(true);});
-    $moreBtn.addEventListener('click',loadMoreVids);
 
-    // 进入视频模式自动触发爬虫
-    var _orig = enterVideoMode;
-    enterVideoMode = function(){_orig();setTimeout(function(){triggerScraper();},1200);};
+    // 进入视频模式自动触发
+    var _orig=enterVideoMode;
+    enterVideoMode=function(){_orig();setTimeout(function(){triggerScraper();},1500);};
 
-    // 快捷退出: Esc 键返回游戏
+    // Esc 返回游戏
     document.addEventListener('keydown',function(e){
         if(e.keyCode===27&&document.body.classList.contains('dark-mode')){goBackToGame();}
     });
 
-    // ============================================================
-    // 启动
-    // ============================================================
+    // ============ 启动 ============
     initGame();
     </script>
 </body>
