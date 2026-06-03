@@ -252,8 +252,11 @@
             if (video.video_url) window.open(video.video_url, '_blank');
         };
 
-        var thumbHtml = video.thumbnail_url
-            ? '<img src="' + esc(video.thumbnail_url) + '" alt="' + esc(video.title || '') + '" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">'
+        var proxyUrl = video.thumbnail_url
+            ? 'https://wsrv.nl/?url=' + encodeURIComponent(video.thumbnail_url)
+            : '';
+        var thumbHtml = proxyUrl
+            ? '<img src="' + esc(proxyUrl) + '" alt="' + esc(video.title || '') + '" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">'
             : '';
 
         card.innerHTML =
