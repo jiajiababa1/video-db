@@ -1,0 +1,42 @@
+# monsnode 视频爬虫 - 每日定时任务
+# 每天 UTC 0:00 (北京时间 8:00) 自动运行
+
+name: Daily Video Scraper
+
+on:
+  schedule:
+    # 每天 UTC 0:00 运行 (北京时间 8:00)
+    - cron: "0 0 * * *"
+  # 允许手动触发
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: |
+          pip install -r scraper/requirements.txt
+
+      - name: 运行爬虫
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python scraper/main.py
+
+      - name: 上传日志 (失败时)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-error-log
+          path: debug_page.html

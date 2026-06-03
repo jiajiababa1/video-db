@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <title>视频数据库 - monsnode</title>
+    <style>
+        :root {
+            --bg: #0f0f11;
+            --card-bg: #1a1a1f;
+            --card-hover: #22222a;
+            --text: #e4e4e7;
+            --text-secondary: #a1a1aa;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --border: #27272a;
+            --radius: 12px;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5;
+        }
+        .header {
+            position: sticky; top: 0; z-index: 100; background: var(--bg);
+            border-bottom: 1px solid var(--border); padding: 16px 24px;
+            display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+        }
+        .header-logo { font-size: 20px; font-weight: 700; color: var(--text); text-decoration: none; white-space: nowrap; }
+        .header-logo span { color: var(--accent); }
+        .search-box { flex: 1; min-width: 200px; max-width: 480px; position: relative; }
+        .search-box input {
+            width: 100%; padding: 10px 16px 10px 40px; border-radius: 999px;
+            border: 1px solid var(--border); background: var(--card-bg);
+            color: var(--text); font-size: 14px; outline: none; transition: border-color 0.2s;
+        }
+        .search-box input:focus { border-color: var(--accent); }
+        .search-box input::placeholder { color: var(--text-secondary); }
+        .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-secondary); pointer-events: none; }
+        .header-stats { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+        .video-card {
+            background: var(--card-bg); border-radius: var(--radius); overflow: hidden;
+            border: 1px solid var(--border);
+            transition: transform 0.2s, background 0.2s, border-color 0.2s;
+            cursor: pointer; display: flex; flex-direction: column;
+        }
+        .video-card:hover { transform: translateY(-4px); background: var(--card-hover); border-color: var(--accent); }
+        .thumbnail-wrap { position: relative; width: 100%; padding-top: 56.25%; background: #18181b; overflow: hidden; }
+        .thumbnail-wrap img {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover; transition: transform 0.3s;
+        }
+        .video-card:hover .thumbnail-wrap img { transform: scale(1.05); }
+        .no-thumbnail {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: center;
+            background: #27272a; color: var(--text-secondary); font-size: 14px;
+        }
+        .video-info { padding: 14px 16px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+        .video-title {
+            font-size: 14px; font-weight: 500; color: var(--text);
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+            overflow: hidden; line-height: 1.5; min-height: 42px;
+        }
+        .video-meta { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-secondary); margin-top: auto; }
+        .video-id { font-family: "SF Mono", "Fira Code", monospace; font-size: 11px; color: var(--text-secondary); opacity: 0.7; }
+        .loading { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+        .spinner {
+            width: 36px; height: 36px; border: 3px solid var(--border);
+            border-top-color: var(--accent); border-radius: 50%;
+            animation: spin 0.8s linear infinite; margin: 0 auto 16px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-msg { text-align: center; padding: 40px 20px; color: #f87171; }
+        .empty-state { text-align: center; padding: 80px 20px; color: var(--text-secondary); }
+        .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+        .load-more-wrap { text-align: center; margin-top: 32px; padding-bottom: 40px; }
+        .load-more-btn {
+            padding: 12px 40px; border-radius: 999px; border: 1px solid var(--border);
+            background: var(--card-bg); color: var(--text); font-size: 14px; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .load-more-btn:hover { background: var(--card-hover); border-color: var(--accent); }
+        .load-more-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        @media (max-width: 640px) {
+            .header { padding: 12px 16px; }
+            .header-logo { font-size: 16px; }
+            .container { padding: 12px; }
+            .video-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+            .video-info { padding: 10px 12px; }
+            .video-title { font-size: 12px; min-height: 32px; }
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header">
+        <a href="/" class="header-logo">Video<span>DB</span></a>
+        <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="searchInput" placeholder="搜索视频标题..." autocomplete="off">
+        </div>
+        <span class="header-stats" id="headerStats">加载中...</span>
+        <button id="refreshBtn" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);cursor:pointer;font-size:13px;">刷新</button>
+    </header>
+
+    <main class="container">
+        <div class="video-grid" id="videoGrid">
+            <div class="loading" style="grid-column: 1 / -1;">
+                <div class="spinner"></div>
+                <p>正在连接数据库...</p>
+            </div>
+        </div>
+        <div id="statusArea"></div>
+        <div class="load-more-wrap" id="loadMoreWrap" style="display:none;">
+            <button class="load-more-btn" id="loadMoreBtn">加载更多</button>
+        </div>
+    </main>
+
+    <script>
+    // ============================================================
+    // 配置
+    // ============================================================
+    const SUPABASE_URL = 'https://fejspvbckgkbmfyoxiub.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
+
+    // ============================================================
+    // Supabase REST API 封装 (零外部依赖, 直接用 fetch)
+    // ============================================================
+    const API = {
+        _headers() {
+            return {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+            };
+        },
+
+        // 查询视频列表 (支持搜索、分页)
+        async getVideos(page, search, pageSize) {
+            var from = (page - 1) * pageSize;
+            var to = from + pageSize - 1;
+
+            // 构建查询参数
+            var params = 'select=*';
+            if (search && search.trim()) {
+                params += '&title=ilike.*' + encodeURIComponent(search.trim()) + '*';
+            }
+            params += '&order=created_at.desc';
+            params += '&limit=' + pageSize;
+            params += '&offset=' + from;
+
+            // 同时发两个请求: 数据 + 总数
+            var headers = this._headers();
+
+            // 数据请求
+            var dataResp = fetch(
+                SUPABASE_URL + '/rest/v1/videos?' + params,
+                { method: 'GET', headers: headers }
+            );
+
+            // 总数请求
+            var countHeaders = Object.assign({}, headers, { 'Prefer': 'count=exact' });
+            var countParams = 'select=*';
+            if (search && search.trim()) {
+                countParams += '&title=ilike.*' + encodeURIComponent(search.trim()) + '*';
+            }
+            countParams += '&limit=1';
+            var countResp = fetch(
+                SUPABASE_URL + '/rest/v1/videos?' + countParams,
+                { method: 'GET', headers: countHeaders }
+            );
+
+            var results = await Promise.all([dataResp, countResp]);
+            var dataRes = results[0];
+            var countRes = results[1];
+
+            if (!dataRes.ok) {
+                var err = await dataRes.text();
+                throw new Error('HTTP ' + dataRes.status + ': ' + err);
+            }
+
+            var data = await dataRes.json();
+            var count = 0;
+            if (countRes.ok) {
+                var range = countRes.headers.get('content-range');
+                if (range) {
+                    var m = range.match(/\/(\d+)/);
+                    if (m) count = parseInt(m[1]);
+                }
+            }
+
+            return { data: data || [], count: count };
+        },
+
+        // 获取总数
+        async getCount() {
+            var headers = Object.assign({}, this._headers(), { 'Prefer': 'count=exact' });
+            var resp = await fetch(
+                SUPABASE_URL + '/rest/v1/videos?select=id&limit=1',
+                { method: 'GET', headers: headers }
+            );
+            if (resp.ok) {
+                var range = resp.headers.get('content-range');
+                if (range) {
+                    var m = range.match(/\/(\d+)/);
+                    if (m) return parseInt(m[1]);
+                }
+            }
+            return 0;
+        }
+    };
+
+    // ============================================================
+    // 全局状态
+    // ============================================================
+    var PAGE_SIZE = 24;
+    var currentPage = 1;
+    var totalCount = 0;
+    var isLoading = false;
+    var searchQuery = '';
+    var searchTimer = null;
+
+    // ============================================================
+    // DOM
+    // ============================================================
+    var videoGrid = document.getElementById('videoGrid');
+    var statusArea = document.getElementById('statusArea');
+    var loadMoreWrap = document.getElementById('loadMoreWrap');
+    var loadMoreBtn = document.getElementById('loadMoreBtn');
+    var searchInput = document.getElementById('searchInput');
+    var headerStats = document.getElementById('headerStats');
+
+    // ============================================================
+    // 渲染
+    // ============================================================
+    function esc(str) {
+        if (!str) return '';
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function renderVideoCard(video) {
+        var card = document.createElement('div');
+        card.className = 'video-card';
+        card.title = video.title || video.video_id;
+        card.onclick = function() {
+            if (video.video_url) window.open(video.video_url, '_blank');
+        };
+
+        var thumbHtml = video.thumbnail_url
+            ? '<img src="' + esc(video.thumbnail_url) + '" alt="' + esc(video.title || '') + '" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">'
+            : '';
+
+        card.innerHTML =
+            '<div class="thumbnail-wrap">' +
+                thumbHtml +
+                '<div class="no-thumbnail" style="' + (video.thumbnail_url ? 'display:none;' : '') + '">No Cover</div>' +
+            '</div>' +
+            '<div class="video-info">' +
+                '<div class="video-title">' + esc(video.title || video.video_id) + '</div>' +
+                '<div class="video-meta">' +
+                    '<span class="video-id">' + esc(video.video_id) + '</span>' +
+                    (video.author ? '<span>' + esc(video.author) + '</span>' : '') +
+                '</div>' +
+            '</div>';
+
+        return card;
+    }
+
+    function renderVideos(videos, append) {
+        if (!append) videoGrid.innerHTML = '';
+
+        if (videos.length === 0 && !append) {
+            videoGrid.innerHTML =
+                '<div class="empty-state" style="grid-column: 1 / -1;">' +
+                    '<div class="icon">No Data</div>' +
+                    '<p>' + (searchQuery ? '没有找到匹配的视频' : '暂无视频数据') + '</p>' +
+                    '<p style="font-size:13px;margin-top:8px;">' +
+                        (searchQuery ? '试试其他关键词' : '等待爬虫首次运行后就会有数据啦') +
+                    '</p>' +
+                '</div>';
+            loadMoreWrap.style.display = 'none';
+            return;
+        }
+
+        var fragment = document.createDocumentFragment();
+        for (var i = 0; i < videos.length; i++) {
+            fragment.appendChild(renderVideoCard(videos[i]));
+        }
+        videoGrid.appendChild(fragment);
+    }
+
+    // ============================================================
+    // 加载逻辑
+    // ============================================================
+    async function loadVideos(reset) {
+        if (isLoading) return;
+        isLoading = true;
+
+        if (reset) {
+            currentPage = 1;
+            videoGrid.innerHTML = '';
+        }
+
+        loadMoreBtn.disabled = true;
+
+        try {
+            var result = await API.getVideos(currentPage, searchQuery, PAGE_SIZE);
+            totalCount = result.count;
+            headerStats.textContent = '共 ' + totalCount.toLocaleString() + ' 个视频';
+
+            renderVideos(result.data, currentPage > 1);
+
+            var hasMore = result.data.length >= PAGE_SIZE;
+            loadMoreWrap.style.display = hasMore ? 'block' : 'none';
+        } catch (e) {
+            videoGrid.innerHTML =
+                '<div class="error-msg" style="grid-column: 1 / -1;">' +
+                    '<p>加载失败</p>' +
+                    '<p style="font-size:13px;margin-top:8px;">' + esc(e.message) + '</p>' +
+                '</div>';
+            headerStats.textContent = '连接失败';
+        } finally {
+            isLoading = false;
+            loadMoreBtn.disabled = false;
+        }
+    }
+
+    async function loadMore() {
+        currentPage++;
+        loadMoreBtn.disabled = true;
+        loadMoreBtn.textContent = '加载中...';
+
+        try {
+            var result = await API.getVideos(currentPage, searchQuery, PAGE_SIZE);
+            totalCount = result.count;
+            headerStats.textContent = '共 ' + totalCount.toLocaleString() + ' 个视频';
+            renderVideos(result.data, true);
+
+            var hasMore = result.data.length >= PAGE_SIZE;
+            loadMoreWrap.style.display = hasMore ? 'block' : 'none';
+        } catch (e) {
+            alert('加载失败: ' + e.message);
+        } finally {
+            loadMoreBtn.disabled = false;
+            loadMoreBtn.textContent = '加载更多';
+        }
+    }
+
+    // ============================================================
+    // 搜索
+    // ============================================================
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimer);
+        var self = this;
+        searchTimer = setTimeout(function() {
+            searchQuery = self.value;
+            loadVideos(true);
+        }, 300);
+    });
+
+    // ============================================================
+    // 事件
+    // ============================================================
+    loadMoreBtn.addEventListener('click', loadMore);
+    document.getElementById('refreshBtn').addEventListener('click', function() { loadVideos(true); });
+
+    // ============================================================
+    // 启动
+    // ============================================================
+    (async function boot() {
+        // 获取总数
+        try {
+            var n = await API.getCount();
+            totalCount = n;
+            headerStats.textContent = '共 ' + n.toLocaleString() + ' 个视频';
+        } catch (e) {
+            headerStats.textContent = '连接失败';
+        }
+
+        // 加载视频列表
+        loadVideos(true);
+    })();
+    </script>
+</body>
+</html>
