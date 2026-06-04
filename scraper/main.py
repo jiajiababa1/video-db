@@ -1,8 +1,10 @@
 """
-monsnode.com 瑙嗛鐖櫕 v5
-- 浼樺厛浣跨敤 Playwright 鏃犲ご Chromium 缁曡繃 Cloudflare
-- 鏈湴鐜鍙敤 curl_cffi 鍔犻€燂紙閫氳繃 --fast 鍙傛暟锛?- 鎶撳彇澶氭椂闂存椤甸潰 + 鐑棬/鏈€鏂?鎺掕
-- 閫氳繃 Supabase REST API 瀛樺叆鏁版嵁搴?"""
+monsnode.com 视频爬虫 v5
+- 优先使用 Playwright 无头 Chromium 绕过 Cloudflare
+- 本地环境可用 curl_cffi 加速（通过 --fast 参数）
+- 抓取多时间段页面 + 热门/最新/排行
+- 通过 Supabase REST API 存入数据库
+"""
 import os
 import re
 import sys
@@ -45,10 +47,10 @@ def build_page_url(base_url: str, page: int) -> str:
     return f"{base_url}{sep}p={page}"
 
 
-# ========== Playwright 妯″紡 ==========
+# ========== Playwright 模式 ==========
 
 async def _fetch_playwright(browser, url: str) -> str | None:
-    """鐢?Playwright 鎶撳彇鍗曢〉"""
+    """用 Playwright 抓取单页"""
     page = None
     try:
         page = await browser.new_page()
@@ -57,19 +59,19 @@ async def _fetch_playwright(browser, url: str) -> str | None:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         })
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        # 绛?JS 鎵ц鍜?Cloudflare challenge 瀹屾垚
+        # 等 JS 执行和 Cloudflare challenge 完成
         await asyncio.sleep(2)
         html = await page.content()
         if "listn" in html:
             return html
-        # 濡傛灉鏄?Cloudflare 楠岃瘉椤碉紝澶氱瓑涓€浼氬効
+        # 如果是 Cloudflare 验证页，多等一会儿
         if "cf-browser-verification" in html.lower() or "checking your browser" in html.lower():
             await asyncio.sleep(5)
             html = await page.content()
             if "listn" in html:
                 return html
     except Exception as e:
-        log(f"Playwright 閿欒: {str(e)[:80]}", "WARN")
+        log(f"Playwright 错误: {str(e)[:80]}", "WARN")
     finally:
         if page:
             await page.close()
@@ -77,11 +79,11 @@ async def _fetch_playwright(browser, url: str) -> str | None:
 
 
 async def scrape_with_playwright() -> dict:
-    """Playwright 妯″紡涓绘祦绋?""
+    """Playwright 模式主流程"""
     from playwright.async_api import async_playwright
     import subprocess
 
-    # 纭繚 Chromium 宸插畨瑁咃紙鍚郴缁熶緷璧栵級
+    # 确保 Chromium 已安装（含系统依赖）
     try:
         subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
                        capture_output=True, timeout=120)
@@ -115,23 +117,23 @@ async def scrape_with_playwright() -> dict:
                             break
                         if attempt < MAX_RETRIES:
                             wait = 5 * attempt
-                            log(f"閲嶈瘯 (attempt {attempt}): 绛夊緟 {wait}s", "WARN")
+                            log(f"重试 (attempt {attempt}): 等待 {wait}s", "WARN")
                             await asyncio.sleep(wait)
 
                     if not html:
                         if page_num == 1:
-                            stats["errors"].append(f"棣栭〉鎶撳彇澶辫触: {url}")
+                            stats["errors"].append(f"首页抓取失败: {url}")
                             break
                         else:
-                            log(f"[{label}] 绗瑊page_num}椤靛け璐ワ紝鍋滄缈婚〉", "WARN")
+                            log(f"[{label}] 第{page_num}页失败，停止翻页", "WARN")
                             break
 
                     stats["pages_crawled"] += 1
                     videos = parse_video_cards(html, url, label)
-                    log(f"  绗瑊page_num}椤? {len(videos)} 涓棰?)
+                    log(f"  第{page_num}页: {len(videos)} 个视频")
 
                     if not videos:
-                        log(f"[{label}] 鏃犺棰戯紝鍋滄缈婚〉")
+                        log(f"[{label}] 无视频，停止翻页")
                         break
 
                     existing = {v["video_id"] for v in all_videos}
@@ -147,12 +149,12 @@ async def scrape_with_playwright() -> dict:
 
                 stats["sections_crawled"] += 1
                 stats["videos_found"] += len(all_videos)
-                log(f"[{label}] 鍏?{len(all_videos)} 涓棰?)
+                log(f"[{label}] 共 {len(all_videos)} 个视频")
 
                 if all_videos:
                     saved = supabase_save(all_videos)
                     stats["videos_saved"] += saved
-                    log(f"[{label}] 宸蹭繚瀛?{saved}")
+                    log(f"[{label}] 已保存 {saved}")
 
                 await asyncio.sleep(REQUEST_DELAY)
         finally:
@@ -162,10 +164,10 @@ async def scrape_with_playwright() -> dict:
     return stats
 
 
-# ========== curl_cffi 妯″紡 (鏈湴蹇€? ==========
+# ========== curl_cffi 模式 (本地快速) ==========
 
 def scrape_with_curl_cffi() -> dict:
-    """curl_cffi 妯″紡锛堟湰鍦颁娇鐢紝GitHub Actions 涓?IP 琚皝锛?""
+    """curl_cffi 模式（本地使用，GitHub Actions 上 IP 被封）"""
     from curl_cffi import requests
 
     stats = {
@@ -202,15 +204,15 @@ def scrape_with_curl_cffi() -> dict:
 
             if not soup:
                 if page_num == 1:
-                    stats["errors"].append(f"棣栭〉鎶撳彇澶辫触: {url}")
+                    stats["errors"].append(f"首页抓取失败: {url}")
                     break
                 else:
-                    log(f"[{label}] 绗瑊page_num}椤靛け璐ワ紝鍋滄缈婚〉", "WARN")
+                    log(f"[{label}] 第{page_num}页失败，停止翻页", "WARN")
                     break
 
             stats["pages_crawled"] += 1
             videos = parse_video_cards(soup, url, label)
-            log(f"  绗瑊page_num}椤? {len(videos)} 涓棰?)
+            log(f"  第{page_num}页: {len(videos)} 个视频")
 
             if not videos:
                 break
@@ -228,12 +230,12 @@ def scrape_with_curl_cffi() -> dict:
 
         stats["sections_crawled"] += 1
         stats["videos_found"] += len(all_videos)
-        log(f"[{label}] 鍏?{len(all_videos)} 涓棰?)
+        log(f"[{label}] 共 {len(all_videos)} 个视频")
 
         if all_videos:
             saved = supabase_save(all_videos)
             stats["videos_saved"] += saved
-            log(f"[{label}] 宸蹭繚瀛?{saved}")
+            log(f"[{label}] 已保存 {saved}")
 
         time.sleep(REQUEST_DELAY)
 
@@ -241,10 +243,10 @@ def scrape_with_curl_cffi() -> dict:
     return stats
 
 
-# ========== 鍏辩敤瑙ｆ瀽 ==========
+# ========== 共用解析 ==========
 
 def parse_video_cards(soup_or_html, page_url: str, section: str) -> list[dict]:
-    """瑙ｆ瀽 monsnode 椤甸潰锛屾彁鍙栬棰戝崱鐗?""
+    """解析 monsnode 页面，提取视频卡片"""
     if isinstance(soup_or_html, str):
         soup = BeautifulSoup(soup_or_html, "lxml")
     else:
@@ -321,7 +323,7 @@ def parse_video_cards(soup_or_html, page_url: str, section: str) -> list[dict]:
 # ========== Supabase ==========
 
 def supabase_save(videos: list[dict]) -> int:
-    """鎵归噺 upsert 鍒?Supabase"""
+    """批量 upsert 到 Supabase"""
     if not videos:
         return 0
     import httpx as hx
@@ -364,7 +366,7 @@ def supabase_save(videos: list[dict]) -> int:
                         if attempt < 3:
                             time.sleep(2 ** attempt)
                 except Exception as e:
-                    log(f"Supabase寮傚父: {e}", "WARN")
+                    log(f"Supabase异常: {e}", "WARN")
                     time.sleep(2)
     finally:
         client.close()
@@ -397,10 +399,10 @@ def _save_status(stats: dict):
         pass
 
 
-# ========== 涓诲叆鍙?==========
+# ========== 主入口 ==========
 
 def detect_env() -> str:
-    """妫€娴嬭繍琛岀幆澧? 'github' | 'local'"""
+    """检测运行环境: 'github' | 'local'"""
     if os.environ.get("GITHUB_ACTIONS") == "true":
         return "github"
     return "local"
@@ -408,30 +410,30 @@ def detect_env() -> str:
 
 def main():
     if not SUPABASE_URL or not SUPABASE_KEY:
-        log("璇疯缃?SUPABASE_URL 鍜?SUPABASE_KEY", "ERROR")
+        log("请设置 SUPABASE_URL 和 SUPABASE_KEY", "ERROR")
         sys.exit(1)
 
     fast_mode = "--fast" in sys.argv
     env = detect_env()
 
     print("=" * 55)
-    log(f"monsnode 鐖櫕 v5 | 鐜: {env} | 妯″紡: {'curl_cffi' if fast_mode else 'Playwright'}")
+    log(f"monsnode 爬虫 v5 | 环境: {env} | 模式: {'curl_cffi' if fast_mode else 'Playwright'}")
     print("=" * 55)
 
     if fast_mode or env == "local":
-        # 鏈湴浣跨敤 curl_cffi锛堟洿蹇級
+        # 本地使用 curl_cffi（更快）
         stats = scrape_with_curl_cffi()
     else:
-        # GitHub Actions 浣跨敤 Playwright
+        # GitHub Actions 使用 Playwright
         stats = asyncio.run(scrape_with_playwright())
 
     _save_status(stats)
 
     print("\n" + "=" * 55)
-    print(f"  Section: {stats['sections_crawled']}  椤甸潰: {stats['pages_crawled']}")
-    print(f"  鍙戠幇: {stats['videos_found']}  淇濆瓨: {stats['videos_saved']}")
+    print(f"  Section: {stats['sections_crawled']}  页面: {stats['pages_crawled']}")
+    print(f"  发现: {stats['videos_found']}  保存: {stats['videos_saved']}")
     if stats["errors"]:
-        print(f"  閿欒: {len(stats['errors'])}")
+        print(f"  错误: {len(stats['errors'])}")
         for e in stats["errors"][:5]:
             print(f"    - {e[:120]}")
     print("=" * 55)
