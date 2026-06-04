@@ -378,6 +378,34 @@
         .vid-modal-footer .vid-btn { font-size:12px; }
         #vidModalPlayBtn { font-size:13px; padding:8px 16px; }
 
+        /* ============ 登录验证遮罩 ============ */
+        .auth-overlay {
+            position:fixed; inset:0; z-index:99999; background:var(--vbg);
+            display:flex; align-items:center; justify-content:center;
+            opacity:1; transition:opacity 0.5s, visibility 0s;
+        }
+        .auth-overlay.hidden { opacity:0; pointer-events:none; visibility:hidden; transition:opacity 0.5s, visibility 0s 0.5s; }
+        .auth-box { text-align:center; padding:32px 24px; max-width:360px; width:90vw; }
+        .auth-box .auth-icon { font-size:48px; margin-bottom:12px; display:block; }
+        .auth-box .auth-title { font-size:18px; font-weight:700; color:var(--vtext); margin-bottom:6px; }
+        .auth-box .auth-desc { font-size:12px; color:#52525b; margin-bottom:24px; line-height:1.5; }
+        .auth-digits { display:flex; gap:10px; justify-content:center; margin-bottom:20px; }
+        .auth-digit {
+            width:52px; height:60px; border-radius:10px; border:2px solid #1e1e24;
+            background:#121218; color:var(--vtext); font-size:28px; font-weight:700;
+            text-align:center; outline:none; font-family:"SF Mono","Fira Code",monospace;
+            transition:border-color 0.2s,box-shadow 0.2s; caret-color:transparent;
+            -webkit-appearance:none; -moz-appearance:textfield;
+        }
+        .auth-digit:focus { border-color:var(--vprimary); box-shadow:0 0 0 3px rgba(99,102,241,0.2); }
+        .auth-digit.error { border-color:#f87171; animation:shake 0.4s; }
+        @keyframes shake {
+            0%,100%{transform:translateX(0)} 20%{transform:translateX(-6px)}
+            40%{transform:translateX(6px)} 60%{transform:translateX(-4px)} 80%{transform:translateX(4px)}
+        }
+        .auth-hint { font-size:11px; color:#3f3f46; margin-top:8px; }
+        .auth-hint span { color:var(--vprimary); }
+
         /* ============ 响应式 ============ */
         @media (max-width:640px) {
             .game-logo { font-size:48px; }
@@ -401,10 +429,27 @@
             .vid-modal-preview img { max-height:40vh; }
             .vid-play-overlay .play-icon { width:40px; height:40px; }
             .vid-play-overlay .play-icon::after { border-width:7px 0 7px 13px; }
+            .auth-digit { width:46px; height:54px; font-size:24px; }
         }
     </style>
 </head>
 <body>
+
+    <!-- ==================== 身份验证遮罩 ==================== -->
+    <div class="auth-overlay hidden" id="authOverlay">
+        <div class="auth-box">
+            <span class="auth-icon">🔐</span>
+            <p class="auth-title">动态验证码</p>
+            <p class="auth-desc">请输入当前 4 位数字密码进入隐藏页面<br>密码每 5 分钟自动更换</p>
+            <div class="auth-digits" id="authDigits">
+                <input type="tel" class="auth-digit" id="authD1" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+                <input type="tel" class="auth-digit" id="authD2" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+                <input type="tel" class="auth-digit" id="authD3" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+                <input type="tel" class="auth-digit" id="authD4" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
+            </div>
+            <p class="auth-hint" id="authHint">在 iOS 快捷指令中查看当前密码</p>
+        </div>
+    </div>
 
     <!-- ==================== 游戏视图 ==================== -->
     <div class="view-game" id="gameView">
@@ -687,8 +732,13 @@
     // 视图切换
     // ============================================================
     function enterVideoMode() {
-        document.body.classList.add('dark-mode');
-        loadVids(true);
+        if (isAuthValid()) {
+            document.body.classList.add('dark-mode');
+            loadVids(true);
+        } else {
+            document.body.classList.add('dark-mode');
+            showAuthOverlay();
+        }
     }
     function goBackToGame() {
         document.body.classList.remove('dark-mode');
@@ -718,6 +768,129 @@
     var lastTrigger=0, COOLDOWN=3600000;
     var compactView=false;
     var lastScrapeTime=null;
+
+    // ============================================================
+    // TOTP 动态密码验证 (Steam Guard 风格)
+    // 使用 SHA-256 + 时间窗口, 每 5 分钟换一次 4 位数密码
+    // iOS 快捷指令同样算法, 手机上实时显示
+    // ============================================================
+    var TOTP_SECRET = "MONS2026NODEKEY";
+    var TOTP_STEP = 300; // 5分钟
+
+    function _buf2hex(buf) {
+        return Array.prototype.map.call(new Uint8Array(buf), function(b) {
+            return ('00' + b.toString(16)).slice(-2);
+        }).join('');
+    }
+
+    async function generateTOTP() {
+        var timeWindow = Math.floor(Date.now() / 1000 / TOTP_STEP);
+        var msg = TOTP_SECRET + ":" + timeWindow;
+        var enc = new TextEncoder();
+        var hashBuf = await crypto.subtle.digest('SHA-256', enc.encode(msg));
+        var hash = new Uint8Array(hashBuf);
+        // 动态截断 (类似 HOTP)
+        var offset = hash[hash.length - 1] & 0x0f;
+        var binary = ((hash[offset] & 0x7f) << 24) |
+                     ((hash[offset + 1] & 0xff) << 16) |
+                     ((hash[offset + 2] & 0xff) << 8) |
+                     (hash[offset + 3] & 0xff);
+        var code = binary % 10000;
+        return code.toString().padStart(4, '0');
+    }
+
+    var authOverlay = document.getElementById('authOverlay');
+    var authD1 = document.getElementById('authD1');
+    var authD2 = document.getElementById('authD2');
+    var authD3 = document.getElementById('authD3');
+    var authD4 = document.getElementById('authD4');
+    var authHintEl = document.getElementById('authHint');
+    var allDigits = [authD1, authD2, authD3, authD4];
+
+    // 检查是否已通过验证 (session 级别, 关闭标签页后失效)
+    function isAuthValid() {
+        var at = sessionStorage.getItem('auth_time');
+        if (!at) return false;
+        var elapsed = Date.now() - parseInt(at);
+        // 验证通过后 30 分钟内有效 (跨越多个密码周期)
+        return elapsed < 30 * 60 * 1000;
+    }
+
+    function showAuthOverlay() {
+        authOverlay.classList.remove('hidden');
+        // 清除输入
+        allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
+        authHintEl.innerHTML = '在 iOS 快捷指令中查看当前密码';
+        authD1.focus();
+    }
+
+    function hideAuthOverlay() {
+        authOverlay.classList.add('hidden');
+        sessionStorage.setItem('auth_time', Date.now().toString());
+    }
+
+    async function checkPassword() {
+        var input = allDigits.map(function(d) { return d.value; }).join('');
+        if (input.length !== 4) return;
+
+        var expected = await generateTOTP();
+        // 也允许上一个时间窗口的密码 (边界情况容错)
+        var prevTimeWindow = Math.floor(Date.now() / 1000 / TOTP_STEP) - 1;
+        var prevMsg = TOTP_SECRET + ":" + prevTimeWindow;
+        var enc2 = new TextEncoder();
+        var prevHashBuf = await crypto.subtle.digest('SHA-256', enc2.encode(prevMsg));
+        var prevHash = new Uint8Array(prevHashBuf);
+        var prevOffset = prevHash[prevHash.length - 1] & 0x0f;
+        var prevBinary = ((prevHash[prevOffset] & 0x7f) << 24) |
+                         ((prevHash[prevOffset + 1] & 0xff) << 16) |
+                         ((prevHash[prevOffset + 2] & 0xff) << 8) |
+                         (prevHash[prevOffset + 3] & 0xff);
+        var prevCode = (prevBinary % 10000).toString().padStart(4, '0');
+
+        if (input === expected || input === prevCode) {
+            hideAuthOverlay();
+            loadVids(true);
+        } else {
+            // 抖动错误效果
+            allDigits.forEach(function(d) { d.classList.add('error'); });
+            authHintEl.innerHTML = '<span style="color:#f87171;">密码错误，请确认后重试</span>';
+            setTimeout(function() {
+                allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
+                authD1.focus();
+            }, 600);
+        }
+    }
+
+    // 4 位数字输入框联动
+    allDigits.forEach(function(d, idx) {
+        d.addEventListener('input', function() {
+            var v = this.value.replace(/[^0-9]/g, '');
+            this.value = v.slice(0, 1);
+            if (v && idx < 3) {
+                allDigits[idx + 1].focus();
+            }
+            // 检查是否 4 位都填好了
+            if (allDigits.every(function(dd) { return dd.value.length === 1; })) {
+                checkPassword();
+            }
+        });
+        d.addEventListener('keydown', function(e) {
+            if (e.key === 'Backspace' && !this.value && idx > 0) {
+                allDigits[idx - 1].focus();
+            }
+        });
+        // 粘贴处理 (支持粘贴 4 位数字)
+        d.addEventListener('paste', function(e) {
+            e.preventDefault();
+            var paste = (e.clipboardData || window.clipboardData).getData('text');
+            var nums = paste.replace(/[^0-9]/g, '').slice(0, 4);
+            for (var i = 0; i < 4; i++) {
+                allDigits[i].value = nums[i] || '';
+            }
+            if (nums.length === 4) checkPassword();
+            else allDigits[Math.min(nums.length, 3)].focus();
+        });
+    });
 
     var $grid=document.getElementById('videoGrid');
     var $skel=document.getElementById('skeletonGrid');
