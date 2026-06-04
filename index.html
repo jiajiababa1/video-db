@@ -777,6 +777,14 @@
     var TOTP_SECRET = "MONS2026NODEKEY";
     var TOTP_STEP = 300; // 5分钟
 
+    function _hexCharVal(c) {
+        var code = c.charCodeAt(0);
+        if (code >= 48 && code <= 57) return code - 48;      // 0-9
+        if (code >= 97 && code <= 102) return code - 87;     // a-f
+        if (code >= 65 && code <= 70) return code - 55;      // A-F
+        return 0;
+    }
+
     async function generateTOTP() {
         var timeWindow = Math.floor(Date.now() / 1000 / TOTP_STEP);
         var msg = TOTP_SECRET + ":" + timeWindow;
@@ -786,9 +794,13 @@
         var hashHex = Array.prototype.map.call(new Uint8Array(hashBuf), function(b) {
             return ('00' + b.toString(16)).slice(-2);
         }).join('');
-        // 取最后 8 个 hex 字符 (最后 4 字节) 转为数字
-        var num = parseInt(hashHex.slice(-8), 16);
-        var code = num % 10000;
+        // 取最后 4 个 hex 字符, 逐个转为数值 (与 iOS 快捷指令字典查表方式一致)
+        var last4 = hashHex.slice(-4);
+        var code = 0;
+        for (var i = 0; i < 4; i++) {
+            code = code * 16 + _hexCharVal(last4[i]);
+        }
+        code = code % 10000;
         return code.toString().padStart(4, '0');
     }
 
@@ -835,8 +847,10 @@
         var prevHashHex = Array.prototype.map.call(new Uint8Array(prevHashBuf), function(b) {
             return ('00' + b.toString(16)).slice(-2);
         }).join('');
-        var prevNum = parseInt(prevHashHex.slice(-8), 16);
-        var prevCode = (prevNum % 10000).toString().padStart(4, '0');
+        var prevLast4 = prevHashHex.slice(-4);
+        var prevCode = 0;
+        for (var j = 0; j < 4; j++) { prevCode = prevCode * 16 + _hexCharVal(prevLast4[j]); }
+        prevCode = (prevCode % 10000).toString().padStart(4, '0');
 
         if (input === expected || input === prevCode) {
             hideAuthOverlay();
