@@ -461,6 +461,88 @@ def _save_status(stats: dict):
         pass
 
 
+def _scrape_failed_with_playwright(error_list: list) -> dict:
+    """用 Playwright 回退抓取 curl_cffi 失败的页面"""
+    import subprocess
+    result = {"videos_found": 0, "videos_saved": 0, "pages_crawled": 0, "remaining_errors": []}
+
+    # 从错误信息中提取 URL 和 label
+    failed_sections = []
+    url_label_map = {urljoin(BASE_URL, p): lb for p, lb, _ in TARGET_SECTIONS}
+    # 也添加带参数的 URL
+    for path, label, _ in TARGET_SECTIONS:
+        section_url = urljoin(BASE_URL, path)
+        for e in error_list:
+            if section_url in e:
+                failed_sections.append((section_url, label))
+                break
+
+    if not failed_sections:
+        result["remaining_errors"] = error_list
+        return result
+
+    # 确保 Chromium 已安装
+    try:
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                       capture_output=True, timeout=120)
+    except Exception:
+        pass
+
+    import asyncio as aio
+    from playwright.async_api import async_playwright
+
+    async def _pw_scrape():
+        nonlocal result
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox",
+                      "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            try:
+                for section_url, label in failed_sections:
+                    all_videos = []
+                    log(f"[PW回退] [{label}] {section_url}")
+                    page = None
+                    try:
+                        page = await browser.new_page()
+                        await page.set_extra_http_headers({
+                            "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        })
+                        await page.goto(section_url, wait_until="domcontentloaded", timeout=30000)
+                        try:
+                            await page.wait_for_selector("div.listn", timeout=30000)
+                            await aio.sleep(1)
+                        except Exception:
+                            pass
+                        html = await page.content()
+                        if html:
+                            soup = BeautifulSoup(html, "lxml")
+                            videos = parse_video_cards(soup, section_url, label)
+                            log(f"  {len(videos)} 个视频")
+                            all_videos = videos
+                            result["pages_crawled"] += 1
+                    except Exception as e:
+                        log(f"Playwright 错误: {str(e)[:80]}", "WARN")
+                    finally:
+                        if page:
+                            await page.close()
+
+                    result["videos_found"] += len(all_videos)
+                    if all_videos:
+                        saved = supabase_save(all_videos)
+                        result["videos_saved"] += saved
+                        log(f"[PW回退] [{label}] 保存 {saved}")
+                    await aio.sleep(2)
+                result["remaining_errors"] = []  # 已处理
+            finally:
+                await browser.close()
+
+    aio.run(_pw_scrape())
+    return result
+
+
 # ========== 主入口 ==========
 
 def detect_env() -> str:
@@ -483,10 +565,17 @@ def main():
     print("=" * 55)
 
     if fast_mode or env == "local":
-        # 本地使用 curl_cffi（更快）
         stats = scrape_with_curl_cffi()
+        # 对 curl_cffi 失败的页面, 尝试 Playwright 回退
+        if stats["errors"]:
+            log("尝试 Playwright 回退失败页面...", "INFO")
+            pw_stats = _scrape_failed_with_playwright(stats["errors"])
+            stats["videos_found"] += pw_stats["videos_found"]
+            stats["videos_saved"] += pw_stats["videos_saved"]
+            stats["pages_crawled"] += pw_stats["pages_crawled"]
+            # 清除已处理的错误
+            stats["errors"] = pw_stats.get("remaining_errors", [])
     else:
-        # GitHub Actions 使用 Playwright
         stats = asyncio.run(scrape_with_playwright())
 
     _save_status(stats)
