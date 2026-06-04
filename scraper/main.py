@@ -29,7 +29,7 @@ TARGET_SECTIONS = [
 ]
 
 REQUEST_DELAY = 2.0
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 MAX_VIDEOS_PER_SECTION = 200
 BATCH_SIZE = 50
 
@@ -49,7 +49,7 @@ def build_page_url(base_url: str, page: int) -> str:
 
 # ========== Playwright 模式 ==========
 
-async def _fetch_playwright(browser, url: str) -> str | None:
+async def _fetch_playwright(browser, url: str, label: str) -> str | None:
     """用 Playwright 抓取单页，等待 Cloudflare 验证完成"""
     page = None
     try:
@@ -58,23 +58,30 @@ async def _fetch_playwright(browser, url: str) -> str | None:
             "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         })
-        await page.goto(url, wait_until="networkidle", timeout=60000)
-        # 等待 Cloudflare JS Challenge 完成（最长等 15 秒）
-        for _ in range(6):
-            html = await page.content()
-            if "listn" in html and "cf-browser-verification" not in html.lower():
-                return html
-            await asyncio.sleep(2.5)
-        # 最后检查一次
+        # 只用 load 事件（Cloudflare 页面永不休眠，networkidle 会超时）
+        await page.goto(url, wait_until="load", timeout=30000)
+        # 等待 Cloudflare JS Challenge + 动态内容加载
+        await asyncio.sleep(5)
         html = await page.content()
         if "listn" in html:
             return html
-        # 记录页面标题用于调试
+        # 多等几秒再试
+        await asyncio.sleep(5)
+        html = await page.content()
+        if "listn" in html:
+            return html
+        # 调试：保存首页 HTML 到文件
+        if label == "home":
+            try:
+                with open("debug_page.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+                log("已保存 debug_page.html 用于分析", "INFO")
+            except Exception:
+                pass
         title = await page.title()
-        body_snippet = html[:500]
-        log(f"页面无视频: title='{title[:80]}', body={body_snippet[:120]}", "WARN")
+        log(f"无视频: title='{title[:60]}', len={len(html)}", "WARN")
     except Exception as e:
-        log(f"Playwright 错误: {str(e)[:120]}", "WARN")
+        log(f"Playwright 错误: {str(e)[:100]}", "WARN")
     finally:
         if page:
             await page.close()
@@ -115,7 +122,7 @@ async def scrape_with_playwright() -> dict:
                     url = section_url if page_num == 1 else build_page_url(section_url, page_num)
 
                     for attempt in range(1, MAX_RETRIES + 1):
-                        html = await _fetch_playwright(browser, url)
+                        html = await _fetch_playwright(browser, url, label)
                         if html:
                             break
                         if attempt < MAX_RETRIES:
