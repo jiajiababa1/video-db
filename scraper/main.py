@@ -1,11 +1,9 @@
 """
-monsnode.com ???? v4
-- ?? curl_cffi ?? Chrome TLS ???? Cloudflare
-- ????????(24??/3?/7?/??/??/??/??)
-- ??????ID???????????redirect??
-- ?????? + ????
-- ?? Supabase REST API ?????
-"""
+monsnode.com 瑙嗛鐖櫕 v4
+- 浣跨敤 curl_cffi 妯℃嫙 Chrome TLS 鎸囩汗缁曡繃 Cloudflare
+- 鎶撳彇澶氭椂闂存椤甸潰锛?4灏忔椂/3澶?7澶?鐑棬/鎺ㄨ崘/鏈€鏂?鎺掕锛?- 姝ｇ‘鎻愬彇瑙嗛ID銆佺缉鐣ュ浘銆佹爣棰樸€佷綔鑰呫€乺edirect缂栧彿
+- 鎸囨暟閫€閬块噸璇?+ 璇︾粏鏃ュ織
+- 閫氳繃 Supabase REST API 瀛樺叆鏁版嵁搴?"""
 
 import os
 import re
@@ -19,7 +17,7 @@ from urllib.parse import urljoin
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 
-# ========== ?? ==========
+# ========== 閰嶇疆 ==========
 
 BASE_URL = "https://monsnode.com"
 
@@ -33,8 +31,7 @@ TARGET_SECTIONS = [
     ("/?ranking=1", "ranking", 2),
 ]
 
-# Chrome 125 ?????
-HEADERS = {
+# Chrome 125 瀹屾暣璇锋眰澶?HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -71,7 +68,7 @@ def build_page_url(base_url: str, page: int) -> str:
 
 
 def fetch_page(url: str, referer: str = "", retries: int = MAX_RETRIES) -> BeautifulSoup | None:
-    """? curl_cffi ????,?? Chrome 125 TLS ??"""
+    """鐢?curl_cffi 鎶撳彇椤甸潰锛屾ā鎷?Chrome 125 TLS 鎸囩汗"""
     headers = dict(HEADERS)
     headers["Referer"] = referer if referer else "https://www.google.com/"
 
@@ -87,28 +84,34 @@ def fetch_page(url: str, referer: str = "", retries: int = MAX_RETRIES) -> Beaut
                 return BeautifulSoup(resp.text, "lxml")
             elif resp.status_code == 429:
                 wait = 30 * attempt
-                log(f"?? (429),?? {wait}s...", "WARN")
+                log(f"闄愭祦 (429)锛岀瓑寰?{wait}s...", "WARN")
                 time.sleep(wait)
             elif resp.status_code == 403:
                 wait = 10 * attempt
-                log(f"?? (403),?? {wait}s ?? (?{attempt}?)...", "WARN")
+                log(f"鎷︽埅 (403)锛岀瓑寰?{wait}s 閲嶈瘯 (绗瑊attempt}娆?...", "WARN")
                 time.sleep(wait)
             elif resp.status_code >= 500:
                 wait = 2 ** attempt
-                log(f"????? {resp.status_code},?? {wait}s...", "WARN")
+                log(f"鏈嶅姟鍣ㄩ敊璇?{resp.status_code}锛岀瓑寰?{wait}s...", "WARN")
                 time.sleep(wait)
             else:
                 log(f"HTTP {resp.status_code}: {url}", "ERROR")
                 return None
         except Exception as e:
-            log(f"???? {url}: {e}", "WARN")
+            err_msg = str(e)
+            if "curl" in err_msg.lower() or "reset" in err_msg.lower():
+                wait = 5 * attempt
+                log(f"杩炴帴閲嶇疆 {url[:50]}锛岀瓑寰?{wait}s (绗瑊attempt}娆?...", "WARN")
+            else:
+                wait = 3 * attempt
+                log(f"鎶撳彇澶辫触 {url[:50]}: {e}", "WARN")
             if attempt < retries:
-                time.sleep(3 * attempt)
+                time.sleep(wait)
     return None
 
 
 def find_video_cards(soup: BeautifulSoup, page_url: str, section: str) -> list[dict]:
-    """?? monsnode ??,??????"""
+    """瑙ｆ瀽 monsnode 椤甸潰锛屾彁鍙栬棰戝崱鐗?""
     videos = []
     seen_ids = set()
 
@@ -177,10 +180,10 @@ def find_video_cards(soup: BeautifulSoup, page_url: str, section: str) -> list[d
     return videos
 
 
-# ========== Supabase (? httpx ??,????????) ==========
+# ========== Supabase (鐢?httpx 淇濈暀锛屽洜涓哄彧鏈夊啓鍏ラ渶瑕? ==========
 
 def supabase_save(videos: list[dict]) -> int:
-    """?? upsert ? Supabase"""
+    """鎵归噺 upsert 鍒?Supabase"""
     if not videos:
         return 0
     import httpx as hx
@@ -223,14 +226,14 @@ def supabase_save(videos: list[dict]) -> int:
                         if attempt < 3:
                             time.sleep(2 ** attempt)
                 except Exception as e:
-                    log(f"Supabase??: {e}", "WARN")
+                    log(f"Supabase寮傚父: {e}", "WARN")
                     time.sleep(2)
     finally:
         client.close()
     return saved
 
 
-# ========== ??? ==========
+# ========== 涓绘祦绋?==========
 
 def scrape_all() -> dict:
     stats = {
@@ -255,18 +258,18 @@ def scrape_all() -> dict:
             soup = fetch_page(url, referer=referer)
             if not soup:
                 if page == 1:
-                    stats["errors"].append(f"??????: {url}")
+                    stats["errors"].append(f"棣栭〉鎶撳彇澶辫触: {url}")
                     break
                 else:
-                    log(f"[{label}] ?{page}???,????", "WARN")
+                    log(f"[{label}] 绗瑊page}椤靛け璐ワ紝鍋滄缈婚〉", "WARN")
                     break
 
             stats["pages_crawled"] += 1
             videos = find_video_cards(soup, url, label)
-            log(f"  ?{page}?: {len(videos)} ???")
+            log(f"  绗瑊page}椤? {len(videos)} 涓棰?)
 
             if not videos:
-                log(f"[{label}] ???,????")
+                log(f"[{label}] 鏃犺棰戯紝鍋滄缈婚〉")
                 break
 
             existing = {v["video_id"] for v in all_videos}
@@ -282,12 +285,12 @@ def scrape_all() -> dict:
 
         stats["sections_crawled"] += 1
         stats["videos_found"] += len(all_videos)
-        log(f"[{label}] ? {len(all_videos)} ???")
+        log(f"[{label}] 鍏?{len(all_videos)} 涓棰?)
 
         if all_videos:
             saved = supabase_save(all_videos)
             stats["videos_saved"] += saved
-            log(f"[{label}] ??? {saved}")
+            log(f"[{label}] 宸蹭繚瀛?{saved}")
 
         time.sleep(REQUEST_DELAY)
 
@@ -324,20 +327,20 @@ def _save_status(stats: dict):
 
 def main():
     if not SUPABASE_URL or not SUPABASE_KEY:
-        log("??? SUPABASE_URL ? SUPABASE_KEY", "ERROR")
+        log("璇疯缃?SUPABASE_URL 鍜?SUPABASE_KEY", "ERROR")
         sys.exit(1)
 
     print("=" * 55)
-    log("monsnode ?? v4 (curl_cffi)")
+    log("monsnode 鐖櫕 v4 (curl_cffi)")
     print("=" * 55)
 
     stats = scrape_all()
 
     print("\n" + "=" * 55)
-    print(f"  Section: {stats['sections_crawled']}  ??: {stats['pages_crawled']}")
-    print(f"  ??: {stats['videos_found']}  ??: {stats['videos_saved']}")
+    print(f"  Section: {stats['sections_crawled']}  椤甸潰: {stats['pages_crawled']}")
+    print(f"  鍙戠幇: {stats['videos_found']}  淇濆瓨: {stats['videos_saved']}")
     if stats["errors"]:
-        print(f"  ??: {len(stats['errors'])}")
+        print(f"  閿欒: {len(stats['errors'])}")
         for e in stats["errors"][:5]:
             print(f"    - {e[:120]}")
     print("=" * 55)
