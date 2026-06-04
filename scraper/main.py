@@ -81,8 +81,9 @@ async def scrape_with_playwright() -> dict:
     from playwright.async_api import async_playwright
     import subprocess
 
-    # 纭繚 Chromium 宸插畨瑁?    try:
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+    # 纭繚 Chromium 宸插畨瑁咃紙鍚郴缁熶緷璧栵級
+    try:
+        subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
                        capture_output=True, timeout=120)
     except Exception:
         pass
