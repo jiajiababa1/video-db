@@ -406,6 +406,87 @@
         .auth-hint { font-size:11px; color:#3f3f46; margin-top:8px; }
         .auth-hint span { color:var(--vprimary); }
 
+        /* ============ 汉堡菜单 & 侧边栏 ============ */
+        .hamburger {
+            width:34px; height:34px; border-radius:8px; border:1px solid #2a2a32;
+            background:#16161c; cursor:pointer; display:flex; flex-direction:column;
+            align-items:center; justify-content:center; gap:4px; padding:8px 7px;
+            transition:all 0.2s; flex-shrink:0;
+        }
+        .hamburger:hover { background:#22222a; border-color:#444; }
+        .hamburger span {
+            display:block; width:100%; height:2px; background:#a1a1aa;
+            border-radius:1px; transition:all 0.3s;
+        }
+        .hamburger.on span:nth-child(1) { transform:translateY(6px) rotate(45deg); }
+        .hamburger.on span:nth-child(2) { opacity:0; }
+        .hamburger.on span:nth-child(3) { transform:translateY(-6px) rotate(-45deg); }
+
+        .sidebar-overlay {
+            position:fixed; inset:0; z-index:60; background:rgba(0,0,0,0.5);
+            opacity:0; pointer-events:none; transition:opacity 0.3s;
+        }
+        .sidebar-overlay.on { opacity:1; pointer-events:auto; }
+
+        .sidebar {
+            position:fixed; top:0; left:0; bottom:0; z-index:61;
+            width:280px; max-width:85vw; background:#0e0e14;
+            border-right:1px solid #1a1a22; transform:translateX(-100%);
+            transition:transform 0.3s cubic-bezier(0.4,0,0.2,1);
+            display:flex; flex-direction:column; overflow-y:auto;
+        }
+        .sidebar.on { transform:translateX(0); }
+        .sidebar-head {
+            padding:16px; border-bottom:1px solid #1a1a22;
+            display:flex; align-items:center; justify-content:space-between;
+        }
+        .sidebar-head .title { font-size:15px; font-weight:700; color:#e4e4e7; }
+        .sidebar-close {
+            width:28px; height:28px; border-radius:6px; border:1px solid #2a2a32;
+            background:#16161c; color:#a1a1aa; cursor:pointer; font-size:14px;
+            display:flex; align-items:center; justify-content:center;
+        }
+        .sidebar-section { padding:8px 0; }
+        .sidebar-label {
+            font-size:10px; color:#52525b; text-transform:uppercase;
+            letter-spacing:1px; padding:8px 16px 4px;
+        }
+        .sidebar-item {
+            display:flex; align-items:center; gap:10px; padding:10px 16px;
+            color:#a1a1aa; cursor:pointer; font-size:13px; transition:all 0.15s;
+            border:none; background:none; width:100%; text-align:left;
+        }
+        .sidebar-item:hover { background:#1a1a22; color:#e4e4e7; }
+        .sidebar-item.active { color:var(--vprimary); background:rgba(99,102,241,0.08); }
+        .sidebar-item .ico { font-size:16px; width:22px; text-align:center; flex-shrink:0; }
+        .sidebar-item .badge {
+            margin-left:auto; font-size:10px; background:#1a1a22;
+            padding:1px 7px; border-radius:10px; color:#52525b;
+        }
+        .sidebar-item.active .badge { background:rgba(99,102,241,0.15); color:var(--vprimary); }
+        .sidebar-divider { height:1px; background:#1a1a22; margin:8px 0; }
+
+        /* ============ 收藏按钮 ============ */
+        .vid-fav {
+            position:absolute; top:8px; right:8px; z-index:3;
+            width:32px; height:32px; border-radius:50%; border:none;
+            background:rgba(0,0,0,0.5); color:#fff; cursor:pointer;
+            font-size:15px; display:flex; align-items:center; justify-content:center;
+            transition:all 0.2s; opacity:0;
+        }
+        .vid-card:hover .vid-fav, .vid-card.vid-press .vid-fav { opacity:1; }
+        .vid-fav.on { color:#f59e0b; opacity:1; }
+
+        /* ============ 热度 / 播放量 ============ */
+        .vid-views { font-size:10px; color:#52525b; display:flex; align-items:center; gap:3px; }
+        .vid-heat {
+            display:inline-block; padding:1px 5px; border-radius:3px;
+            font-size:9px; font-weight:600; margin-left:4px;
+        }
+        .vid-heat.hot { background:rgba(248,113,113,0.15); color:#f87171; }
+        .vid-heat.warm { background:rgba(251,191,36,0.15); color:#fbbf24; }
+        .vid-heat.new { background:rgba(99,102,241,0.15); color:var(--vprimary); }
+
         /* ============ 响应式 ============ */
         @media (max-width:640px) {
             .game-logo { font-size:48px; }
@@ -450,6 +531,39 @@
             <p class="auth-hint" id="authHint">在 iOS 快捷指令中查看当前密码</p>
         </div>
     </div>
+
+    <!-- ==================== 侧边栏菜单 ==================== -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-head">
+            <span class="title">📂 菜单</span>
+            <button class="sidebar-close" onclick="toggleSidebar()">✕</button>
+        </div>
+        <div class="sidebar-section">
+            <div class="sidebar-label">时间热度</div>
+            <button class="sidebar-item" data-section="24h" onclick="selectSidebar('24h','🕐 24小时热度')"><span class="ico">🕐</span>24小时热度</button>
+            <button class="sidebar-item" data-section="3d" onclick="selectSidebar('3d','📅 3天热度')"><span class="ico">📅</span>3天热度</button>
+            <button class="sidebar-item" data-section="7d" onclick="selectSidebar('7d','📆 7天热度')"><span class="ico">📆</span>7天热度</button>
+        </div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section">
+            <div class="sidebar-label">排行榜</div>
+            <button class="sidebar-item" data-section="ranking" onclick="selectSidebar('ranking','🏆 综合排行')"><span class="ico">🏆</span>综合排行</button>
+            <button class="sidebar-item" data-section="trending" onclick="selectSidebar('trending','🔥 热门趋势')"><span class="ico">🔥</span>热门趋势</button>
+        </div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section">
+            <div class="sidebar-label">推荐 & 最新</div>
+            <button class="sidebar-item" data-section="home" onclick="selectSidebar('home','🏠 首页推荐')"><span class="ico">🏠</span>首页推荐</button>
+            <button class="sidebar-item" data-section="latest" onclick="selectSidebar('latest','🆕 最新上传')"><span class="ico">🆕</span>最新上传</button>
+            <button class="sidebar-item" data-section="" onclick="selectSidebar('','📺 全部视频')"><span class="ico">📺</span>全部视频</button>
+        </div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section">
+            <div class="sidebar-label">我的</div>
+            <button class="sidebar-item" data-section="favs" onclick="selectSidebar('favs','⭐ 我的收藏')"><span class="ico">⭐</span>我的收藏 <span class="badge" id="favsCount">0</span></button>
+        </div>
+    </nav>
 
     <!-- ==================== 游戏视图 ==================== -->
     <div class="view-game" id="gameView">
@@ -499,8 +613,11 @@
         </div>
         <div class="vid-header">
             <div class="vid-header-top">
+                <button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()" title="菜单">
+                    <span></span><span></span><span></span>
+                </button>
                 <div class="vid-logo" onclick="goBackToGame()">Video<span>DB</span></div>
-                <button class="vid-back" onclick="goBackToGame()">← 返回游戏</button>
+                <button class="vid-back" onclick="goBackToGame()">← 游戏</button>
                 <div class="vid-search">
                     <span class="s-icon">🔍</span>
                     <input type="text" id="searchInput" placeholder="搜索标题/作者..." autocomplete="off">
@@ -524,6 +641,11 @@
             <button class="vid-tab" data-section="trending">🔥 热门</button>
             <button class="vid-tab" data-section="home">🏠 推荐</button>
             <button class="vid-tab" data-section="latest">🆕 最新</button>
+            <button class="vid-tab" data-section="24h">🕐 24小时</button>
+            <button class="vid-tab" data-section="3d">📅 3天</button>
+            <button class="vid-tab" data-section="7d">📆 7天</button>
+            <button class="vid-tab" data-section="ranking">🏆 排行</button>
+            <button class="vid-tab" data-section="favs" id="favTab" style="display:none;">⭐ 收藏</button>
         </div>
         <div class="vid-main" id="vidMain">
             <div id="skeletonGrid" class="vid-grid"></div>
@@ -874,6 +996,151 @@
         });
     });
 
+    // ============================================================
+    // 侧边栏 & 汉堡菜单
+    // ============================================================
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('on');
+        document.getElementById('sidebarOverlay').classList.toggle('on');
+        document.getElementById('hamburgerBtn').classList.toggle('on');
+    }
+    function closeSidebar() {
+        document.getElementById('sidebar').classList.remove('on');
+        document.getElementById('sidebarOverlay').classList.remove('on');
+        document.getElementById('hamburgerBtn').classList.remove('on');
+    }
+    function selectSidebar(section, label) {
+        // 更新顶部 tabs
+        var tabs = document.querySelectorAll('#vidTabs .vid-tab');
+        var found = false;
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].classList.remove('active');
+            if (tabs[i].dataset.section === section) {
+                tabs[i].classList.add('active');
+                found = true;
+            }
+        }
+        if (!found) {
+            tabs[0].classList.add('active'); // fallback to 全部
+        }
+        activeSection = section;
+        closeSidebar();
+        loadVids(true);
+        // 滚动到顶部
+        document.getElementById('videoView').scrollTop = 0;
+    }
+
+    // ============================================================
+    // 收藏系统 (localStorage)
+    // ============================================================
+    function getFavorites() {
+        try { return JSON.parse(localStorage.getItem('vid_favs') || '[]'); } catch(e) { return []; }
+    }
+    function saveFavorites(favs) {
+        localStorage.setItem('vid_favs', JSON.stringify(favs));
+        updateFavsBadge();
+    }
+    function isFavorited(videoId) {
+        return getFavorites().indexOf(videoId) >= 0;
+    }
+    function toggleFavorite(videoId, btn) {
+        var favs = getFavorites();
+        var idx = favs.indexOf(videoId);
+        if (idx >= 0) {
+            favs.splice(idx, 1);
+            if (btn) { btn.classList.remove('on'); btn.textContent = '☆'; }
+            toast('已取消收藏');
+        } else {
+            favs.push(videoId);
+            if (btn) { btn.classList.add('on'); btn.textContent = '★'; }
+            toast('已收藏 ⭐');
+        }
+        saveFavorites(favs);
+        // 如果当前在收藏页，刷新
+        if (activeSection === 'favs') loadVids(true);
+    }
+    function updateFavsBadge() {
+        var count = getFavorites().length;
+        var badge = document.getElementById('favsCount');
+        if (badge) badge.textContent = count;
+        var favTab = document.getElementById('favTab');
+        if (favTab) favTab.style.display = count > 0 ? '' : 'none';
+    }
+
+    // ============================================================
+    // 视频播放: 解析 redirect URL → Twitter embed
+    // ============================================================
+    var twitterScriptLoaded = false;
+    function loadTwitterScript() {
+        if (twitterScriptLoaded) return;
+        twitterScriptLoaded = true;
+        var s = document.createElement('script');
+        s.src = 'https://platform.twitter.com/widgets.js';
+        s.async = true;
+        document.head.appendChild(s);
+    }
+
+    async function resolveAndPlay(redirectUrl, videoId) {
+        if (!redirectUrl) {
+            toast('无播放链接');
+            return;
+        }
+        // 尝试通过 CORS 代理解析 redirect URL
+        var proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(redirectUrl);
+        try {
+            var resp = await fetch(proxyUrl, { redirect: 'follow' });
+            var finalUrl = resp.url;
+            // 检查是否是 Twitter/X URL
+            if (finalUrl.indexOf('twitter.com') >= 0 || finalUrl.indexOf('x.com') >= 0) {
+                loadTwitterScript();
+                // 提取 tweet ID
+                var m = finalUrl.match(/status\/(\d+)/);
+                if (m) {
+                    var tweetId = m[1];
+                    openTwitterEmbed(tweetId, videoId);
+                } else {
+                    // 直接打开
+                    window.open(finalUrl, '_blank');
+                }
+            } else {
+                // 不是 Twitter URL，直接打开
+                window.open(finalUrl || redirectUrl, '_blank');
+            }
+        } catch(e) {
+            // CORS 代理失败，直接打开 redirect URL
+            window.open(redirectUrl, '_blank');
+        }
+    }
+
+    function openTwitterEmbed(tweetId, videoId) {
+        var overlay = document.getElementById('vidModalOverlay');
+        var preview = document.getElementById('vidModalPreview');
+        var title = document.getElementById('vidModalTitle');
+        var badge = document.getElementById('vidModalBadge');
+        var author = document.getElementById('vidModalAuthor');
+        var playBtn = document.getElementById('vidModalPlayBtn');
+
+        title.textContent = 'Twitter 视频 - ' + (videoId || '');
+        badge.textContent = 'Tweet: ' + tweetId;
+        author.textContent = '';
+        playBtn.textContent = '🔗 打开原帖';
+        playBtn.onclick = function() { window.open('https://twitter.com/i/status/' + tweetId, '_blank'); };
+        currentVideoUrl = 'https://twitter.com/i/status/' + tweetId;
+
+        // 嵌入 Twitter 推文
+        preview.innerHTML = '<div style="width:100%;max-width:550px;margin:0 auto;">' +
+            '<blockquote class="twitter-tweet" style="margin:0;">' +
+            '<a href="https://twitter.com/i/status/' + tweetId + '"></a>' +
+            '</blockquote></div>';
+        loadTwitterScript();
+        // 触发 Twitter 重新渲染
+        if (window.twttr && window.twttr.widgets) {
+            window.twttr.widgets.load(preview);
+        }
+        overlay.classList.add('on');
+        document.getElementById('videoView').style.overflow = 'hidden';
+    }
+
     var $grid=document.getElementById('videoGrid');
     var $skel=document.getElementById('skeletonGrid');
     var $sentinel=document.getElementById('sentinel');
@@ -969,29 +1236,52 @@
     // ============ Supabase API ============
     function _h(){return{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json'};}
 
+    function formatNum(n) {
+        if (n >= 10000) return (n/10000).toFixed(1).replace(/\.0$/,'') + '万';
+        if (n >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,'') + 'k';
+        return n.toString();
+    }
+
     async function fetchVids(pg, q, sz){
         var f=(pg-1)*sz;
         var params='select=*';
+
+        // 收藏模式: 筛选指定 video_id 列表
+        if(activeSection === 'favs') {
+            var favs = getFavorites();
+            if (!favs.length) return {data:[],count:0};
+            var ids = favs.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
+            params += '&video_id=in.('+ids+')';
+        }
         // 搜索条件
-        if(q&&q.trim()){
+        else if(q&&q.trim()){
             var t=encodeURIComponent(q.trim());
             params+='&or=(title.ilike.*'+t+'*,author.ilike.*'+t+'*)';
         }
-        // 分类过滤
-        if(activeSection) params+='&source_section=eq.'+encodeURIComponent(activeSection);
-        // 排序
-        params+='&order=created_at.'+sortOrder+'&limit='+sz+'&offset='+f;
+        // 分类过滤 (非收藏模式)
+        if(activeSection && activeSection !== 'favs') params+='&source_section=eq.'+encodeURIComponent(activeSection);
+        // 排序: 有播放量的按播放量排，否则按时间
+        if (activeSection === 'ranking' || activeSection === 'trending') {
+            params+='&order=views.desc.nullslast&limit='+sz+'&offset='+f;
+        } else {
+            params+='&order=created_at.'+sortOrder+'&limit='+sz+'&offset='+f;
+        }
 
         var h=_h();
         var dp=fetch(SUPABASE_URL+'/rest/v1/videos?'+params,{method:'GET',headers:h});
         var ch=Object.assign({},h,{'Prefer':'count=exact'});
         // 用更轻量的查询获得总数
         var countParams='select=id';
-        if(q&&q.trim()){
+        if(activeSection === 'favs') {
+            var favs2 = getFavorites();
+            if (!favs2.length) return {data:[],count:0};
+            var ids2 = favs2.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
+            countParams += '&video_id=in.('+ids2+')';
+        } else if(q&&q.trim()){
             var t2=encodeURIComponent(q.trim());
             countParams+='&or=(title.ilike.*'+t2+'*,author.ilike.*'+t2+'*)';
         }
-        if(activeSection) countParams+='&source_section=eq.'+encodeURIComponent(activeSection);
+        if(activeSection && activeSection !== 'favs') countParams+='&source_section=eq.'+encodeURIComponent(activeSection);
         countParams+='&limit=1';
         var cp=fetch(SUPABASE_URL+'/rest/v1/videos?'+countParams,{method:'GET',headers:ch});
 
@@ -1035,33 +1325,55 @@
 
     function card(v){
         var c=document.createElement('div');c.className='vid-card';
-        // duration 字段可能存的是 redirect URL (爬虫复用字段)
+        // 判断 redirect URL (爬虫复用 duration 字段)
         var isRedirectUrl = v.duration && v.duration.indexOf('http') === 0;
         var playUrl = isRedirectUrl ? v.duration : (v.video_url || '');
         var dur = (v.duration && !isRedirectUrl) ? '<span class="vid-duration">' + esc(v.duration) + '</span>' : '';
+
+        // 热度标签
+        var views = parseInt(v.views) || 0;
+        var heatHtml = '';
+        if (views > 100000) heatHtml = '<span class="vid-heat hot">🔥爆</span>';
+        else if (views > 10000) heatHtml = '<span class="vid-heat warm">热</span>';
+        else if (v.source_section === 'latest') heatHtml = '<span class="vid-heat new">新</span>';
+        var viewsHtml = views > 0 ? '<span class="vid-views">👁 ' + formatNum(views) + '</span>' + heatHtml : '';
+
+        // 收藏状态
+        var favId = v.video_id;
+        var isFav = isFavorited(favId);
+        var favBtnHtml = '<button class="vid-fav' + (isFav ? ' on' : '') + '" onclick="event.stopPropagation();event.preventDefault();toggleFavorite(\'' + esc(favId) + '\',this)" title="收藏">' + (isFav ? '★' : '☆') + '</button>';
+
         var pu = v.thumbnail_url || '';
         var imgHtml = pu
             ? '<img src="' + esc(pu) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.parentElement.querySelector(\'.vid-noimg\').style.display=\'flex\';">'
             : '';
         var noImgDisplay = pu ? 'display:none;' : '';
+        var sectionLabel = v.source_section ? '<span style="color:#3f3f46;font-size:10px;">#' + esc(v.source_section) + '</span>' : '';
+
         c.innerHTML =
-            '<div class="vid-thumb">' + imgHtml + dur +
+            '<div class="vid-thumb">' + imgHtml + dur + favBtnHtml +
             '<div class="vid-play-overlay"><div class="play-icon"></div></div>' +
             '<div class="vid-noimg" style="' + noImgDisplay + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>' +
             '<div class="vid-body"><div class="vid-title">' + esc(v.title || v.video_id) + '</div>' +
-            '<div class="vid-foot"><span class="vid-badge">' + esc(v.video_id) + '</span>' +
+            '<div class="vid-foot">' + (v.rank ? '<span style="color:#f59e0b;font-weight:700;font-size:12px;">#' + esc(v.rank) + '</span>' : '<span class="vid-badge">' + esc(v.video_id) + '</span>') +
             (v.author ? '<span class="vid-author">@' + esc(v.author) + '</span>' : '') +
-            (v.source_section ? '<span style="color:#3f3f46;font-size:10px;">#' + esc(v.source_section) + '</span>' : '') +
+            viewsHtml + sectionLabel +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
-        // 点击打开预览模态框
+
+        // 点击: 尝试嵌入播放 Twitter 视频
         c.addEventListener('click', function(e) {
-            if (e.target.closest('.vid-copy')) return;
-            if (v.video_url) openVideoModal(v, playUrl);
+            if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
+            if (v.duration && v.duration.indexOf('http') === 0) {
+                // 有 redirect URL, 尝试内嵌播放
+                resolveAndPlay(v.duration, v.video_id);
+            } else if (v.video_url) {
+                openVideoModal(v, playUrl);
+            }
         });
         // 移动端长按显示播放图标
         var pressTimer;
         c.addEventListener('touchstart', function(e) {
-            if (e.target.closest('.vid-copy')) return;
+            if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
             pressTimer = setTimeout(function() { c.classList.add('vid-press'); }, 300);
         }, {passive: true});
         c.addEventListener('touchend', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
@@ -1230,6 +1542,9 @@
 
     // ============ 启动 ============
     initGame();
+    updateFavsBadge();
     </script>
+</body>
+</html>
 </body>
 </html>
