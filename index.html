@@ -1074,7 +1074,7 @@
     }
 
     // ============================================================
-    // 视频播放: 解析 redirect URL → Twitter embed
+    // 视频播放: 解析 redirect URL → Twitter embed (已全局重构至弹窗)
     // ============================================================
     var twitterScriptLoaded = false;
     function loadTwitterScript() {
@@ -1084,67 +1084,6 @@
         s.src = 'https://platform.twitter.com/widgets.js';
         s.async = true;
         document.head.appendChild(s);
-    }
-
-    async function resolveAndPlay(redirectUrl, videoId) {
-        if (!redirectUrl) {
-            toast('无播放链接');
-            return;
-        }
-        // 尝试通过 CORS 代理解析 redirect URL
-        var proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(redirectUrl);
-        try {
-            var resp = await fetch(proxyUrl, { redirect: 'follow' });
-            var finalUrl = resp.url;
-            // 检查是否是 Twitter/X URL
-            if (finalUrl.indexOf('twitter.com') >= 0 || finalUrl.indexOf('x.com') >= 0) {
-                loadTwitterScript();
-                // 提取 tweet ID
-                var m = finalUrl.match(/status\/(\d+)/);
-                if (m) {
-                    var tweetId = m[1];
-                    openTwitterEmbed(tweetId, videoId);
-                } else {
-                    // 直接打开
-                    window.open(finalUrl, '_blank');
-                }
-            } else {
-                // 不是 Twitter URL，直接打开
-                window.open(finalUrl || redirectUrl, '_blank');
-            }
-        } catch(e) {
-            // CORS 代理失败，直接打开 redirect URL
-            window.open(redirectUrl, '_blank');
-        }
-    }
-
-    function openTwitterEmbed(tweetId, videoId) {
-        var overlay = document.getElementById('vidModalOverlay');
-        var preview = document.getElementById('vidModalPreview');
-        var title = document.getElementById('vidModalTitle');
-        var badge = document.getElementById('vidModalBadge');
-        var author = document.getElementById('vidModalAuthor');
-        var playBtn = document.getElementById('vidModalPlayBtn');
-
-        title.textContent = 'Twitter 视频 - ' + (videoId || '');
-        badge.textContent = 'Tweet: ' + tweetId;
-        author.textContent = '';
-        playBtn.textContent = '🔗 打开原帖';
-        playBtn.onclick = function() { window.open('https://twitter.com/i/status/' + tweetId, '_blank'); };
-        currentVideoUrl = 'https://twitter.com/i/status/' + tweetId;
-
-        // 嵌入 Twitter 推文
-        preview.innerHTML = '<div style="width:100%;max-width:550px;margin:0 auto;">' +
-            '<blockquote class="twitter-tweet" style="margin:0;">' +
-            '<a href="https://twitter.com/i/status/' + tweetId + '"></a>' +
-            '</blockquote></div>';
-        loadTwitterScript();
-        // 触发 Twitter 重新渲染
-        if (window.twttr && window.twttr.widgets) {
-            window.twttr.widgets.load(preview);
-        }
-        overlay.classList.add('on');
-        document.getElementById('videoView').style.overflow = 'hidden';
     }
 
     var $grid=document.getElementById('videoGrid');
@@ -1468,14 +1407,17 @@
             viewsHtml + sectionLabel +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
 
-        // 点击: 尝试嵌入播放 Twitter 视频
+        // 点击卡片：智能提取并唤起优化后的模态框流程
         c.addEventListener('click', function(e) {
             if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
-            if (v.duration && v.duration.indexOf('http') === 0) {
-                // 有 redirect URL, 尝试内嵌播放
-                resolveAndPlay(v.duration, v.video_id);
-            } else if (v.video_url) {
-                openVideoModal(v, playUrl);
+            e.stopImmediatePropagation();
+
+            var targetUrl = (v.duration && v.duration.indexOf('http') === 0) ? v.duration : v.video_url;
+
+            if (targetUrl) {
+                openVideoModal(v, targetUrl);
+            } else {
+                toast('此视频暂无有效播放链接');
             }
         });
         // 移动端长按显示播放图标
@@ -1485,7 +1427,7 @@
             pressTimer = setTimeout(function() { c.classList.add('vid-press'); }, 300);
         }, {passive: true});
         c.addEventListener('touchend', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
-        c.addEventListener('touchmove', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
+        document.addEventListener('touchmove', function() { clearTimeout(pressTimer); if(c.classList.contains('vid-press')) c.classList.remove('vid-press'); });
         return c;
     }
 
@@ -1501,7 +1443,7 @@
     }
     function showCopied(btn){btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='🔗';btn.classList.remove('copied');},1500);}
 
-    // ============ 视频预览模态框 ============
+    // ============ 视频预览与核心播放引擎控制流 ============
     var currentVideoUrl = '';
     var currentVideoTitle = '';
     var currentThumbUrl = '';
@@ -1509,44 +1451,105 @@
     var modalTitle = document.getElementById('vidModalTitle');
     var modalBadge = document.getElementById('vidModalBadge');
     var modalAuthor = document.getElementById('vidModalAuthor');
-    var modalThumb = document.getElementById('vidModalThumb');
     var modalPlayBtn = document.getElementById('vidModalPlayBtn');
 
     function openVideoModal(v, playUrl) {
-        // playUrl: redirect URL (优先, 直接跳转Twitter视频) 或视频页面URL
-        currentVideoUrl = playUrl || v.video_url;
+        currentVideoUrl = playUrl || v.video_url || '';
         currentVideoTitle = v.title || v.video_id;
         currentThumbUrl = v.thumbnail_url || '';
-        // 填充信息
+
         modalTitle.textContent = currentVideoTitle;
         modalBadge.textContent = v.video_id;
         modalAuthor.textContent = v.author ? '@' + v.author : '';
-        // 显示大缩略图
-        if (currentThumbUrl) {
-            modalThumb.src = currentThumbUrl;
-            modalThumb.style.display = 'block';
-        } else {
-            modalThumb.style.display = 'none';
-        }
-        // 显示模态框，锁定背景滚动
+
+        // 默认初始化为高清晰大封皮图
+        var preview = document.getElementById('vidModalPreview');
+        preview.innerHTML = '<img id="vidModalThumb" src="' + esc(currentThumbUrl) + '" alt="" style="width:100%; max-height:60vh; object-fit:contain; background:#000; display:block;">';
+
         modalOverlay.classList.add('on');
         document.getElementById('videoView').style.overflow = 'hidden';
+
+        // 开启优雅平滑过渡后自动执行首发渲染
+        setTimeout(function() {
+            playVideo();
+        }, 250);
     }
 
     function closeVideoModal(e) {
         if (e && e.target !== modalOverlay) return;
         modalOverlay.classList.remove('on');
         document.getElementById('videoView').style.overflow = '';
-        // 延迟清理缩略图
+        // 彻底清空预览容器，强行杀掉运行中的推文挂件或内嵌有声音的视频
         setTimeout(function() {
-            modalThumb.src = '';
-        }, 400);
+            document.getElementById('vidModalPreview').innerHTML = '';
+            currentVideoUrl = '';
+        }, 350);
     }
 
     function playVideo() {
-        if (currentVideoUrl) {
-            window.open(currentVideoUrl, '_blank');
+        if (!currentVideoUrl) {
+            toast('没有可播放链接');
+            return;
         }
+
+        var preview = document.getElementById('vidModalPreview');
+        // 正则检测是否属于 Twitter/X.com 的页面渠道
+        var isTwitter = /twitter\.com|x\.com/.test(currentVideoUrl);
+
+        if (isTwitter) {
+            var tweetIdMatch = currentVideoUrl.match(/status\/(\d+)/);
+            if (tweetIdMatch && tweetIdMatch[1]) {
+                var tweetId = tweetIdMatch[1];
+                toast('正在加载 Twitter 官方嵌入播放器...');
+                
+                loadTwitterScript();
+
+                preview.innerHTML = 
+                    '<div id="twitterEmbedContainer" style="width:100%; max-height:60vh; overflow-y:auto; display:flex; justify-content:center; background:#121218; padding:10px;">' +
+                        '<div id="tweet-' + tweetId + '" style="width:100%; max-width:550px;"></div>' +
+                    '</div>';
+                
+                setTimeout(function() {
+                    if (window.twttr && window.twttr.widgets) {
+                        window.twttr.widgets.createTweet(tweetId, document.getElementById('tweet-' + tweetId), {
+                            theme: 'dark',
+                            align: 'center',
+                            conversation: 'none'
+                        }).then(function(el) {
+                            if (!el) showFallbackButton(preview, currentVideoUrl);
+                        });
+                    } else {
+                        showFallbackButton(preview, currentVideoUrl, 'Twitter 组件库正在加载或加载受阻，建议跳转原始播放。');
+                    }
+                }, 400);
+            } else {
+                showFallbackButton(preview, currentVideoUrl, '非标准推文地址链接，无法直接嵌入渲染。');
+            }
+        } else {
+            // 原生 MP4/流媒体流媒体直链
+            toast('开启原生内嵌流解码...');
+            preview.innerHTML = 
+                '<div style="position:relative; width:100%; max-height:60vh; background:#000;">' +
+                    '<video id="inlineVideoPlayer" controls autoplay style="width:100%; max-height:60vh; display:block;" playsinline webkit-playsinline>' +
+                        '<source src="' + currentVideoUrl + '" type="video/mp4">' +
+                        '您的浏览器不支持该视频的原生解码。' +
+                    '</video>' +
+                '</div>' +
+                '<div style="text-align:center; padding:10px; background:#121218; width:100%;">' +
+                    '<button onclick="window.open(\'' + currentVideoUrl + '\', \'_blank\')" style="padding:6px 14px; background:var(--vprimary); color:white; border:none; border-radius:6px; cursor:pointer; font-size:11px;">在新页面独立打开原直链</button>' +
+                '</div>';
+        }
+    }
+
+    function showFallbackButton(container, url, hintText) {
+        var msg = hintText || '由于推特版权沙箱或跨域缓存限制，该多媒体内容无法直接在第三方壳内流播放。';
+        container.innerHTML = 
+            '<div style="text-align:center; padding:40px 16px; color:#a1a1aa; font-size:12px; background:#121218; width:100%; box-sizing:border-box;">' +
+                '<p style="margin-bottom:16px; line-height:1.6; color:#9ca3af;">' + msg + '</p>' +
+                '<button onclick="window.open(\'' + url + '\', \'_blank\')" style="padding:10px 18px; background:#6366f1; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600; font-size:13px; box-shadow:0 4px 12px rgba(99,102,241,0.3);">' +
+                    '🚀 唤起原版 客户端/网页 端播放' +
+                '</button>' +
+            '</div>';
     }
 
     function copyVideoLink() {
@@ -1646,13 +1649,9 @@
     var _orig=enterVideoMode;
     enterVideoMode=function(){_orig();setTimeout(function(){triggerScraper();},1500);};
 
-    // Esc 已在主 keydown handler 中处理（含模态框优先逻辑）
-
     // ============ 启动 ============
     initGame();
     updateFavsBadge();
     </script>
-</body>
-</html>
 </body>
 </html>
