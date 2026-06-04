@@ -310,6 +310,33 @@ def parse_video_cards(soup_or_html, page_url: str, section: str) -> list[dict]:
                 if user_span:
                     author = user_span.get_text(strip=True)
 
+        # 提取播放量 / 热度
+        views = ""
+        for cls in ("view", "views", "count", "like", "heart", "point"):
+            v_el = card.find(class_=cls)
+            if v_el:
+                txt = v_el.get_text(strip=True)
+                # 清洗数字
+                nums = re.findall(r'[\d,]+', txt)
+                if nums:
+                    views = nums[0].replace(",", "")
+                break
+
+        # 提取视频时长
+        duration = ""
+        for cls in ("time", "duration", "length", "dur"):
+            d_el = card.find(class_=cls)
+            if d_el:
+                duration = d_el.get_text(strip=True)[:20]
+                break
+
+        # 提取 ranking 排名数字 (ranking 页面)
+        rank_num = ""
+        if "ranking" in section:
+            rank_el = card.find(class_="rank") or card.find(class_="number")
+            if rank_el:
+                rank_num = re.sub(r'\D', '', rank_el.get_text(strip=True))
+
         video_url = urljoin(BASE_URL, "/" + vid)
 
         videos.append({
@@ -319,8 +346,9 @@ def parse_video_cards(soup_or_html, page_url: str, section: str) -> list[dict]:
             "title": title,
             "thumbnail": thumbnail,
             "author": author,
-            "duration": "",
-            "views": "",
+            "duration": duration,
+            "views": views,
+            "rank": rank_num,
             "source_section": section,
             "source_page": page_url,
         })
