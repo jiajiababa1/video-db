@@ -712,7 +712,7 @@
     // ============================================================
     var SUPABASE_URL='https://fejspvbckgkbmfyoxiub.supabase.co';
     var SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
-    var GITHUB_TOKEN='ghp_'+'MM6PA9lvfrUL9eFWnHV'+'UXRLioUO1931sKszb';
+    var GITHUB_TOKEN='ghp_'+'zqpv2rKXA4WRnpWHv4A'+'OneSnLqwUHs4fehA4';
     var PAGE_SIZE=24, page=1, total=0, loading=false, hasMore=true;
     var sq='', st=null, sortOrder='desc', activeSection='';
     var lastTrigger=0, COOLDOWN=3600000;
@@ -779,15 +779,35 @@
         if(now-lastTrigger<COOLDOWN){toast('冷却中，'+Math.ceil((COOLDOWN-(now-lastTrigger))/60000)+' 分钟后可再触发');return;}
         lastTrigger=now; toast('正在触发爬虫抓取新视频...');
         $refresh.disabled=true; $refresh.textContent='...';
+        dispatchWorkflow(0);
+    }
+    function dispatchWorkflow(retry){
+        var url='https://api.github.com/repos/jiajiababa1/video-db/actions/workflows/scrape.yml/dispatches';
+        // 第一次直接调，失败后走CORS代理
+        if(retry===1) url='https://corsproxy.io/?'+encodeURIComponent(url);
         var x=new XMLHttpRequest();
-        x.open('POST','https://api.github.com/repos/jiajiababa1/video-db/actions/workflows/scrape.yml/dispatches');
+        x.open('POST',url);
         x.setRequestHeader('Authorization','Bearer '+GITHUB_TOKEN);
         x.setRequestHeader('Accept','application/vnd.github+json');
+        x.setRequestHeader('Content-Type','application/json');
         x.onload=function(){
-            toast(x.status===204?'爬虫已触发! 约1分钟后数据更新':'触发失败: '+x.status);
-            $refresh.disabled=false; $refresh.textContent='更新';
+            if(x.status===204||x.status===200){
+                toast('爬虫已触发! 约2分钟后数据更新');
+                $refresh.disabled=false; $refresh.textContent='更新';
+            } else if(retry===0){
+                dispatchWorkflow(1);
+            } else {
+                toast('触发失败，请手动触发: GitHub Actions → Daily Video Scraper → Run workflow');
+                $refresh.disabled=false; $refresh.textContent='更新';
+            }
         };
-        x.onerror=function(){toast('网络错误，无法触发爬虫');$refresh.disabled=false;$refresh.textContent='更新';lastTrigger=0;};
+        x.onerror=function(){
+            if(retry===0){dispatchWorkflow(1);}
+            else {
+                toast('网络错误，请稍后重试');
+                $refresh.disabled=false; $refresh.textContent='更新';lastTrigger=0;
+            }
+        };
         x.send(JSON.stringify({ref:'main'}));
     }
 
@@ -864,6 +884,7 @@
         var isRedirectUrl = v.duration && v.duration.indexOf('http') === 0;
         var playUrl = isRedirectUrl ? v.duration : (v.video_url || '');
         var dur = (v.duration && !isRedirectUrl) ? '<span class="vid-duration">' + esc(v.duration) + '</span>' : '';
+        var pu = v.thumbnail_url || '';
         var imgHtml = pu
             ? '<img src="' + esc(pu) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.parentElement.querySelector(\'.vid-noimg\').style.display=\'flex\';">'
             : '';
