@@ -777,25 +777,18 @@
     var TOTP_SECRET = "MONS2026NODEKEY";
     var TOTP_STEP = 300; // 5分钟
 
-    function _buf2hex(buf) {
-        return Array.prototype.map.call(new Uint8Array(buf), function(b) {
-            return ('00' + b.toString(16)).slice(-2);
-        }).join('');
-    }
-
     async function generateTOTP() {
         var timeWindow = Math.floor(Date.now() / 1000 / TOTP_STEP);
         var msg = TOTP_SECRET + ":" + timeWindow;
         var enc = new TextEncoder();
         var hashBuf = await crypto.subtle.digest('SHA-256', enc.encode(msg));
-        var hash = new Uint8Array(hashBuf);
-        // 动态截断 (类似 HOTP)
-        var offset = hash[hash.length - 1] & 0x0f;
-        var binary = ((hash[offset] & 0x7f) << 24) |
-                     ((hash[offset + 1] & 0xff) << 16) |
-                     ((hash[offset + 2] & 0xff) << 8) |
-                     (hash[offset + 3] & 0xff);
-        var code = binary % 10000;
+        // 转为 hex 字符串 (与 iOS 快捷指令 SHA-256 输出一致)
+        var hashHex = Array.prototype.map.call(new Uint8Array(hashBuf), function(b) {
+            return ('00' + b.toString(16)).slice(-2);
+        }).join('');
+        // 取最后 8 个 hex 字符 (最后 4 字节) 转为数字
+        var num = parseInt(hashHex.slice(-8), 16);
+        var code = num % 10000;
         return code.toString().padStart(4, '0');
     }
 
@@ -839,13 +832,11 @@
         var prevMsg = TOTP_SECRET + ":" + prevTimeWindow;
         var enc2 = new TextEncoder();
         var prevHashBuf = await crypto.subtle.digest('SHA-256', enc2.encode(prevMsg));
-        var prevHash = new Uint8Array(prevHashBuf);
-        var prevOffset = prevHash[prevHash.length - 1] & 0x0f;
-        var prevBinary = ((prevHash[prevOffset] & 0x7f) << 24) |
-                         ((prevHash[prevOffset + 1] & 0xff) << 16) |
-                         ((prevHash[prevOffset + 2] & 0xff) << 8) |
-                         (prevHash[prevOffset + 3] & 0xff);
-        var prevCode = (prevBinary % 10000).toString().padStart(4, '0');
+        var prevHashHex = Array.prototype.map.call(new Uint8Array(prevHashBuf), function(b) {
+            return ('00' + b.toString(16)).slice(-2);
+        }).join('');
+        var prevNum = parseInt(prevHashHex.slice(-8), 16);
+        var prevCode = (prevNum % 10000).toString().padStart(4, '0');
 
         if (input === expected || input === prevCode) {
             hideAuthOverlay();
