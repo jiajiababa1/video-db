@@ -1201,42 +1201,144 @@
         else{$grid.classList.remove('compact');document.getElementById('viewToggle').classList.remove('active');}
     }
 
-    // ============ 爬虫触发 ============
-    function triggerScraper(){
-        var now=Date.now();
-        if(now-lastTrigger<COOLDOWN){toast('冷却中，'+Math.ceil((COOLDOWN-(now-lastTrigger))/60000)+' 分钟后可再触发');return;}
-        lastTrigger=now; toast('正在触发爬虫抓取新视频...');
-        $refresh.disabled=true; $refresh.textContent='...';
-        dispatchWorkflow(0);
+    // ============ 客户端爬虫 (手机浏览器直接抓取) ============
+    var CORS_PROXY = 'https://corsproxy.io/?';
+    var SCRAPE_SECTIONS = [
+        {url:'/?t=24h', label:'24h', pages:2},
+        {url:'/?t=3d', label:'3d', pages:2},
+        {url:'/?t=7d', label:'7d', pages:2},
+        {url:'/trending', label:'trending', pages:2},
+        {url:'/', label:'home', pages:2},
+        {url:'/latest', label:'latest', pages:2},
+        {url:'/?ranking=1', label:'ranking', pages:1},
+    ];
+    var BASE = 'https://monsnode.com';
+
+    function parseHTML(html, pageUrl, section) {
+        var videos = [], seen = {};
+        var div = document.createElement('div'); div.innerHTML = html;
+        var cards = div.querySelectorAll('div.listn');
+        for (var i = 0; i < cards.length; i++) {
+            var c = cards[i];
+            var cid = (c.getAttribute('id') || '').trim();
+            if (!cid || !/^\d+$/.test(cid)) continue;
+            var vid = 'v' + cid;
+            if (seen[vid]) continue; seen[vid] = true;
+            var redirect = '', thumbnail = '', title = '', author = '';
+            var a = c.querySelector('a');
+            if (a) {
+                var href = a.getAttribute('href') || '';
+                var m = href.match(/redirect\.php\?v=(\d+)/);
+                if (m) redirect = BASE + '/redirect.php?v=' + m[1];
+                var img = a.querySelector('img');
+                if (img) {
+                    thumbnail = img.getAttribute('src') || '';
+                    var alt = (img.getAttribute('alt') || '').trim();
+                    if (alt) { var lines = alt.split('\n').filter(function(l){return l.trim();}); title = (lines[0] || '').substring(0, 500); }
+                }
+            }
+            if (thumbnail && thumbnail.indexOf('http') !== 0) thumbnail = BASE + (thumbnail.indexOf('/')===0?'':'/') + thumbnail;
+            var userDiv = c.querySelector('div.user');
+            if (userDiv) { var sp = userDiv.querySelector('a span'); if (sp) author = sp.textContent.trim(); }
+            videos.push({
+                video_id: vid, url: BASE + '/' + vid, redirect_url: redirect,
+                title: title, thumbnail_url: thumbnail, author: author,
+                source_section: section, source_page: pageUrl
+            });
+        }
+        return videos;
     }
-    function dispatchWorkflow(retry){
-        var url='https://api.github.com/repos/jiajiababa1/video-db/actions/workflows/scrape.yml/dispatches';
-        // 第一次直接调，失败后走CORS代理
-        if(retry===1) url='https://corsproxy.io/?'+encodeURIComponent(url);
-        var x=new XMLHttpRequest();
-        x.open('POST',url);
-        x.setRequestHeader('Authorization','Bearer '+GITHUB_TOKEN);
-        x.setRequestHeader('Accept','application/vnd.github+json');
-        x.setRequestHeader('Content-Type','application/json');
-        x.onload=function(){
-            if(x.status===204||x.status===200){
-                toast('爬虫已触发! 约2分钟后数据更新');
-                $refresh.disabled=false; $refresh.textContent='更新';
-            } else if(retry===0){
-                dispatchWorkflow(1);
-            } else {
-                toast('触发失败，请手动触发: GitHub Actions → Daily Video Scraper → Run workflow');
-                $refresh.disabled=false; $refresh.textContent='更新';
+
+    async function fetchPage(url, retries) {
+        retries = retries || 3;
+        var proxyUrl = CORS_PROXY + encodeURIComponent(url);
+        for (var i = 0; i < retries; i++) {
+            try {
+                var resp = await fetch(proxyUrl, {headers:{'Accept':'text/html,*/*'}});
+                if (resp.ok) return await resp.text();
+                if (resp.status === 403 || resp.status === 429) await new Promise(function(r){setTimeout(r, 3000*(i+1));});
+            } catch(e) {
+                await new Promise(function(r){setTimeout(r, 2000*(i+1));});
             }
-        };
-        x.onerror=function(){
-            if(retry===0){dispatchWorkflow(1);}
-            else {
-                toast('网络错误，请稍后重试');
-                $refresh.disabled=false; $refresh.textContent='更新';lastTrigger=0;
+        }
+        return null;
+    }
+
+    async function clientScrape(sectionFilter) {
+        var stats = {found:0, saved:0, errors:[]};
+        var hds = _h();
+        var sections = sectionFilter ? SCRAPE_SECTIONS.filter(function(s){return s.label===sectionFilter;}) : SCRAPE_SECTIONS;
+
+        for (var si = 0; si < sections.length; si++) {
+            var sec = sections[si];
+            var allVideos = [];
+            toast('抓取中: ' + sec.label + ' (第1页)...');
+
+            for (var pg = 1; pg <= sec.pages; pg++) {
+                var pageUrl = BASE + sec.url + (pg > 1 ? (sec.url.indexOf('?')>=0 ? '&p=' : '?p=') + pg : '');
+                var html = await fetchPage(pageUrl);
+                if (!html) {
+                    if (pg === 1) { stats.errors.push('请求失败: ' + sec.label); break; }
+                    else break;
+                }
+                var videos = parseHTML(html, pageUrl, sec.label);
+                if (!videos.length && pg === 1) { stats.errors.push('无数据: ' + sec.label); break; }
+                if (!videos.length) break;
+
+                var existing = {}; for (var j=0; j<allVideos.length; j++) existing[allVideos[j].video_id]=true;
+                var newVids = videos.filter(function(v){ return !existing[v.video_id]; });
+                allVideos = allVideos.concat(newVids);
+                stats.found += newVids.length;
+
+                toast('抓取中: ' + sec.label + ' (第'+pg+'页 ' + newVids.length + '个)...');
+                await new Promise(function(r){setTimeout(r, 1500);});
             }
-        };
-        x.send(JSON.stringify({ref:'main'}));
+
+            // 保存到 Supabase
+            if (allVideos.length) {
+                for (var bi = 0; bi < allVideos.length; bi += 30) {
+                    var batch = allVideos.slice(bi, bi + 30);
+                    try {
+                        var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/upsert_videos', {
+                            method: 'POST', headers: hds,
+                            body: JSON.stringify({videos: batch})
+                        });
+                        if (resp.ok) stats.saved += batch.length;
+                    } catch(e) {}
+                }
+                toast('已保存: ' + sec.label + ' (' + allVideos.length + '个)');
+            }
+            await new Promise(function(r){setTimeout(r, 2000);});
+        }
+        return stats;
+    }
+
+    // ============ 爬虫触发入口 ============
+    function triggerScraper(){
+        var now = Date.now();
+        if (now - lastTrigger < COOLDOWN) {
+            toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastTrigger))/60000) + ' 分钟后可再触发');
+            return;
+        }
+        lastTrigger = now;
+        $refresh.disabled = true;
+        $refresh.textContent = '抓取中...';
+        toast('手机浏览器直接抓取 monsnode...');
+
+        clientScrape(null).then(function(stats) {
+            $refresh.disabled = false;
+            $refresh.textContent = '更新';
+            toast('完成! 发现 ' + stats.found + ' 保存 ' + stats.saved);
+            if (stats.errors.length) {
+                toast('部分失败: ' + stats.errors.join(', '));
+            }
+            loadVids(true);
+        }).catch(function(e) {
+            $refresh.disabled = false;
+            $refresh.textContent = '更新';
+            toast('抓取失败: ' + (e.message || '网络错误'));
+            lastTrigger = 0;
+        });
     }
 
     // ============ Supabase API ============
