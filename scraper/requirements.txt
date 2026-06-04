@@ -1,3 +1,5 @@
-curl-cffi>=0.7
+playwright
 beautifulsoup4
 lxml
+httpx
+curl-cffi>=0.7
