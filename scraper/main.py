@@ -222,6 +222,16 @@ def scrape_with_curl_cffi() -> dict:
             videos = parse_video_cards(soup, url, label)
             log(f"  第{page_num}页: {len(videos)} 个视频")
 
+            if not videos and page_num == 1:
+                # 调试: 保存 HTML 看看页面内容
+                try:
+                    debug_file = f"debug_{label}.html"
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        f.write(str(soup)[:5000])
+                    log(f"已保存调试文件 {debug_file} (前5000字符)", "INFO")
+                except Exception:
+                    pass
+
             if not videos:
                 break
 
@@ -391,19 +401,35 @@ def supabase_save(videos: list[dict]) -> int:
     try:
         for i in range(0, len(records), BATCH_SIZE):
             batch = records[i:i + BATCH_SIZE]
-            for attempt in range(1, 4):
+            ok = False
+            for attempt in range(1, 3):
                 try:
                     resp = client.post(SUPABASE_URL + "/rest/v1/videos", headers=headers, json=batch)
                     if resp.status_code in (200, 201):
                         saved += len(batch)
+                        ok = True
+                        break
+                    elif resp.status_code == 409:
+                        # 数据已存在, 也算成功
+                        saved += len(batch)
+                        ok = True
                         break
                     else:
                         log(f"Supabase {resp.status_code}: {resp.text[:100]}", "WARN")
-                        if attempt < 3:
-                            time.sleep(2 ** attempt)
+                        if attempt < 2:
+                            time.sleep(2)
                 except Exception as e:
                     log(f"Supabase异常: {e}", "WARN")
-                    time.sleep(2)
+                    time.sleep(1)
+            # 批量失败则逐条尝试
+            if not ok:
+                for rec in batch:
+                    try:
+                        resp = client.post(SUPABASE_URL + "/rest/v1/videos", headers=headers, json=[rec])
+                        if resp.status_code in (200, 201, 409):
+                            saved += 1
+                    except Exception:
+                        pass
     finally:
         client.close()
     return saved
