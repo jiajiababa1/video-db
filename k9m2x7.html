@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>密码</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0e;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px}
+.code{font-size:80px;font-weight:800;letter-spacing:18px;text-indent:18px;font-family:"SF Mono",monospace}
+.timer{font-size:13px;color:#52525b;margin:16px 0}
+.bar{display:inline-block;width:160px;height:3px;background:#1e1e24;border-radius:2px;overflow:hidden;vertical-align:middle;margin-left:8px}
+.fill{height:100%;background:#6366f1;border-radius:2px;transition:width 1s linear}
+.btn{display:block;width:100%;max-width:280px;margin:24px auto;padding:14px;border-radius:12px;border:none;font-size:17px;font-weight:600;background:#6366f1;color:#fff;cursor:pointer}
+.btn:active{background:#818cf8}
+.btn.done{background:#22c55e}
+.hint{font-size:12px;color:#3f3f46;margin-top:8px}
+</style>
+</head>
+<body>
+<div>
+<div style="font-size:32px;margin-bottom:12px">🔐</div>
+<div class="code" id="code">----</div>
+<div class="timer">还剩 <span id="t">--</span><span class="bar"><span class="fill" id="fill" style="width:100%"></span></span></div>
+<button class="btn" id="btn" onclick="copy()">📋 点此复制</button>
+<p class="hint">复制后切换到视频库页面粘贴</p>
+</div>
+<script>
+var S1=1046,P1=7919,M=6559466,STEP=300;
+function gen(){
+var w=Math.floor(Date.now()/1000/STEP);
+var c=((w+S1)*P1+w*M)%10000;
+return c.toString().padStart(4,'0');
+}
+function upd(){
+var c=gen();
+var el=document.getElementById('code');
+if(el.textContent!==c){el.textContent=c;document.getElementById('btn').textContent='📋 点此复制';document.getElementById('btn').classList.remove('done')}
+var r=STEP-Date.now()/1000%STEP;
+document.getElementById('t').textContent=Math.floor(r/60)+'分'+Math.floor(r%60)+'秒';
+document.getElementById('fill').style.width=(r/STEP*100)+'%';
+}
+function copy(){
+var c=gen();
+if(navigator.clipboard){navigator.clipboard.writeText(c).then(function(){var b=document.getElementById('btn');b.textContent='✓ 已复制: '+c;b.classList.add('done')})}
+else{var t=document.createElement('textarea');t.value=c;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();document.execCommand('copy');document.body.removeChild(t);var b=document.getElementById('btn');b.textContent='✓ 已复制: '+c;b.classList.add('done')}
+}
+upd();setInterval(upd,3000);
+</script>
+</body>
+</html>
