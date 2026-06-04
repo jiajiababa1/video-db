@@ -771,36 +771,21 @@
 
     // ============================================================
     // TOTP 动态密码验证 (Steam Guard 风格)
-    // 使用 SHA-256 + 时间窗口, 每 5 分钟换一次 4 位数密码
-    // iOS 快捷指令同样算法, 手机上实时显示
+    // 纯数学算法, 每 5 分钟换一次 4 位数密码
+    // iOS 快捷指令可用相同算法直接计算 (无需 SHA-256/hex 转换)
+    // 秘密参数由 "MONS2026NODEKEY" 预计算得出
     // ============================================================
-    var TOTP_SECRET = "MONS2026NODEKEY";
-    var TOTP_STEP = 300; // 5分钟
+    var TOTP_S1 = 1046;      // "MONS2026NODEKEY" 各字符 ASCII 值之和
+    var TOTP_P1 = 7919;      // 大质数 1
+    var TOTP_P2 = 6271;      // 大质数 2
+    var TOTP_M  = 6559466;   // = S1 * P2 = 1046 * 6271 (预计算, 省去快捷指令一步乘法)
+    var TOTP_STEP = 300;     // 5分钟
 
-    function _hexCharVal(c) {
-        var code = c.charCodeAt(0);
-        if (code >= 48 && code <= 57) return code - 48;      // 0-9
-        if (code >= 97 && code <= 102) return code - 87;     // a-f
-        if (code >= 65 && code <= 70) return code - 55;      // A-F
-        return 0;
-    }
-
-    async function generateTOTP() {
+    function generateTOTP() {
         var timeWindow = Math.floor(Date.now() / 1000 / TOTP_STEP);
-        var msg = TOTP_SECRET + ":" + timeWindow;
-        var enc = new TextEncoder();
-        var hashBuf = await crypto.subtle.digest('SHA-256', enc.encode(msg));
-        // 转为 hex 字符串 (与 iOS 快捷指令 SHA-256 输出一致)
-        var hashHex = Array.prototype.map.call(new Uint8Array(hashBuf), function(b) {
-            return ('00' + b.toString(16)).slice(-2);
-        }).join('');
-        // 取最后 4 个 hex 字符, 逐个转为数值 (与 iOS 快捷指令字典查表方式一致)
-        var last4 = hashHex.slice(-4);
-        var code = 0;
-        for (var i = 0; i < 4; i++) {
-            code = code * 16 + _hexCharVal(last4[i]);
-        }
-        code = code % 10000;
+        // 算法: ((W + S1) * P1 + W * M) % 10000
+        // 三个常数 S1=1046, P1=7919, M=6559466
+        var code = ((timeWindow + TOTP_S1) * TOTP_P1 + timeWindow * TOTP_M) % 10000;
         return code.toString().padStart(4, '0');
     }
 
@@ -834,23 +819,15 @@
         sessionStorage.setItem('auth_time', Date.now().toString());
     }
 
-    async function checkPassword() {
+    function checkPassword() {
         var input = allDigits.map(function(d) { return d.value; }).join('');
         if (input.length !== 4) return;
 
-        var expected = await generateTOTP();
+        var expected = generateTOTP();
         // 也允许上一个时间窗口的密码 (边界情况容错)
-        var prevTimeWindow = Math.floor(Date.now() / 1000 / TOTP_STEP) - 1;
-        var prevMsg = TOTP_SECRET + ":" + prevTimeWindow;
-        var enc2 = new TextEncoder();
-        var prevHashBuf = await crypto.subtle.digest('SHA-256', enc2.encode(prevMsg));
-        var prevHashHex = Array.prototype.map.call(new Uint8Array(prevHashBuf), function(b) {
-            return ('00' + b.toString(16)).slice(-2);
-        }).join('');
-        var prevLast4 = prevHashHex.slice(-4);
-        var prevCode = 0;
-        for (var j = 0; j < 4; j++) { prevCode = prevCode * 16 + _hexCharVal(prevLast4[j]); }
-        prevCode = (prevCode % 10000).toString().padStart(4, '0');
+        var prevWindow = Math.floor(Date.now() / 1000 / TOTP_STEP) - 1;
+        var prevCode = ((prevWindow + TOTP_S1) * TOTP_P1 + prevWindow * TOTP_M) % 10000;
+        prevCode = prevCode.toString().padStart(4, '0');
 
         if (input === expected || input === prevCode) {
             hideAuthOverlay();
