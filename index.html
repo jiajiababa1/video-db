@@ -919,18 +919,24 @@
     var authHintEl = document.getElementById('authHint');
     var allDigits = [authD1, authD2, authD3, authD4];
 
-    // 检查是否已通过验证 (session 级别, 关闭标签页后失效)
+    // 检查是否已通过验证
+    // - 在页面上时: 自动续期, 永不过期
+    // - 离开页面 ≤10分钟: 回来不用重新输入
+    // - 离开页面 >10分钟: 需要重新输入
     function isAuthValid() {
-        var at = sessionStorage.getItem('auth_time');
-        if (!at) return false;
-        var elapsed = Date.now() - parseInt(at);
-        // 验证通过后 30 分钟内有效 (跨越多个密码周期)
-        return elapsed < 30 * 60 * 1000;
+        var exp = localStorage.getItem('auth_expiry');
+        if (!exp) return false;
+        return Date.now() < parseInt(exp);
     }
+
+    // 延长有效期 (在页面上每分钟调用一次, 离开页面后自然过期)
+    function extendAuth() {
+        localStorage.setItem('auth_expiry', (Date.now() + 10 * 60 * 1000).toString());
+    }
+    var authHeartbeat = setInterval(extendAuth, 60000);
 
     function showAuthOverlay() {
         authOverlay.classList.remove('hidden');
-        // 清除输入
         allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
         authHintEl.innerHTML = '在 iOS 快捷指令中查看当前密码';
         authD1.focus();
@@ -938,7 +944,7 @@
 
     function hideAuthOverlay() {
         authOverlay.classList.add('hidden');
-        sessionStorage.setItem('auth_time', Date.now().toString());
+        extendAuth(); // 首次授权, 设 10 分钟过期
     }
 
     function checkPassword() {
