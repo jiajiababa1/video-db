@@ -50,7 +50,7 @@ def build_page_url(base_url: str, page: int) -> str:
 # ========== Playwright 模式 ==========
 
 async def _fetch_playwright(browser, url: str, label: str) -> str | None:
-    """用 Playwright 抓取单页，等待 Cloudflare 验证完成"""
+    """用 Playwright 抓取单页，等待 Cloudflare JS 验证完成"""
     page = None
     try:
         page = await browser.new_page()
@@ -58,28 +58,26 @@ async def _fetch_playwright(browser, url: str, label: str) -> str | None:
             "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         })
-        # 只用 load 事件（Cloudflare 页面永不休眠，networkidle 会超时）
-        await page.goto(url, wait_until="load", timeout=30000)
-        # 等待 Cloudflare JS Challenge + 动态内容加载
-        await asyncio.sleep(5)
+        # domcontentloaded 快速触发，然后等 Cloudflare JS Challenge 完成
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # 等最多 30 秒让 Cloudflare JS challenge 完成并加载视频卡片
+        try:
+            await page.wait_for_selector("div.listn", timeout=30000)
+            await asyncio.sleep(1)
+            return await page.content()
+        except Exception:
+            pass
+        # 超时了，保存调试信息
+        title = await page.title()
         html = await page.content()
-        if "listn" in html:
-            return html
-        # 多等几秒再试
-        await asyncio.sleep(5)
-        html = await page.content()
-        if "listn" in html:
-            return html
-        # 调试：保存首页 HTML 到文件
         if label == "home":
             try:
                 with open("debug_page.html", "w", encoding="utf-8") as f:
                     f.write(html)
-                log("已保存 debug_page.html 用于分析", "INFO")
+                log("已保存 debug_page.html", "INFO")
             except Exception:
                 pass
-        title = await page.title()
-        log(f"无视频: title='{title[:60]}', len={len(html)}", "WARN")
+        log(f"等待超时: title='{title[:60]}', len={len(html)}", "WARN")
     except Exception as e:
         log(f"Playwright 错误: {str(e)[:100]}", "WARN")
     finally:
