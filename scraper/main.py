@@ -50,7 +50,7 @@ def build_page_url(base_url: str, page: int) -> str:
 # ========== Playwright 模式 ==========
 
 async def _fetch_playwright(browser, url: str) -> str | None:
-    """用 Playwright 抓取单页"""
+    """用 Playwright 抓取单页，等待 Cloudflare 验证完成"""
     page = None
     try:
         page = await browser.new_page()
@@ -58,20 +58,23 @@ async def _fetch_playwright(browser, url: str) -> str | None:
             "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         })
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        # 等 JS 执行和 Cloudflare challenge 完成
-        await asyncio.sleep(2)
+        await page.goto(url, wait_until="networkidle", timeout=60000)
+        # 等待 Cloudflare JS Challenge 完成（最长等 15 秒）
+        for _ in range(6):
+            html = await page.content()
+            if "listn" in html and "cf-browser-verification" not in html.lower():
+                return html
+            await asyncio.sleep(2.5)
+        # 最后检查一次
         html = await page.content()
         if "listn" in html:
             return html
-        # 如果是 Cloudflare 验证页，多等一会儿
-        if "cf-browser-verification" in html.lower() or "checking your browser" in html.lower():
-            await asyncio.sleep(5)
-            html = await page.content()
-            if "listn" in html:
-                return html
+        # 记录页面标题用于调试
+        title = await page.title()
+        body_snippet = html[:500]
+        log(f"页面无视频: title='{title[:80]}', body={body_snippet[:120]}", "WARN")
     except Exception as e:
-        log(f"Playwright 错误: {str(e)[:80]}", "WARN")
+        log(f"Playwright 错误: {str(e)[:120]}", "WARN")
     finally:
         if page:
             await page.close()
