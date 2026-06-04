@@ -779,15 +779,35 @@
         if(now-lastTrigger<COOLDOWN){toast('冷却中，'+Math.ceil((COOLDOWN-(now-lastTrigger))/60000)+' 分钟后可再触发');return;}
         lastTrigger=now; toast('正在触发爬虫抓取新视频...');
         $refresh.disabled=true; $refresh.textContent='...';
+        dispatchWorkflow(0);
+    }
+    function dispatchWorkflow(retry){
+        var url='https://api.github.com/repos/jiajiababa1/video-db/actions/workflows/scrape.yml/dispatches';
+        // 第一次直接调，失败后走CORS代理
+        if(retry===1) url='https://corsproxy.io/?'+encodeURIComponent(url);
         var x=new XMLHttpRequest();
-        x.open('POST','https://api.github.com/repos/jiajiababa1/video-db/actions/workflows/scrape.yml/dispatches');
+        x.open('POST',url);
         x.setRequestHeader('Authorization','Bearer '+GITHUB_TOKEN);
         x.setRequestHeader('Accept','application/vnd.github+json');
+        x.setRequestHeader('Content-Type','application/json');
         x.onload=function(){
-            toast(x.status===204?'爬虫已触发! 约1分钟后数据更新':'触发失败: '+x.status);
-            $refresh.disabled=false; $refresh.textContent='更新';
+            if(x.status===204||x.status===200){
+                toast('爬虫已触发! 约2分钟后数据更新');
+                $refresh.disabled=false; $refresh.textContent='更新';
+            } else if(retry===0){
+                dispatchWorkflow(1);
+            } else {
+                toast('触发失败，请手动触发: GitHub Actions → Daily Video Scraper → Run workflow');
+                $refresh.disabled=false; $refresh.textContent='更新';
+            }
         };
-        x.onerror=function(){toast('网络错误，无法触发爬虫');$refresh.disabled=false;$refresh.textContent='更新';lastTrigger=0;};
+        x.onerror=function(){
+            if(retry===0){dispatchWorkflow(1);}
+            else {
+                toast('网络错误，请稍后重试');
+                $refresh.disabled=false; $refresh.textContent='更新';lastTrigger=0;
+            }
+        };
         x.send(JSON.stringify({ref:'main'}));
     }
 
