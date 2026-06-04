@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS videos (
     thumbnail_url  TEXT DEFAULT '',               -- 封面图片 URL
     video_url      TEXT DEFAULT '',               -- monsnode 视频页面链接
     author         TEXT DEFAULT '',               -- 作者
-    duration       TEXT DEFAULT '',               -- 时长
-    views          TEXT DEFAULT '',               -- 播放量
+    duration       TEXT DEFAULT '',               -- redirect URL (monsnode无时长, 复用存redirect.php链接)
+    views          TEXT DEFAULT '',               -- 播放量 (monsnode列表页无此数据)
     source_page    TEXT DEFAULT '',               -- 从哪个页面抓到的
     source_section TEXT DEFAULT '',               -- 从哪个栏目抓到 (trending/home/latest)
     scraped_at     TIMESTAMPTZ DEFAULT NOW(),     -- 最后一次抓取时间

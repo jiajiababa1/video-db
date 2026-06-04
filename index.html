@@ -208,19 +208,24 @@
         }
         .vid-card:hover { transform:translateY(-4px); border-color:var(--vprimary); box-shadow:0 8px 24px rgba(99,102,241,0.12); }
         .vid-card:active { transform:scale(0.98); }
-        /* hover 播放图标覆盖层 */
+        /* hover/长按 播放图标覆盖层 */
         .vid-play-overlay {
             position:absolute; inset:0; background:rgba(0,0,0,0.45); display:flex;
-            align-items:center; justify-content:center; opacity:0; transition:opacity 0.3s;
+            align-items:center; justify-content:center; opacity:0; transition:opacity 0.25s;
             pointer-events:none; z-index:2;
         }
-        .vid-card:hover .vid-play-overlay { opacity:1; }
+        /* 桌面端 hover */
+        @media (hover: hover) {
+            .vid-card:hover .vid-play-overlay { opacity:1; }
+            .vid-card:hover .vid-play-overlay .play-icon { transform:scale(1.1); }
+        }
+        /* 移动端长按 */
+        .vid-card.vid-press .vid-play-overlay { opacity:1; }
         .vid-play-overlay .play-icon {
             width:56px; height:56px; border-radius:50%; background:rgba(99,102,241,0.85);
             display:flex; align-items:center; justify-content:center;
             box-shadow:0 4px 20px rgba(99,102,241,0.5); transition:transform 0.3s;
         }
-        .vid-card:hover .vid-play-overlay .play-icon { transform:scale(1.1); }
         .vid-play-overlay .play-icon::after {
             content:''; width:0; height:0; border-style:solid;
             border-width:10px 0 10px 18px; border-color:transparent transparent transparent #fff;
@@ -355,23 +360,15 @@
             transition:all 0.2s; flex-shrink:0;
         }
         .vid-modal-close:hover { background:#22222a; color:#fff; border-color:#444; }
-        .vid-modal-body {
-            flex:1; min-height:0; position:relative; background:#000;
+        .vid-modal-preview {
+            flex:1; min-height:0; background:#000;
             display:flex; align-items:center; justify-content:center;
+            overflow:hidden;
         }
-        .vid-modal-body iframe {
-            width:100%; height:100%; min-height:50vh; border:none;
+        .vid-modal-preview img {
+            width:100%; max-height:60vh; object-fit:contain;
+            display:block;
         }
-        .vid-modal-loading {
-            position:absolute; inset:0; display:flex; align-items:center;
-            justify-content:center; color:#52525b; font-size:14px; gap:8px;
-        }
-        .vid-modal-spinner {
-            width:28px; height:28px; border:3px solid #1e1e24;
-            border-top-color:var(--vprimary); border-radius:50%;
-            animation:spin 0.8s linear infinite;
-        }
-        @keyframes spin { to{transform:rotate(360deg)} }
         .vid-modal-footer {
             display:flex; align-items:center; gap:10px; padding:10px 16px;
             border-top:1px solid #1e1e24; flex-shrink:0; flex-wrap:wrap;
@@ -379,6 +376,7 @@
         .vid-modal-footer .vid-badge { font-size:11px; }
         .vid-modal-footer .vid-author { color:#71717a; font-size:12px; }
         .vid-modal-footer .vid-btn { font-size:12px; }
+        #vidModalPlayBtn { font-size:13px; padding:8px 16px; }
 
         /* ============ 响应式 ============ */
         @media (max-width:640px) {
@@ -400,7 +398,7 @@
             .vid-modal { width:96vw; max-height:85vh; border-radius:10px; }
             .vid-modal-header { padding:10px 12px; }
             .vid-modal-title { font-size:12px; }
-            .vid-modal-body iframe { min-height:35vh; }
+            .vid-modal-preview img { max-height:40vh; }
             .vid-play-overlay .play-icon { width:40px; height:40px; }
             .vid-play-overlay .play-icon::after { border-width:7px 0 7px 13px; }
         }
@@ -489,25 +487,21 @@
         </div>
         <div class="toast" id="toast"></div>
         <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
-        <!-- 视频播放模态框 -->
+        <!-- 视频预览模态框 -->
         <div class="vid-modal-overlay" id="vidModalOverlay" onclick="closeVideoModal(event)">
             <div class="vid-modal" onclick="event.stopPropagation()">
                 <div class="vid-modal-header">
-                    <span class="vid-modal-title" id="vidModalTitle">视频播放</span>
+                    <span class="vid-modal-title" id="vidModalTitle">视频预览</span>
                     <button class="vid-modal-close" onclick="closeVideoModal()">✕</button>
                 </div>
-                <div class="vid-modal-body" id="vidModalBody">
-                    <div class="vid-modal-loading" id="vidModalLoading">
-                        <div class="vid-modal-spinner"></div>
-                        <span>加载中...</span>
-                    </div>
-                    <iframe id="vidModalIframe" src="" allowfullscreen style="display:none;"></iframe>
+                <div class="vid-modal-preview" id="vidModalPreview">
+                    <img id="vidModalThumb" src="" alt="" style="width:100%;max-height:60vh;object-fit:contain;background:#000;">
                 </div>
                 <div class="vid-modal-footer" id="vidModalFooter">
                     <span class="vid-badge" id="vidModalBadge"></span>
                     <span class="vid-author" id="vidModalAuthor"></span>
-                    <button class="vid-btn ghost" onclick="copyVideoLink()" style="margin-left:auto;">🔗 复制链接</button>
-                    <button class="vid-btn ghost" onclick="openInNewTab()">↗ 新窗口打开</button>
+                    <button class="vid-btn primary" id="vidModalPlayBtn" onclick="playVideo()" style="margin-left:auto;">▶ 播放视频</button>
+                    <button class="vid-btn ghost" onclick="copyVideoLink()">🔗 复制</button>
                 </div>
             </div>
         </div>
@@ -866,24 +860,36 @@
 
     function card(v){
         var c=document.createElement('div');c.className='vid-card';
-        var pu=v.thumbnail_url?'https://wsrv.nl/?url='+encodeURIComponent(v.thumbnail_url):'';
-        var dur=v.duration?'<span class="vid-duration">'+esc(v.duration)+'</span>':'';
-        var imgHtml=pu
-            ?'<img src="'+esc(pu)+'" alt="" loading="lazy" onerror="this.style.display=\'none\';this.parentElement.querySelector(\'.vid-noimg\').style.display=\'flex\';">'
-            :'';
-        c.innerHTML=
-            '<div class="vid-thumb">'+imgHtml+dur+
-            '<div class="vid-play-overlay"><div class="play-icon"></div></div>'+
-            '<div class="vid-noimg" style="'+(pu?'display:none;':'')+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>'+
-            '<div class="vid-body"><div class="vid-title">'+esc(v.title||v.video_id)+'</div>'+
-            '<div class="vid-foot"><span class="vid-badge">'+esc(v.video_id)+'</span>'+
-            (v.author?'<span class="vid-author">@'+esc(v.author)+'</span>':'')+
-            (v.source_section?'<span style="color:#3f3f46;font-size:10px;">#'+esc(v.source_section)+'</span>':'')+
-            '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\''+esc(v.video_url||'')+'\',this)" title="复制链接">🔗</button></div></div>';
-        c.onclick=function(e){
-            if(e.target.closest('.vid-copy'))return;
-            if(v.video_url)openVideoModal(v);
-        };
+        // duration 字段可能存的是 redirect URL (爬虫复用字段)
+        var isRedirectUrl = v.duration && v.duration.indexOf('http') === 0;
+        var playUrl = isRedirectUrl ? v.duration : (v.video_url || '');
+        var dur = (v.duration && !isRedirectUrl) ? '<span class="vid-duration">' + esc(v.duration) + '</span>' : '';
+        var imgHtml = pu
+            ? '<img src="' + esc(pu) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.parentElement.querySelector(\'.vid-noimg\').style.display=\'flex\';">'
+            : '';
+        var noImgDisplay = pu ? 'display:none;' : '';
+        c.innerHTML =
+            '<div class="vid-thumb">' + imgHtml + dur +
+            '<div class="vid-play-overlay"><div class="play-icon"></div></div>' +
+            '<div class="vid-noimg" style="' + noImgDisplay + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>' +
+            '<div class="vid-body"><div class="vid-title">' + esc(v.title || v.video_id) + '</div>' +
+            '<div class="vid-foot"><span class="vid-badge">' + esc(v.video_id) + '</span>' +
+            (v.author ? '<span class="vid-author">@' + esc(v.author) + '</span>' : '') +
+            (v.source_section ? '<span style="color:#3f3f46;font-size:10px;">#' + esc(v.source_section) + '</span>' : '') +
+            '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
+        // 点击打开预览模态框
+        c.addEventListener('click', function(e) {
+            if (e.target.closest('.vid-copy')) return;
+            if (v.video_url) openVideoModal(v, playUrl);
+        });
+        // 移动端长按显示播放图标
+        var pressTimer;
+        c.addEventListener('touchstart', function(e) {
+            if (e.target.closest('.vid-copy')) return;
+            pressTimer = setTimeout(function() { c.classList.add('vid-press'); }, 300);
+        }, {passive: true});
+        c.addEventListener('touchend', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
+        c.addEventListener('touchmove', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
         return c;
     }
 
@@ -899,54 +905,52 @@
     }
     function showCopied(btn){btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='🔗';btn.classList.remove('copied');},1500);}
 
-    // ============ 视频模态框播放 ============
+    // ============ 视频预览模态框 ============
     var currentVideoUrl = '';
     var currentVideoTitle = '';
+    var currentThumbUrl = '';
     var modalOverlay = document.getElementById('vidModalOverlay');
     var modalTitle = document.getElementById('vidModalTitle');
     var modalBadge = document.getElementById('vidModalBadge');
     var modalAuthor = document.getElementById('vidModalAuthor');
-    var modalIframe = document.getElementById('vidModalIframe');
-    var modalLoading = document.getElementById('vidModalLoading');
+    var modalThumb = document.getElementById('vidModalThumb');
+    var modalPlayBtn = document.getElementById('vidModalPlayBtn');
 
-    function openVideoModal(v) {
-        currentVideoUrl = v.video_url;
+    function openVideoModal(v, playUrl) {
+        // playUrl: redirect URL (优先, 直接跳转Twitter视频) 或视频页面URL
+        currentVideoUrl = playUrl || v.video_url;
         currentVideoTitle = v.title || v.video_id;
-        // 设置标题
+        currentThumbUrl = v.thumbnail_url || '';
+        // 填充信息
         modalTitle.textContent = currentVideoTitle;
         modalBadge.textContent = v.video_id;
         modalAuthor.textContent = v.author ? '@' + v.author : '';
-        // 重置 iframe
-        modalIframe.style.display = 'none';
-        modalLoading.style.display = 'flex';
-        modalIframe.src = '';
+        // 显示大缩略图
+        if (currentThumbUrl) {
+            modalThumb.src = currentThumbUrl;
+            modalThumb.style.display = 'block';
+        } else {
+            modalThumb.style.display = 'none';
+        }
         // 显示模态框，锁定背景滚动
         modalOverlay.classList.add('on');
         document.getElementById('videoView').style.overflow = 'hidden';
-        // 延迟加载 iframe 以显示加载动画
-        var loadTimeout = setTimeout(function() {
-            modalLoading.innerHTML = '<span style="color:#f87171;">⚠ 该网站可能禁止嵌入播放</span><br><button class="vid-btn primary" onclick="openInNewTab()" style="margin-top:12px;">↗ 在新窗口打开</button>';
-        }, 8000);
-        setTimeout(function() {
-            modalIframe.src = currentVideoUrl;
-            modalIframe.onload = function() {
-                clearTimeout(loadTimeout);
-                modalIframe.style.display = 'block';
-                modalLoading.style.display = 'none';
-            };
-        }, 300);
     }
 
     function closeVideoModal(e) {
         if (e && e.target !== modalOverlay) return;
         modalOverlay.classList.remove('on');
         document.getElementById('videoView').style.overflow = '';
-        // 延迟清理 iframe，让关闭动画先播放
+        // 延迟清理缩略图
         setTimeout(function() {
-            modalIframe.src = '';
-            modalIframe.style.display = 'none';
-            modalLoading.style.display = 'flex';
+            modalThumb.src = '';
         }, 400);
+    }
+
+    function playVideo() {
+        if (currentVideoUrl) {
+            window.open(currentVideoUrl, '_blank');
+        }
     }
 
     function copyVideoLink() {
