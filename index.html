@@ -1468,14 +1468,23 @@
             viewsHtml + sectionLabel +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
 
-        // 点击: 尝试嵌入播放 Twitter 视频
+        // 点击: 尝试嵌入播放 Twitter 视频 - 加强响应
         c.addEventListener('click', function(e) {
             if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
+
+            // 强制阻止冒泡
+            e.stopImmediatePropagation();
+
             if (v.duration && v.duration.indexOf('http') === 0) {
-                // 有 redirect URL, 尝试内嵌播放
-                resolveAndPlay(v.duration, v.video_id);
+                // 有 redirect URL
+                currentVideoUrl = v.duration;
+                openVideoModal(v, v.duration);
+                setTimeout(() => playVideo(), 300); // 自动尝试播放
             } else if (v.video_url) {
-                openVideoModal(v, playUrl);
+                currentVideoUrl = playUrl || v.video_url;
+                openVideoModal(v, currentVideoUrl);
+            } else {
+                toast('此视频暂无播放链接');
             }
         });
         // 移动端长按显示播放图标
@@ -1513,24 +1522,30 @@
     var modalPlayBtn = document.getElementById('vidModalPlayBtn');
 
     function openVideoModal(v, playUrl) {
-        // playUrl: redirect URL (优先, 直接跳转Twitter视频) 或视频页面URL
-        currentVideoUrl = playUrl || v.video_url;
+        currentVideoUrl = playUrl || v.video_url || '';
         currentVideoTitle = v.title || v.video_id;
         currentThumbUrl = v.thumbnail_url || '';
+
         // 填充信息
         modalTitle.textContent = currentVideoTitle;
         modalBadge.textContent = v.video_id;
         modalAuthor.textContent = v.author ? '@' + v.author : '';
-        // 显示大缩略图
-        if (currentThumbUrl) {
-            modalThumb.src = currentThumbUrl;
-            modalThumb.style.display = 'block';
-        } else {
-            modalThumb.style.display = 'none';
-        }
+
+        // 重置预览区域为大缩略图
+        var preview = document.getElementById('vidModalPreview');
+        preview.innerHTML = `
+            <img id="vidModalThumb" src="${currentThumbUrl}" alt="" style="width:100%; max-height:65vh; object-fit:contain; background:#000; display:block;">
+        `;
+
         // 显示模态框，锁定背景滚动
         modalOverlay.classList.add('on');
         document.getElementById('videoView').style.overflow = 'hidden';
+
+        // 自动聚焦播放按钮
+        setTimeout(() => {
+            var playBtn = document.getElementById('vidModalPlayBtn');
+            if (playBtn) playBtn.focus();
+        }, 100);
     }
 
     function closeVideoModal(e) {
@@ -1544,9 +1559,25 @@
     }
 
     function playVideo() {
-        if (currentVideoUrl) {
-            window.open(currentVideoUrl, '_blank');
+        if (!currentVideoUrl) {
+            toast('没有可播放链接');
+            return;
         }
+
+        // 尝试直接在模态框内嵌入视频播放器
+        var preview = document.getElementById('vidModalPreview');
+        preview.innerHTML = `
+            <video id="inlineVideoPlayer" controls autoplay style="width:100%; max-height:70vh; background:#000;" playsinline>
+                <source src="${currentVideoUrl}" type="video/mp4">
+                您的浏览器不支持视频播放。
+            </video>
+            <div style="text-align:center; padding:10px; color:#666; font-size:13px;">
+                如果视频无法加载，可能是Twitter视频限制。<br>
+                <button onclick="window.open('${currentVideoUrl}', '_blank')" style="margin-top:8px; padding:8px 16px; background:#6366f1; color:white; border:none; border-radius:6px; cursor:pointer;">在新标签页打开</button>
+            </div>
+        `;
+
+        toast('正在尝试内嵌播放...');
     }
 
     function copyVideoLink() {
