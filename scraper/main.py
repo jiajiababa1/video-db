@@ -1,23 +1,18 @@
 """
-monsnode.com 瑙嗛鐖櫕 v4
-- 浣跨敤 curl_cffi 妯℃嫙 Chrome TLS 鎸囩汗缁曡繃 Cloudflare
-- 鎶撳彇澶氭椂闂存椤甸潰锛?4灏忔椂/3澶?7澶?鐑棬/鎺ㄨ崘/鏈€鏂?鎺掕锛?- 姝ｇ‘鎻愬彇瑙嗛ID銆佺缉鐣ュ浘銆佹爣棰樸€佷綔鑰呫€乺edirect缂栧彿
-- 鎸囨暟閫€閬块噸璇?+ 璇︾粏鏃ュ織
+monsnode.com 瑙嗛鐖櫕 v5
+- 浼樺厛浣跨敤 Playwright 鏃犲ご Chromium 缁曡繃 Cloudflare
+- 鏈湴鐜鍙敤 curl_cffi 鍔犻€燂紙閫氳繃 --fast 鍙傛暟锛?- 鎶撳彇澶氭椂闂存椤甸潰 + 鐑棬/鏈€鏂?鎺掕
 - 閫氳繃 Supabase REST API 瀛樺叆鏁版嵁搴?"""
-
 import os
 import re
-import time
 import sys
 import json
-import traceback
+import time
+import asyncio
 from datetime import datetime, timezone
 from urllib.parse import urljoin
 
-from curl_cffi import requests
 from bs4 import BeautifulSoup
-
-# ========== 閰嶇疆 ==========
 
 BASE_URL = "https://monsnode.com"
 
@@ -31,25 +26,8 @@ TARGET_SECTIONS = [
     ("/?ranking=1", "ranking", 2),
 ]
 
-# Chrome 125 瀹屾暣璇锋眰澶?HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "no-cache",
-    "Sec-Ch-Ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1",
-    "DNT": "1",
-}
-
 REQUEST_DELAY = 2.0
-MAX_RETRIES = 4
+MAX_RETRIES = 3
 MAX_VIDEOS_PER_SECTION = 200
 BATCH_SIZE = 50
 
@@ -67,51 +45,210 @@ def build_page_url(base_url: str, page: int) -> str:
     return f"{base_url}{sep}p={page}"
 
 
-def fetch_page(url: str, referer: str = "", retries: int = MAX_RETRIES) -> BeautifulSoup | None:
-    """鐢?curl_cffi 鎶撳彇椤甸潰锛屾ā鎷?Chrome 125 TLS 鎸囩汗"""
-    headers = dict(HEADERS)
-    headers["Referer"] = referer if referer else "https://www.google.com/"
+# ========== Playwright 妯″紡 ==========
 
-    for attempt in range(1, retries + 1):
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                impersonate="chrome124",
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                return BeautifulSoup(resp.text, "lxml")
-            elif resp.status_code == 429:
-                wait = 30 * attempt
-                log(f"闄愭祦 (429)锛岀瓑寰?{wait}s...", "WARN")
-                time.sleep(wait)
-            elif resp.status_code == 403:
-                wait = 10 * attempt
-                log(f"鎷︽埅 (403)锛岀瓑寰?{wait}s 閲嶈瘯 (绗瑊attempt}娆?...", "WARN")
-                time.sleep(wait)
-            elif resp.status_code >= 500:
-                wait = 2 ** attempt
-                log(f"鏈嶅姟鍣ㄩ敊璇?{resp.status_code}锛岀瓑寰?{wait}s...", "WARN")
-                time.sleep(wait)
-            else:
-                log(f"HTTP {resp.status_code}: {url}", "ERROR")
-                return None
-        except Exception as e:
-            err_msg = str(e)
-            if "curl" in err_msg.lower() or "reset" in err_msg.lower():
-                wait = 5 * attempt
-                log(f"杩炴帴閲嶇疆 {url[:50]}锛岀瓑寰?{wait}s (绗瑊attempt}娆?...", "WARN")
-            else:
-                wait = 3 * attempt
-                log(f"鎶撳彇澶辫触 {url[:50]}: {e}", "WARN")
-            if attempt < retries:
-                time.sleep(wait)
+async def _fetch_playwright(browser, url: str) -> str | None:
+    """鐢?Playwright 鎶撳彇鍗曢〉"""
+    page = None
+    try:
+        page = await browser.new_page()
+        await page.set_extra_http_headers({
+            "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        })
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # 绛?JS 鎵ц鍜?Cloudflare challenge 瀹屾垚
+        await asyncio.sleep(2)
+        html = await page.content()
+        if "listn" in html:
+            return html
+        # 濡傛灉鏄?Cloudflare 楠岃瘉椤碉紝澶氱瓑涓€浼氬効
+        if "cf-browser-verification" in html.lower() or "checking your browser" in html.lower():
+            await asyncio.sleep(5)
+            html = await page.content()
+            if "listn" in html:
+                return html
+    except Exception as e:
+        log(f"Playwright 閿欒: {str(e)[:80]}", "WARN")
+    finally:
+        if page:
+            await page.close()
     return None
 
 
-def find_video_cards(soup: BeautifulSoup, page_url: str, section: str) -> list[dict]:
+async def scrape_with_playwright() -> dict:
+    """Playwright 妯″紡涓绘祦绋?""
+    from playwright.async_api import async_playwright
+    import subprocess
+
+    # 纭繚 Chromium 宸插畨瑁?    try:
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                       capture_output=True, timeout=120)
+    except Exception:
+        pass
+
+    stats = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "sections_crawled": 0, "pages_crawled": 0,
+        "videos_found": 0, "videos_saved": 0, "errors": [],
+    }
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox",
+                  "--disable-dev-shm-usage", "--disable-gpu"]
+        )
+        try:
+            for path, label, max_pages in TARGET_SECTIONS:
+                section_url = urljoin(BASE_URL, path)
+                all_videos = []
+                log(f"[{label}] {section_url}")
+
+                for page_num in range(1, max_pages + 1):
+                    url = section_url if page_num == 1 else build_page_url(section_url, page_num)
+
+                    for attempt in range(1, MAX_RETRIES + 1):
+                        html = await _fetch_playwright(browser, url)
+                        if html:
+                            break
+                        if attempt < MAX_RETRIES:
+                            wait = 5 * attempt
+                            log(f"閲嶈瘯 (attempt {attempt}): 绛夊緟 {wait}s", "WARN")
+                            await asyncio.sleep(wait)
+
+                    if not html:
+                        if page_num == 1:
+                            stats["errors"].append(f"棣栭〉鎶撳彇澶辫触: {url}")
+                            break
+                        else:
+                            log(f"[{label}] 绗瑊page_num}椤靛け璐ワ紝鍋滄缈婚〉", "WARN")
+                            break
+
+                    stats["pages_crawled"] += 1
+                    videos = parse_video_cards(html, url, label)
+                    log(f"  绗瑊page_num}椤? {len(videos)} 涓棰?)
+
+                    if not videos:
+                        log(f"[{label}] 鏃犺棰戯紝鍋滄缈婚〉")
+                        break
+
+                    existing = {v["video_id"] for v in all_videos}
+                    new = [v for v in videos if v["video_id"] not in existing]
+                    if not new and page_num > 1:
+                        break
+
+                    all_videos.extend(new)
+                    if len(all_videos) >= MAX_VIDEOS_PER_SECTION:
+                        break
+
+                    await asyncio.sleep(REQUEST_DELAY)
+
+                stats["sections_crawled"] += 1
+                stats["videos_found"] += len(all_videos)
+                log(f"[{label}] 鍏?{len(all_videos)} 涓棰?)
+
+                if all_videos:
+                    saved = supabase_save(all_videos)
+                    stats["videos_saved"] += saved
+                    log(f"[{label}] 宸蹭繚瀛?{saved}")
+
+                await asyncio.sleep(REQUEST_DELAY)
+        finally:
+            await browser.close()
+
+    stats["finished_at"] = datetime.now(timezone.utc).isoformat()
+    return stats
+
+
+# ========== curl_cffi 妯″紡 (鏈湴蹇€? ==========
+
+def scrape_with_curl_cffi() -> dict:
+    """curl_cffi 妯″紡锛堟湰鍦颁娇鐢紝GitHub Actions 涓?IP 琚皝锛?""
+    from curl_cffi import requests
+
+    stats = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "sections_crawled": 0, "pages_crawled": 0,
+        "videos_found": 0, "videos_saved": 0, "errors": [],
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+
+    for path, label, max_pages in TARGET_SECTIONS:
+        section_url = urljoin(BASE_URL, path)
+        all_videos = []
+        log(f"[{label}] {section_url}")
+
+        for page_num in range(1, max_pages + 1):
+            url = section_url if page_num == 1 else build_page_url(section_url, page_num)
+
+            soup = None
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    resp = requests.get(url, headers=headers, impersonate="chrome124", timeout=30)
+                    if resp.status_code == 200:
+                        soup = BeautifulSoup(resp.text, "lxml")
+                        break
+                    elif resp.status_code in (403, 429):
+                        time.sleep(10 * attempt)
+                except Exception:
+                    time.sleep(5 * attempt)
+
+            if not soup:
+                if page_num == 1:
+                    stats["errors"].append(f"棣栭〉鎶撳彇澶辫触: {url}")
+                    break
+                else:
+                    log(f"[{label}] 绗瑊page_num}椤靛け璐ワ紝鍋滄缈婚〉", "WARN")
+                    break
+
+            stats["pages_crawled"] += 1
+            videos = parse_video_cards(soup, url, label)
+            log(f"  绗瑊page_num}椤? {len(videos)} 涓棰?)
+
+            if not videos:
+                break
+
+            existing = {v["video_id"] for v in all_videos}
+            new = [v for v in videos if v["video_id"] not in existing]
+            if not new and page_num > 1:
+                break
+
+            all_videos.extend(new)
+            if len(all_videos) >= MAX_VIDEOS_PER_SECTION:
+                break
+
+            time.sleep(REQUEST_DELAY)
+
+        stats["sections_crawled"] += 1
+        stats["videos_found"] += len(all_videos)
+        log(f"[{label}] 鍏?{len(all_videos)} 涓棰?)
+
+        if all_videos:
+            saved = supabase_save(all_videos)
+            stats["videos_saved"] += saved
+            log(f"[{label}] 宸蹭繚瀛?{saved}")
+
+        time.sleep(REQUEST_DELAY)
+
+    stats["finished_at"] = datetime.now(timezone.utc).isoformat()
+    return stats
+
+
+# ========== 鍏辩敤瑙ｆ瀽 ==========
+
+def parse_video_cards(soup_or_html, page_url: str, section: str) -> list[dict]:
     """瑙ｆ瀽 monsnode 椤甸潰锛屾彁鍙栬棰戝崱鐗?""
+    if isinstance(soup_or_html, str):
+        soup = BeautifulSoup(soup_or_html, "lxml")
+    else:
+        soup = soup_or_html
+
     videos = []
     seen_ids = set()
 
@@ -180,7 +317,7 @@ def find_video_cards(soup: BeautifulSoup, page_url: str, section: str) -> list[d
     return videos
 
 
-# ========== Supabase (鐢?httpx 淇濈暀锛屽洜涓哄彧鏈夊啓鍏ラ渶瑕? ==========
+# ========== Supabase ==========
 
 def supabase_save(videos: list[dict]) -> int:
     """鎵归噺 upsert 鍒?Supabase"""
@@ -233,72 +370,6 @@ def supabase_save(videos: list[dict]) -> int:
     return saved
 
 
-# ========== 涓绘祦绋?==========
-
-def scrape_all() -> dict:
-    stats = {
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "sections_crawled": 0,
-        "pages_crawled": 0,
-        "videos_found": 0,
-        "videos_saved": 0,
-        "errors": [],
-    }
-
-    for path, label, max_pages in TARGET_SECTIONS:
-        section_url = urljoin(BASE_URL, path)
-        all_videos = []
-
-        log(f"[{label}] {section_url}")
-
-        for page in range(1, max_pages + 1):
-            url = section_url if page == 1 else build_page_url(section_url, page)
-            referer = section_url if page > 1 else ""
-
-            soup = fetch_page(url, referer=referer)
-            if not soup:
-                if page == 1:
-                    stats["errors"].append(f"棣栭〉鎶撳彇澶辫触: {url}")
-                    break
-                else:
-                    log(f"[{label}] 绗瑊page}椤靛け璐ワ紝鍋滄缈婚〉", "WARN")
-                    break
-
-            stats["pages_crawled"] += 1
-            videos = find_video_cards(soup, url, label)
-            log(f"  绗瑊page}椤? {len(videos)} 涓棰?)
-
-            if not videos:
-                log(f"[{label}] 鏃犺棰戯紝鍋滄缈婚〉")
-                break
-
-            existing = {v["video_id"] for v in all_videos}
-            new = [v for v in videos if v["video_id"] not in existing]
-            if not new and page > 1:
-                break
-
-            all_videos.extend(new)
-            if len(all_videos) >= MAX_VIDEOS_PER_SECTION:
-                break
-
-            time.sleep(REQUEST_DELAY)
-
-        stats["sections_crawled"] += 1
-        stats["videos_found"] += len(all_videos)
-        log(f"[{label}] 鍏?{len(all_videos)} 涓棰?)
-
-        if all_videos:
-            saved = supabase_save(all_videos)
-            stats["videos_saved"] += saved
-            log(f"[{label}] 宸蹭繚瀛?{saved}")
-
-        time.sleep(REQUEST_DELAY)
-
-    _save_status(stats)
-    stats["finished_at"] = datetime.now(timezone.utc).isoformat()
-    return stats
-
-
 def _save_status(stats: dict):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
@@ -325,16 +396,35 @@ def _save_status(stats: dict):
         pass
 
 
+# ========== 涓诲叆鍙?==========
+
+def detect_env() -> str:
+    """妫€娴嬭繍琛岀幆澧? 'github' | 'local'"""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return "github"
+    return "local"
+
+
 def main():
     if not SUPABASE_URL or not SUPABASE_KEY:
         log("璇疯缃?SUPABASE_URL 鍜?SUPABASE_KEY", "ERROR")
         sys.exit(1)
 
+    fast_mode = "--fast" in sys.argv
+    env = detect_env()
+
     print("=" * 55)
-    log("monsnode 鐖櫕 v4 (curl_cffi)")
+    log(f"monsnode 鐖櫕 v5 | 鐜: {env} | 妯″紡: {'curl_cffi' if fast_mode else 'Playwright'}")
     print("=" * 55)
 
-    stats = scrape_all()
+    if fast_mode or env == "local":
+        # 鏈湴浣跨敤 curl_cffi锛堟洿蹇級
+        stats = scrape_with_curl_cffi()
+    else:
+        # GitHub Actions 浣跨敤 Playwright
+        stats = asyncio.run(scrape_with_playwright())
+
+    _save_status(stats)
 
     print("\n" + "=" * 55)
     print(f"  Section: {stats['sections_crawled']}  椤甸潰: {stats['pages_crawled']}")
