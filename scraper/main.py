@@ -35,9 +35,21 @@ TARGET_SECTIONS = [
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8,zh-CN;q=0.7,zh;q=0.6",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Ch-Ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
     "DNT": "1",
+    "Connection": "keep-alive",
 }
 
 REQUEST_DELAY = 1.5
@@ -152,11 +164,16 @@ def save_videos(videos: list[dict]) -> int:
 
 # ========== 页面抓取 ==========
 
-def fetch_with_retry(client: httpx.Client, url: str, max_retries: int = MAX_RETRIES) -> BeautifulSoup | None:
+def fetch_with_retry(client: httpx.Client, url: str, referer: str = "", max_retries: int = MAX_RETRIES) -> BeautifulSoup | None:
     """带重试的页面抓取"""
+    headers = dict(HEADERS)
+    if referer:
+        headers["Referer"] = referer
+    else:
+        headers["Referer"] = "https://www.google.com/"
     for attempt in range(1, max_retries + 1):
         try:
-            resp = client.get(url, headers=HEADERS, timeout=30, follow_redirects=True)
+            resp = client.get(url, headers=headers, timeout=30, follow_redirects=True)
             resp.raise_for_status()
             return BeautifulSoup(resp.text, "lxml")
         except httpx.HTTPStatusError as e:
@@ -164,6 +181,10 @@ def fetch_with_retry(client: httpx.Client, url: str, max_retries: int = MAX_RETR
                 wait = 30 * attempt
                 log(f"触发限流 (429)，等待 {wait}s...", "WARN")
                 time.sleep(wait)
+            elif e.response.status_code == 403:
+                log(f"被拦截 (403)，等待后重试 (尝试 {attempt}/{max_retries})", "WARN")
+                if attempt < max_retries:
+                    time.sleep(5 * attempt)
             elif e.response.status_code >= 500:
                 log(f"服务器错误 {e.response.status_code} (尝试 {attempt}/{max_retries})", "WARN")
                 time.sleep(2 ** attempt)
@@ -269,7 +290,7 @@ def scrape_all() -> dict:
         "errors": [],
     }
 
-    client = httpx.Client(http2=True, timeout=30)
+    client = httpx.Client(http2=False, timeout=30)
 
     try:
         for path, label, max_pages in TARGET_SECTIONS:
