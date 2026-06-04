@@ -208,6 +208,24 @@
         }
         .vid-card:hover { transform:translateY(-4px); border-color:var(--vprimary); box-shadow:0 8px 24px rgba(99,102,241,0.12); }
         .vid-card:active { transform:scale(0.98); }
+        /* hover 播放图标覆盖层 */
+        .vid-play-overlay {
+            position:absolute; inset:0; background:rgba(0,0,0,0.45); display:flex;
+            align-items:center; justify-content:center; opacity:0; transition:opacity 0.3s;
+            pointer-events:none; z-index:2;
+        }
+        .vid-card:hover .vid-play-overlay { opacity:1; }
+        .vid-play-overlay .play-icon {
+            width:56px; height:56px; border-radius:50%; background:rgba(99,102,241,0.85);
+            display:flex; align-items:center; justify-content:center;
+            box-shadow:0 4px 20px rgba(99,102,241,0.5); transition:transform 0.3s;
+        }
+        .vid-card:hover .vid-play-overlay .play-icon { transform:scale(1.1); }
+        .vid-play-overlay .play-icon::after {
+            content:''; width:0; height:0; border-style:solid;
+            border-width:10px 0 10px 18px; border-color:transparent transparent transparent #fff;
+            margin-left:3px;
+        }
         .vid-thumb { position:relative; width:100%; padding-top:56.25%; background:#18181b; overflow:hidden; }
         .vid-thumb img {
             position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
@@ -307,6 +325,61 @@
         .pull-dot:nth-child(3) { animation-delay:0.4s; }
         @keyframes pullBounce { to{transform:translateY(-4px);opacity:0.3} }
 
+        /* ============ 视频播放模态框 ============ */
+        .vid-modal-overlay {
+            position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85);
+            display:flex; align-items:center; justify-content:center;
+            opacity:0; pointer-events:none; transition:opacity 0.35s;
+            backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+        }
+        .vid-modal-overlay.on { opacity:1; pointer-events:auto; }
+        .vid-modal {
+            background:var(--vcard); border-radius:14px; width:92vw; max-width:900px;
+            max-height:90vh; display:flex; flex-direction:column; overflow:hidden;
+            border:1px solid var(--vborder); box-shadow:0 24px 80px rgba(0,0,0,0.6);
+            transform:translateY(20px); transition:transform 0.35s;
+        }
+        .vid-modal-overlay.on .vid-modal { transform:translateY(0); }
+        .vid-modal-header {
+            display:flex; align-items:center; justify-content:space-between;
+            padding:12px 16px; border-bottom:1px solid #1e1e24; flex-shrink:0;
+        }
+        .vid-modal-title {
+            font-size:14px; font-weight:600; color:var(--vtext);
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; margin-right:12px;
+        }
+        .vid-modal-close {
+            width:32px; height:32px; border-radius:50%; border:1px solid #2a2a32;
+            background:#16161c; color:#a1a1aa; cursor:pointer; font-size:16px;
+            display:flex; align-items:center; justify-content:center;
+            transition:all 0.2s; flex-shrink:0;
+        }
+        .vid-modal-close:hover { background:#22222a; color:#fff; border-color:#444; }
+        .vid-modal-body {
+            flex:1; min-height:0; position:relative; background:#000;
+            display:flex; align-items:center; justify-content:center;
+        }
+        .vid-modal-body iframe {
+            width:100%; height:100%; min-height:50vh; border:none;
+        }
+        .vid-modal-loading {
+            position:absolute; inset:0; display:flex; align-items:center;
+            justify-content:center; color:#52525b; font-size:14px; gap:8px;
+        }
+        .vid-modal-spinner {
+            width:28px; height:28px; border:3px solid #1e1e24;
+            border-top-color:var(--vprimary); border-radius:50%;
+            animation:spin 0.8s linear infinite;
+        }
+        @keyframes spin { to{transform:rotate(360deg)} }
+        .vid-modal-footer {
+            display:flex; align-items:center; gap:10px; padding:10px 16px;
+            border-top:1px solid #1e1e24; flex-shrink:0; flex-wrap:wrap;
+        }
+        .vid-modal-footer .vid-badge { font-size:11px; }
+        .vid-modal-footer .vid-author { color:#71717a; font-size:12px; }
+        .vid-modal-footer .vid-btn { font-size:12px; }
+
         /* ============ 响应式 ============ */
         @media (max-width:640px) {
             .game-logo { font-size:48px; }
@@ -324,6 +397,12 @@
             .vid-tabs { padding:8px 10px 0; }
             .vid-tab { padding:5px 12px; font-size:11px; }
             .scroll-top { bottom:16px; right:16px; width:36px; height:36px; font-size:16px; }
+            .vid-modal { width:96vw; max-height:85vh; border-radius:10px; }
+            .vid-modal-header { padding:10px 12px; }
+            .vid-modal-title { font-size:12px; }
+            .vid-modal-body iframe { min-height:35vh; }
+            .vid-play-overlay .play-icon { width:40px; height:40px; }
+            .vid-play-overlay .play-icon::after { border-width:7px 0 7px 13px; }
         }
     </style>
 </head>
@@ -410,6 +489,28 @@
         </div>
         <div class="toast" id="toast"></div>
         <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+        <!-- 视频播放模态框 -->
+        <div class="vid-modal-overlay" id="vidModalOverlay" onclick="closeVideoModal(event)">
+            <div class="vid-modal" onclick="event.stopPropagation()">
+                <div class="vid-modal-header">
+                    <span class="vid-modal-title" id="vidModalTitle">视频播放</span>
+                    <button class="vid-modal-close" onclick="closeVideoModal()">✕</button>
+                </div>
+                <div class="vid-modal-body" id="vidModalBody">
+                    <div class="vid-modal-loading" id="vidModalLoading">
+                        <div class="vid-modal-spinner"></div>
+                        <span>加载中...</span>
+                    </div>
+                    <iframe id="vidModalIframe" src="" allowfullscreen style="display:none;"></iframe>
+                </div>
+                <div class="vid-modal-footer" id="vidModalFooter">
+                    <span class="vid-badge" id="vidModalBadge"></span>
+                    <span class="vid-author" id="vidModalAuthor"></span>
+                    <button class="vid-btn ghost" onclick="copyVideoLink()" style="margin-left:auto;">🔗 复制链接</button>
+                    <button class="vid-btn ghost" onclick="openInNewTab()">↗ 新窗口打开</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -555,7 +656,15 @@
     var keyMap={37:'left',38:'up',39:'right',40:'down',65:'left',87:'up',68:'right',83:'down'};
     document.addEventListener('keydown',function(e){
         if(document.body.classList.contains('dark-mode')){
-            if(e.keyCode===27) goBackToGame(); // Esc
+            // 如果模态框打开，ESC 先关闭模态框
+            if(e.keyCode===27){
+                if(modalOverlay.classList.contains('on')){
+                    closeVideoModal();
+                } else {
+                    goBackToGame();
+                }
+                return;
+            }
             if(e.keyCode===191&&!e.target.closest('input')){e.preventDefault();document.getElementById('searchInput').focus();} // /
             return;
         }
@@ -764,6 +873,7 @@
             :'';
         c.innerHTML=
             '<div class="vid-thumb">'+imgHtml+dur+
+            '<div class="vid-play-overlay"><div class="play-icon"></div></div>'+
             '<div class="vid-noimg" style="'+(pu?'display:none;':'')+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>'+
             '<div class="vid-body"><div class="vid-title">'+esc(v.title||v.video_id)+'</div>'+
             '<div class="vid-foot"><span class="vid-badge">'+esc(v.video_id)+'</span>'+
@@ -772,7 +882,7 @@
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\''+esc(v.video_url||'')+'\',this)" title="复制链接">🔗</button></div></div>';
         c.onclick=function(e){
             if(e.target.closest('.vid-copy'))return;
-            if(v.video_url)window.open(v.video_url,'_blank');
+            if(v.video_url)openVideoModal(v);
         };
         return c;
     }
@@ -788,6 +898,74 @@
         }
     }
     function showCopied(btn){btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='🔗';btn.classList.remove('copied');},1500);}
+
+    // ============ 视频模态框播放 ============
+    var currentVideoUrl = '';
+    var currentVideoTitle = '';
+    var modalOverlay = document.getElementById('vidModalOverlay');
+    var modalTitle = document.getElementById('vidModalTitle');
+    var modalBadge = document.getElementById('vidModalBadge');
+    var modalAuthor = document.getElementById('vidModalAuthor');
+    var modalIframe = document.getElementById('vidModalIframe');
+    var modalLoading = document.getElementById('vidModalLoading');
+
+    function openVideoModal(v) {
+        currentVideoUrl = v.video_url;
+        currentVideoTitle = v.title || v.video_id;
+        // 设置标题
+        modalTitle.textContent = currentVideoTitle;
+        modalBadge.textContent = v.video_id;
+        modalAuthor.textContent = v.author ? '@' + v.author : '';
+        // 重置 iframe
+        modalIframe.style.display = 'none';
+        modalLoading.style.display = 'flex';
+        modalIframe.src = '';
+        // 显示模态框，锁定背景滚动
+        modalOverlay.classList.add('on');
+        document.getElementById('videoView').style.overflow = 'hidden';
+        // 延迟加载 iframe 以显示加载动画
+        var loadTimeout = setTimeout(function() {
+            modalLoading.innerHTML = '<span style="color:#f87171;">⚠ 该网站可能禁止嵌入播放</span><br><button class="vid-btn primary" onclick="openInNewTab()" style="margin-top:12px;">↗ 在新窗口打开</button>';
+        }, 8000);
+        setTimeout(function() {
+            modalIframe.src = currentVideoUrl;
+            modalIframe.onload = function() {
+                clearTimeout(loadTimeout);
+                modalIframe.style.display = 'block';
+                modalLoading.style.display = 'none';
+            };
+        }, 300);
+    }
+
+    function closeVideoModal(e) {
+        if (e && e.target !== modalOverlay) return;
+        modalOverlay.classList.remove('on');
+        document.getElementById('videoView').style.overflow = '';
+        // 延迟清理 iframe，让关闭动画先播放
+        setTimeout(function() {
+            modalIframe.src = '';
+            modalIframe.style.display = 'none';
+            modalLoading.style.display = 'flex';
+        }, 400);
+    }
+
+    function copyVideoLink() {
+        if (!currentVideoUrl) return;
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(currentVideoUrl).then(function() { toast('链接已复制'); });
+        } else {
+            var ta = document.createElement('textarea');
+            ta.value = currentVideoUrl;
+            ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); toast('链接已复制'); } catch(e) { toast('复制失败'); }
+            document.body.removeChild(ta);
+        }
+    }
+
+    function openInNewTab() {
+        if (currentVideoUrl) window.open(currentVideoUrl, '_blank');
+    }
 
     function render(vids, append){
         if(!append){$grid.innerHTML='';}
@@ -868,10 +1046,7 @@
     var _orig=enterVideoMode;
     enterVideoMode=function(){_orig();setTimeout(function(){triggerScraper();},1500);};
 
-    // Esc 返回游戏
-    document.addEventListener('keydown',function(e){
-        if(e.keyCode===27&&document.body.classList.contains('dark-mode')){goBackToGame();}
-    });
+    // Esc 已在主 keydown handler 中处理（含模态框优先逻辑）
 
     // ============ 启动 ============
     initGame();
