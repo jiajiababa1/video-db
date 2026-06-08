@@ -1167,19 +1167,10 @@
     }
 
     // ============================================================
-    // 视频播放: 统一模态框, 自动解析 → fxtwitter API → MP4直链 (绝不跳转)
+    // 视频播放: 极简模态框 — MP4直链就播, Twitter URL就调fxtwitter, 否则显示缩略图
     // ============================================================
 
-    // 从 video_id 构造 monsnode redirect URL (duration 为空时使用)
-    function buildRedirectUrl(v) {
-        var dur = v.duration || '';
-        if (dur.indexOf('http') === 0) return dur;
-        var numId = (v.video_id || '').replace(/^v/, '');
-        if (numId && /^\d+$/.test(numId)) return 'https://monsnode.com/redirect.php?v=' + numId;
-        return '';
-    }
-
-    // 调用 fxtwitter API 获取 MP4 直链
+    // 从 fxtwitter API 获取 MP4 直链
     async function resolveFxtwitterMp4(tweetId) {
         try {
             var resp = await fetch('https://api.fxtwitter.com/status/' + tweetId);
@@ -1189,61 +1180,11 @@
             if (!media) return null;
             var videos = media.videos || [];
             if (!videos.length) return null;
-            // 选最高画质 (最后一个通常是最高)
-            var best = videos[videos.length - 1];
-            return { url: best.url, mp4s: videos.map(function(vv) { return vv.url; }) };
+            return videos[videos.length - 1].url; // 最高画质
         } catch(e) { return null; }
     }
 
-    // 通过 CORS 代理抓取 monsnode redirect.php 页面,
-    // 从 twjn.php 的 JS 跳转代码中提取 Twitter 推文 ID
-    async function resolveRedirectToTweetId(redirectUrl) {
-        var html = null;
-        // 策略1: redirect.php (不用 &t=1) → 302 → twjn.php (返回 JS 跳转 HTML)
-        try {
-            var proxy = 'https://corsproxy.io/?' + encodeURIComponent(redirectUrl);
-            var ctrl = new AbortController();
-            var t = setTimeout(function() { ctrl.abort(); }, 15000);
-            var resp = await fetch(proxy, {
-                signal: ctrl.signal,
-                headers: { 'Accept': 'text/html,*/*' }
-            });
-            clearTimeout(t);
-            if (resp.ok) html = await resp.text();
-        } catch(e) {}
-
-        // 从 HTML 中提取 tweet ID
-        if (html) {
-            var m = html.match(/(?:twitter\.com|x\.com)\/[^\/"'<\s]+\/status\/(\d+)/i);
-            if (m) return m[1];
-            // 也尝试匹配 fxtwitter URL
-            m = html.match(/(?:fxtwitter\.com)\/[^\/"'<\s]+\/status\/(\d+)/i);
-            if (m) return m[1];
-        }
-
-        // 策略2: 用 &t=1 版本 (直接 302 到 Twitter, CORS 代理返回 Twitter 页面)
-        // Twitter 页面标题包含推文作者, 从中提取 tweet ID
-        try {
-            var proxy2 = 'https://corsproxy.io/?' + encodeURIComponent(redirectUrl + '&t=1');
-            var resp2 = await fetch(proxy2, {
-                headers: { 'Accept': 'text/html,*/*' }
-            });
-            if (resp2.ok) {
-                var html2 = await resp2.text();
-                var m2 = html2.match(/(?:twitter\.com|x\.com)\/[^\/"'<\s]+\/status\/(\d+)/i);
-                if (m2) return m2[1];
-                // 从 Twitter 页面的 og:url 或 canonical link 提取
-                m2 = html2.match(/<meta[^>]+property="og:url"[^>]+content="[^"]*status\/(\d+)/i);
-                if (m2) return m2[1];
-                m2 = html2.match(/canonical[^>]+href="[^"]*status\/(\d+)/i);
-                if (m2) return m2[1];
-            }
-        } catch(e) {}
-
-        return null;
-    }
-
-    // 创建 <video> 元素
+    // 创建 <video> 元素 (自动播放, 绝不跳转)
     function createVideoPlayer(mp4Url) {
         var video = document.createElement('video');
         video.src = mp4Url;
@@ -1262,7 +1203,19 @@
         return video;
     }
 
-    // 主要的视频模态框入口
+    // 判断 URL 类型
+    function classifyUrl(rawDur) {
+        if (!rawDur || rawDur.indexOf('http') !== 0) return { type: 'none' };
+        if (rawDur.indexOf('.mp4') >= 0 || rawDur.indexOf('video.twimg.com') >= 0) return { type: 'mp4', url: rawDur };
+        var m = rawDur.match(/status\/(\d+)/);
+        if (m && (rawDur.indexOf('twitter.com') >= 0 || rawDur.indexOf('x.com') >= 0 || rawDur.indexOf('fxtwitter.com') >= 0)) {
+            return { type: 'twitter', tweetId: m[1] };
+        }
+        if (rawDur.indexOf('monsnode.com') >= 0) return { type: 'redirect', url: rawDur };
+        return { type: 'other', url: rawDur };
+    }
+
+    // 视频模态框入口 — 同步弹窗, 异步解析
     function showVideoModal(v) {
         try {
             var overlay = document.getElementById('vidModalOverlay');
@@ -1272,11 +1225,8 @@
             var author = document.getElementById('vidModalAuthor');
             var playBtn = document.getElementById('vidModalPlayBtn');
 
-            var rawDur = v.duration || '';
-            var effectiveUrl = rawDur.indexOf('http') === 0 ? rawDur : buildRedirectUrl(v);
-            var isMp4Url = effectiveUrl.indexOf('.mp4') >= 0 || effectiveUrl.indexOf('video.twimg.com') >= 0 || effectiveUrl.indexOf('ext_tw_video') >= 0;
-            var isTwitterUrl = !isMp4Url && (effectiveUrl.indexOf('twitter.com') >= 0 || effectiveUrl.indexOf('x.com') >= 0 || effectiveUrl.indexOf('fxtwitter.com') >= 0);
-            var isRedirectUrl = !isMp4Url && !isTwitterUrl && effectiveUrl.indexOf('http') === 0;
+            var dur = v.duration || '';
+            var info = classifyUrl(dur);
             var monsnodeUrl = v.video_url || ('https://monsnode.com/' + (v.video_id || ''));
             var thumbUrl = v.thumbnail_url || '';
 
@@ -1287,12 +1237,9 @@
             currentThumbUrl = thumbUrl;
             currentVideoUrl = '';
 
-            // 立即显示模态框 + 缩略图
+            // 立即显示缩略图
             showVideoThumbFallback(preview, thumbUrl);
-            playBtn.textContent = '⏳ 解析中...';
-            playBtn.disabled = true;
             playBtn.style.display = '';
-            playBtn.onclick = function() {};
 
             var statusEl = document.getElementById('vidModalStatus');
             if (!statusEl) {
@@ -1301,78 +1248,76 @@
                 statusEl.style.cssText = 'font-size:11px;color:#f59e0b;margin-left:8px;';
                 playBtn.parentNode.insertBefore(statusEl, playBtn.nextSibling);
             }
-            statusEl.textContent = '正在解析视频源...';
-            statusEl.style.color = '#f59e0b';
 
             overlay.classList.add('on');
             document.getElementById('videoView').style.overflow = 'hidden';
 
-            // 异步解析
-            resolveAndPlay(effectiveUrl, isMp4Url, isTwitterUrl, isRedirectUrl, monsnodeUrl, preview, playBtn, statusEl);
+            // 根据 URL 类型快速处理
+            if (info.type === 'mp4') {
+                // MP4 直链 — 直接播, 零等待
+                preview.innerHTML = '';
+                var video = createVideoPlayer(info.url);
+                preview.appendChild(video);
+                currentVideoUrl = info.url;
+                playBtn.textContent = '▶ 重新播放';
+                playBtn.disabled = false;
+                playBtn.onclick = function() { video.currentTime = 0; video.play(); };
+                statusEl.textContent = '✅ MP4 直接播放';
+                statusEl.style.color = '#4ade80';
+            } else if (info.type === 'twitter') {
+                // Twitter URL — 异步调 fxtwitter API
+                playBtn.textContent = '⏳ 获取中...';
+                playBtn.disabled = true;
+                playBtn.onclick = function() {};
+                statusEl.textContent = '正在获取 MP4...';
+                statusEl.style.color = '#f59e0b';
+
+                resolveFxtwitterMp4(info.tweetId).then(function(mp4Url) {
+                    if (mp4Url) {
+                        preview.innerHTML = '';
+                        var vv = createVideoPlayer(mp4Url);
+                        preview.appendChild(vv);
+                        currentVideoUrl = mp4Url;
+                        playBtn.textContent = '▶ 重新播放';
+                        playBtn.disabled = false;
+                        playBtn.onclick = function() { vv.currentTime = 0; vv.play(); };
+                        statusEl.textContent = '✅ MP4 直接播放';
+                        statusEl.style.color = '#4ade80';
+                    } else {
+                        // fxtwitter iframe 兜底
+                        preview.innerHTML = '';
+                        var iframe = document.createElement('iframe');
+                        iframe.src = 'https://fxtwitter.com/_/status/' + info.tweetId;
+                        iframe.style.cssText = 'width:100%;height:60vh;max-height:500px;border:none;background:#000;';
+                        iframe.allow = 'autoplay; encrypted-media';
+                        iframe.setAttribute('allowfullscreen', 'true');
+                        preview.appendChild(iframe);
+                        currentVideoUrl = 'https://x.com/i/status/' + info.tweetId;
+                        playBtn.textContent = '▶ 新窗口打开';
+                        playBtn.disabled = false;
+                        playBtn.onclick = function() { window.open(currentVideoUrl, '_blank'); };
+                        statusEl.textContent = '视频已加载 (嵌入)';
+                        statusEl.style.color = '#4ade80';
+                    }
+                }).catch(function() {
+                    statusEl.textContent = '获取失败, 点击打开原页';
+                    statusEl.style.color = '#f87171';
+                    currentVideoUrl = monsnodeUrl;
+                    playBtn.textContent = '▶ 打开 monsnode';
+                    playBtn.disabled = false;
+                    playBtn.onclick = function() { window.open(monsnodeUrl, '_blank'); };
+                });
+            } else {
+                // 无 MP4 / redirect URL — 缩略图 + monsnode 按钮
+                currentVideoUrl = monsnodeUrl;
+                playBtn.textContent = '▶ 打开 monsnode';
+                playBtn.disabled = false;
+                playBtn.onclick = function() { window.open(monsnodeUrl, '_blank'); };
+                statusEl.textContent = '点击跳转 monsnode 观看';
+                statusEl.style.color = '#f59e0b';
+            }
         } catch(e) {
             console.log('showVideoModal error:', e.message);
-        }
-    }
-
-    async function resolveAndPlay(effectiveUrl, isMp4Url, isTwitterUrl, isRedirectUrl, monsnodeUrl, preview, playBtn, statusEl) {
-        var mp4Url = null;
-        var tweetId = '';
-
-        if (isMp4Url) {
-            mp4Url = effectiveUrl;
-        } else if (isTwitterUrl) {
-            var m = effectiveUrl.match(/status\/(\d+)/);
-            tweetId = m ? m[1] : '';
-            if (tweetId) {
-                statusEl.textContent = '正在获取 MP4...';
-                var result = await resolveFxtwitterMp4(tweetId);
-                if (result) mp4Url = result.url;
-            }
-        } else if (isRedirectUrl) {
-            statusEl.textContent = '解析来源 → 获取视频...';
-            tweetId = await resolveRedirectToTweetId(effectiveUrl);
-            if (tweetId) {
-                var result = await resolveFxtwitterMp4(tweetId);
-                if (result) mp4Url = result.url;
-            }
-        }
-
-        if (mp4Url) {
-            // ★ 成功获取 MP4 — 替换为 <video> 直接播放, 绝不跳转
-            preview.innerHTML = '';
-            var video = createVideoPlayer(mp4Url);
-            preview.appendChild(video);
-            currentVideoUrl = mp4Url;
-            playBtn.textContent = '▶ 重新播放';
-            playBtn.disabled = false;
-            playBtn.onclick = function() { video.currentTime = 0; video.play(); };
-            statusEl.textContent = '✅ MP4 直接播放';
-            statusEl.style.color = '#4ade80';
-        } else if (tweetId) {
-            // 有推文 ID 但无 MP4 → fxtwitter iframe 兜底
-            preview.innerHTML = '';
-            var iframe = document.createElement('iframe');
-            iframe.src = 'https://fxtwitter.com/_/status/' + tweetId;
-            iframe.style.cssText = 'width:100%;height:60vh;max-height:500px;border:none;background:#000;';
-            iframe.allow = 'autoplay; encrypted-media';
-            iframe.setAttribute('allowfullscreen', 'true');
-            preview.appendChild(iframe);
-            currentVideoUrl = 'https://x.com/i/status/' + tweetId;
-            playBtn.textContent = '▶ 新窗口打开';
-            playBtn.disabled = false;
-            playBtn.onclick = function() { window.open(currentVideoUrl, '_blank'); };
-            statusEl.textContent = '视频已加载 (嵌入)';
-            statusEl.style.color = '#4ade80';
-        } else {
-            // 无法解析 → 保留缩略图 + 原页按钮
-            currentVideoUrl = effectiveUrl || monsnodeUrl;
-            playBtn.textContent = effectiveUrl ? '▶ 打开原页' : '无可用链接';
-            playBtn.disabled = !effectiveUrl;
-            playBtn.onclick = function() {
-                if (effectiveUrl) window.open(effectiveUrl, '_blank');
-            };
-            statusEl.textContent = effectiveUrl ? '点击跳转原页观看' : '暂无视频源';
-            statusEl.style.color = effectiveUrl ? '#f59e0b' : '#f87171';
         }
     }
 
