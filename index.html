@@ -525,6 +525,30 @@
         }
         .cheat-indicator.on { display:block; }
 
+        /* 外挂密码弹窗 */
+        .cheat-dialog-overlay {
+            position:fixed; inset:0; z-index:999; background:rgba(0,0,0,0.7);
+            display:none; align-items:center; justify-content:center;
+        }
+        .cheat-dialog-overlay.on { display:flex; }
+        .cheat-dialog {
+            background:#1a1a22; border-radius:12px; padding:24px; width:280px;
+            border:1px solid #2a2a32; text-align:center;
+        }
+        .cheat-dialog .title { font-size:16px; color:#e4e4e7; margin-bottom:6px; }
+        .cheat-dialog .desc { font-size:11px; color:#52525b; margin-bottom:16px; }
+        .cheat-dialog input {
+            width:100%; padding:10px; border-radius:8px; border:1px solid #2a2a32;
+            background:#0e0e14; color:#e4e4e7; font-size:16px; text-align:center;
+            outline:none; font-family:"SF Mono","Fira Code",monospace;
+        }
+        .cheat-dialog input:focus { border-color:var(--vprimary); }
+        .cheat-dialog .actions { margin-top:12px; display:flex; gap:8px; justify-content:center; }
+        .cheat-dialog .btn-cancel {
+            padding:6px 16px; border-radius:6px; border:1px solid #2a2a32;
+            background:transparent; color:#a1a1aa; cursor:pointer; font-size:12px;
+        }
+
         @media (max-width:640px) {
             .game-logo { font-size:48px; }
             .board { max-width:320px; gap:8px; padding:8px; }
@@ -625,7 +649,7 @@
                 <button class="btn" onclick="newGame()">新游戏</button>
                 <button class="btn undo-btn" id="undoBtn" onclick="undoMove()" disabled>↩ 撤销</button>
             </div>
-            <p class="game-stats">步数: <span id="moveCount">0</span></p>
+            <p class="game-stats">步数: <span id="moveCount">0</span><span class="hint-dot" id="cheatTrigger" style="cursor:pointer;margin-left:8px;opacity:0.2;" title="连续点击5次"></span></p>
             <p class="game-footer">方向键 / WASD 移动 ｜ 手机滑动 ｜ 按 <kbd style="background:#eee4da;padding:1px 6px;border-radius:3px;font-size:11px;">?</kbd> 查看快捷键</p>
         </div>
         <!-- 快捷键面板 -->
@@ -639,6 +663,19 @@
             <div class="row"><span>返回游戏</span><span><kbd>Esc</kbd></span></div>
             <div class="row"><span>搜索</span><span><kbd>/</kbd></span></div>
             <div class="row"><span>关闭面板</span><span><kbd>?</kbd> / 点击空白</span></div>
+        </div>
+    </div>
+
+    <!-- ==================== 外挂密码弹窗 ==================== -->
+    <div class="cheat-dialog-overlay" id="cheatDialogOverlay">
+        <div class="cheat-dialog">
+            <p class="title">🔑 输入外挂密码</p>
+            <p class="desc">连续点击步数旁边的灰色小点触发</p>
+            <input type="text" id="cheatCodeInput" placeholder="输入密码" autocomplete="off" autofocus>
+            <div class="actions">
+                <button class="btn-cancel" onclick="closeCheatDialog()">取消</button>
+                <button class="cheat-btn accent" onclick="checkCheatCode()">确认</button>
+            </div>
         </div>
     </div>
 
@@ -1758,16 +1795,17 @@
 
     // Esc 已在主 keydown handler 中处理（含模态框优先逻辑）
 
-    // ============ 2048 外挂系统 (输入 ykre 解锁) ============
+    // ============ 2048 外挂系统 (输入 ykre / 手机点5次解锁) ============
     var cheatsUnlocked = false;
     var cheatBuffer = '';
     var autoPlayTimer = null;
-    var cheatHistory = []; // 无限撤销历史
+    var cheatHistory = [];
+    var cheatTapCount = 0;
+    var cheatTapTimer = null;
 
-    // 键盘缓冲区检测 "ykre"
+    // 桌面端: 键盘输入 ykre
     document.addEventListener('keydown', function(e) {
         if (document.body.classList.contains('dark-mode')) return;
-        // 忽略功能键
         if (e.key.length === 1) {
             cheatBuffer += e.key.toLowerCase();
             if (cheatBuffer.length > 8) cheatBuffer = cheatBuffer.slice(-4);
@@ -1776,6 +1814,57 @@
             toggleCheats();
             cheatBuffer = '';
         }
+    });
+
+    // 手机端: 点击步数旁边的灰色小点 5 次弹出密码框
+    document.getElementById('cheatTrigger').addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (document.body.classList.contains('dark-mode')) return;
+        cheatTapCount++;
+        clearTimeout(cheatTapTimer);
+        cheatTapTimer = setTimeout(function() { cheatTapCount = 0; }, 2000);
+        if (cheatTapCount >= 5) {
+            cheatTapCount = 0;
+            clearTimeout(cheatTapTimer);
+            showCheatDialog();
+        }
+    });
+
+    function showCheatDialog() {
+        document.getElementById('cheatDialogOverlay').classList.add('on');
+        var input = document.getElementById('cheatCodeInput');
+        input.value = '';
+        setTimeout(function() { input.focus(); }, 300);
+        // 回车提交
+        input.onkeydown = function(e) {
+            if (e.key === 'Enter') checkCheatCode();
+        };
+    }
+
+    function closeCheatDialog() {
+        document.getElementById('cheatDialogOverlay').classList.remove('on');
+    }
+
+    function checkCheatCode() {
+        var code = document.getElementById('cheatCodeInput').value.trim().toLowerCase();
+        if (code === 'ykre') {
+            closeCheatDialog();
+            cheatsUnlocked = true;
+            document.getElementById('cheatPanel').classList.add('on');
+            document.getElementById('cheatIndicator').classList.add('on');
+        } else {
+            document.getElementById('cheatCodeInput').value = '';
+            document.getElementById('cheatCodeInput').placeholder = '密码错误，重试';
+            document.getElementById('cheatCodeInput').style.borderColor = '#f87171';
+            setTimeout(function() {
+                document.getElementById('cheatCodeInput').style.borderColor = '';
+            }, 800);
+        }
+    }
+
+    // 点击弹窗背景关闭
+    document.getElementById('cheatDialogOverlay').addEventListener('click', function(e) {
+        if (e.target === this) closeCheatDialog();
     });
 
     function toggleCheats() {
