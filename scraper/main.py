@@ -160,6 +160,10 @@ async def scrape_with_playwright() -> dict:
                 log(f"[{label}] 共 {len(all_videos)} 个视频")
 
                 if all_videos:
+                    # 解析重定向 URL 获取真实视频源地址 (Playwright 环境用 httpx)
+                    resolved = resolve_redirect_urls(all_videos, use_curl_cffi=False)
+                    log(f"[{label}] 已解析 {resolved} 个真实地址")
+
                     saved = supabase_save(all_videos)
                     stats["videos_saved"] += saved
                     log(f"[{label}] 已保存 {saved}")
@@ -251,6 +255,10 @@ def scrape_with_curl_cffi() -> dict:
         log(f"[{label}] 共 {len(all_videos)} 个视频")
 
         if all_videos:
+            # 解析重定向 URL 获取真实视频源地址
+            resolved = resolve_redirect_urls(all_videos, headers, use_curl_cffi=True)
+            log(f"[{label}] 已解析 {resolved} 个真实地址")
+
             saved = supabase_save(all_videos)
             stats["videos_saved"] += saved
             log(f"[{label}] 已保存 {saved}")
@@ -366,6 +374,53 @@ def parse_video_cards(soup_or_html, page_url: str, section: str) -> list[dict]:
     return videos
 
 
+# ========== 重定向解析 ==========
+
+def resolve_redirect_urls(videos: list[dict], headers: dict = None, use_curl_cffi: bool = True) -> int:
+    """批量解析 redirect URL, 获取真实视频源地址存入 duration 字段"""
+    if not videos:
+        return 0
+
+    def _resolve_curl_cffi(video):
+        redirect = video.get("redirect_url", "")
+        if not redirect:
+            return
+        try:
+            from curl_cffi import requests as cffi_requests
+            resp = cffi_requests.get(redirect, headers=headers or {},
+                                     impersonate="chrome124",
+                                     allow_redirects=True, timeout=15)
+            final = str(resp.url)
+            if final and final != redirect:
+                video["duration"] = final[:200]
+        except Exception:
+            pass
+
+    def _resolve_httpx(video):
+        redirect = video.get("redirect_url", "")
+        if not redirect:
+            return
+        try:
+            import httpx as hx
+            with hx.Client(follow_redirects=True, timeout=15) as client:
+                resp = client.head(redirect)
+                final = str(resp.url)
+                if final and final != redirect:
+                    video["duration"] = final[:200]
+        except Exception:
+            pass
+
+    resolve_fn = _resolve_curl_cffi if use_curl_cffi else _resolve_httpx
+
+    # 多线程并行解析 (最多 5 个并发)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        list(executor.map(resolve_fn, videos))
+
+    resolved = sum(1 for v in videos if v.get("duration", "").startswith("http"))
+    return resolved
+
+
 # ========== Supabase ==========
 
 def supabase_save(videos: list[dict]) -> int:
@@ -383,13 +438,15 @@ def supabase_save(videos: list[dict]) -> int:
     records = []
     for v in videos:
         redirect = v.get("redirect_url", "")
+        # 优先使用已解析的真实地址 (resolve_redirect_urls 会设置 v["duration"])
+        resolved_duration = v.get("duration") or redirect
         records.append({
             "video_id": v["video_id"],
             "title": (v["title"][:500] if v["title"] else ""),
             "thumbnail_url": (v["thumbnail"][:1000] if v["thumbnail"] else ""),
             "video_url": (v["url"][:1000] if v["url"] else ""),
             "author": v.get("author", "")[:200],
-            "duration": redirect[:50],
+            "duration": resolved_duration[:200],
             "views": v.get("views", "")[:50],
             "source_page": v.get("source_page", "")[:500],
             "source_section": v.get("source_section", "")[:50],
