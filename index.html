@@ -630,6 +630,7 @@
     <div class="view-game" id="gameView">
         <div class="game-wrapper">
             <div class="game-top-bar">
+                <button onclick="event.stopPropagation();showCheatDialog()" style="width:32px;height:32px;border-radius:8px;border:1px solid #cdc1b4;background:#eee4da;cursor:pointer;font-size:16px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;flex-shrink:0;" title="外挂密码">🔑</button>
                 <div class="game-logo" id="gameLogo">2048<span class="click-hint">点 5 次进入</span></div>
                 <div class="game-scores">
                     <div class="score-card">
@@ -649,7 +650,7 @@
                 <button class="btn" onclick="newGame()">新游戏</button>
                 <button class="btn undo-btn" id="undoBtn" onclick="undoMove()" disabled>↩ 撤销</button>
             </div>
-            <p class="game-stats">步数: <span id="moveCount" style="cursor:pointer;" title="连续点5次解锁外挂">0</span></p>
+            <p class="game-stats">步数: <span id="moveCount">0</span></p>
             <p class="game-footer">方向键 / WASD 移动 ｜ 手机滑动 ｜ 按 <kbd style="background:#eee4da;padding:1px 6px;border-radius:3px;font-size:11px;">?</kbd> 查看快捷键</p>
         </div>
         <!-- 快捷键面板 -->
@@ -1813,20 +1814,6 @@
         if (cheatBuffer.indexOf('ykre') >= 0) {
             toggleCheats();
             cheatBuffer = '';
-        }
-    });
-
-    // 手机端: 点击步数数字 5 次弹出密码框
-    document.getElementById('moveCount').addEventListener('click', function(e) {
-        e.stopPropagation();
-        if (document.body.classList.contains('dark-mode')) return;
-        cheatTapCount++;
-        clearTimeout(cheatTapTimer);
-        cheatTapTimer = setTimeout(function() { cheatTapCount = 0; }, 2000);
-        if (cheatTapCount >= 5) {
-            cheatTapCount = 0;
-            clearTimeout(cheatTapTimer);
-            showCheatDialog();
         }
     });
 
