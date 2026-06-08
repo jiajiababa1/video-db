@@ -438,8 +438,9 @@ def supabase_save(videos: list[dict]) -> int:
     records = []
     for v in videos:
         redirect = v.get("redirect_url", "")
-        # 优先使用已解析的真实地址 (resolve_redirect_urls 会设置 v["duration"])
-        resolved_duration = v.get("duration") or redirect
+        # 优先使用已解析的真实地址, 否则用 redirect_url
+        dur_val = v.get("duration") or ""
+        resolved_duration = dur_val if dur_val.startswith("http") else redirect
         records.append({
             "video_id": v["video_id"],
             "title": (v["title"][:500] if v["title"] else ""),
