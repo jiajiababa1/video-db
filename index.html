@@ -649,7 +649,7 @@
                 <button class="btn" onclick="newGame()">新游戏</button>
                 <button class="btn undo-btn" id="undoBtn" onclick="undoMove()" disabled>↩ 撤销</button>
             </div>
-            <p class="game-stats">步数: <span id="moveCount">0</span><span class="hint-dot" id="cheatTrigger" style="cursor:pointer;margin-left:8px;opacity:0.2;" title="连续点击5次"></span></p>
+            <p class="game-stats">步数: <span id="moveCount" style="cursor:pointer;" title="连续点5次解锁外挂">0</span></p>
             <p class="game-footer">方向键 / WASD 移动 ｜ 手机滑动 ｜ 按 <kbd style="background:#eee4da;padding:1px 6px;border-radius:3px;font-size:11px;">?</kbd> 查看快捷键</p>
         </div>
         <!-- 快捷键面板 -->
@@ -1816,8 +1816,8 @@
         }
     });
 
-    // 手机端: 点击步数旁边的灰色小点 5 次弹出密码框
-    document.getElementById('cheatTrigger').addEventListener('click', function(e) {
+    // 手机端: 点击步数数字 5 次弹出密码框
+    document.getElementById('moveCount').addEventListener('click', function(e) {
         e.stopPropagation();
         if (document.body.classList.contains('dark-mode')) return;
         cheatTapCount++;
