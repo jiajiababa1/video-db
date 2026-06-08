@@ -377,45 +377,36 @@ def parse_video_cards(soup_or_html, page_url: str, section: str) -> list[dict]:
 # ========== 重定向解析 ==========
 
 def resolve_redirect_urls(videos: list[dict], headers: dict = None, use_curl_cffi: bool = True) -> int:
-    """批量解析 redirect URL, 获取真实视频源地址存入 duration 字段"""
+    """通过 redirect.php?v=XXXX&t=1 获取 Twitter 推文 URL, 存入 duration 字段"""
     if not videos:
         return 0
 
-    def _resolve_curl_cffi(video):
+    def _resolve_one(video):
         redirect = video.get("redirect_url", "")
         if not redirect:
             return
+        # &t=1 参数让 monsnode 直接重定向到 Twitter 推文 (无需 JS)
+        tweet_redirect = redirect + "&t=1"
         try:
-            from curl_cffi import requests as cffi_requests
-            resp = cffi_requests.get(redirect, headers=headers or {},
-                                     impersonate="chrome124",
-                                     allow_redirects=True, timeout=15)
+            if use_curl_cffi:
+                from curl_cffi import requests as cffi_requests
+                resp = cffi_requests.get(tweet_redirect, headers=headers or {},
+                                         impersonate="chrome124",
+                                         allow_redirects=True, timeout=15)
+            else:
+                import httpx as hx
+                resp = hx.get(tweet_redirect, headers=headers or {},
+                              follow_redirects=True, timeout=15)
             final = str(resp.url)
-            if final and final != redirect:
+            if final and ("twitter.com" in final or "x.com" in final):
                 video["duration"] = final[:200]
         except Exception:
             pass
 
-    def _resolve_httpx(video):
-        redirect = video.get("redirect_url", "")
-        if not redirect:
-            return
-        try:
-            import httpx as hx
-            with hx.Client(follow_redirects=True, timeout=15) as client:
-                resp = client.head(redirect)
-                final = str(resp.url)
-                if final and final != redirect:
-                    video["duration"] = final[:200]
-        except Exception:
-            pass
-
-    resolve_fn = _resolve_curl_cffi if use_curl_cffi else _resolve_httpx
-
-    # 多线程并行解析 (最多 5 个并发)
+    # 多线程并行解析 (最多 8 个并发)
     import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        list(executor.map(resolve_fn, videos))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(_resolve_one, videos))
 
     resolved = sum(1 for v in videos if v.get("duration", "").startswith("http"))
     return resolved

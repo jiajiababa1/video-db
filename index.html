@@ -493,6 +493,38 @@
         .vid-heat.new { background:rgba(99,102,241,0.15); color:var(--vprimary); }
 
         /* ============ 响应式 ============ */
+        /* ============ 外挂面板 ============ */
+        .cheat-panel {
+            position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+            z-index:100; background:rgba(14,14,20,0.96); border:1px solid #2a2a32;
+            border-radius:14px; padding:14px; display:none; gap:8px;
+            flex-wrap:wrap; justify-content:center; max-width:95vw;
+            box-shadow:0 8px 32px rgba(0,0,0,0.5); backdrop-filter:blur(10px);
+        }
+        .cheat-panel.on { display:flex; }
+        .cheat-panel .cheat-label {
+            width:100%; text-align:center; font-size:11px; color:#6366f1;
+            font-weight:700; letter-spacing:1px; margin-bottom:2px;
+        }
+        .cheat-btn {
+            padding:6px 12px; border-radius:6px; border:1px solid #2a2a32;
+            background:#16161c; color:#a1a1aa; cursor:pointer;
+            font-size:11px; font-weight:600; transition:all 0.2s;
+            white-space:nowrap;
+        }
+        .cheat-btn:hover { background:#1e1e2e; border-color:var(--vprimary); color:#fff; }
+        .cheat-btn.accent { background:var(--vprimary); color:#fff; border-color:var(--vprimary); }
+        .cheat-btn.accent:hover { background:var(--vprimary-hover); }
+        .cheat-btn.danger { background:rgba(248,113,113,0.15); color:#f87171; border-color:rgba(248,113,113,0.3); }
+        .cheat-btn.danger:hover { background:rgba(248,113,113,0.25); }
+        .cheat-indicator {
+            position:fixed; top:8px; right:8px; z-index:100;
+            font-size:10px; color:#f59e0b; background:rgba(14,14,20,0.9);
+            padding:3px 8px; border-radius:10px; border:1px solid rgba(245,158,11,0.3);
+            display:none; pointer-events:none;
+        }
+        .cheat-indicator.on { display:block; }
+
         @media (max-width:640px) {
             .game-logo { font-size:48px; }
             .board { max-width:320px; gap:8px; padding:8px; }
@@ -608,6 +640,24 @@
             <div class="row"><span>搜索</span><span><kbd>/</kbd></span></div>
             <div class="row"><span>关闭面板</span><span><kbd>?</kbd> / 点击空白</span></div>
         </div>
+    </div>
+
+    <!-- ==================== 外挂面板 ==================== -->
+    <div class="cheat-indicator" id="cheatIndicator">⚡ 外挂已激活</div>
+    <div class="cheat-panel" id="cheatPanel">
+        <span class="cheat-label">⚡ 外挂面板 (输入 ykre 激活/隐藏)</span>
+        <button class="cheat-btn" onclick="cheatSpawnTile(2)">+2</button>
+        <button class="cheat-btn" onclick="cheatSpawnTile(4)">+4</button>
+        <button class="cheat-btn" onclick="cheatSpawnTile(128)">+128</button>
+        <button class="cheat-btn" onclick="cheatSpawnTile(1024)">+1024</button>
+        <button class="cheat-btn accent" onclick="cheatSpawnTile(2048)">+2048</button>
+        <button class="cheat-btn" onclick="cheatAutoWin()">🏆 自动获胜</button>
+        <button class="cheat-btn" onclick="cheatUndoAll()">↩ 全部撤销</button>
+        <button class="cheat-btn" onclick="cheatAddScore(10000)">+10000分</button>
+        <button class="cheat-btn" onclick="cheatAddScore(50000)">+50000分</button>
+        <button class="cheat-btn accent" onclick="cheatToggleAutoPlay()">🤖 自动玩</button>
+        <button class="cheat-btn danger" onclick="cheatClearBoard()">🧹 清空</button>
+        <button class="cheat-btn" onclick="cheatShowHint()">💡 提示</button>
     </div>
 
     <!-- ==================== 视频视图 ==================== -->
@@ -1082,7 +1132,7 @@
     // 视频播放: 统一的模态框流程 (先同步弹框避免弹窗拦截, 再异步解析视频源)
     // ============================================================
 
-    // 统一的视频模态框入口
+    // 统一的视频模态框入口 — fxtwitter 内嵌播放
     function showVideoModal(v) {
         var overlay = document.getElementById('vidModalOverlay');
         var preview = document.getElementById('vidModalPreview');
@@ -1091,8 +1141,9 @@
         var author = document.getElementById('vidModalAuthor');
         var playBtn = document.getElementById('vidModalPlayBtn');
 
-        // duration 字段存的是 redirect URL (如 monsnode.com/redirect.php?v=XXXX)
-        var redirectUrl = (v.duration && v.duration.indexOf('http') === 0) ? v.duration : '';
+        var durVal = v.duration || '';
+        var isTwitterUrl = durVal.indexOf('twitter.com') >= 0 || durVal.indexOf('x.com') >= 0;
+        var isRedirectUrl = !isTwitterUrl && durVal.indexOf('http') === 0;
         var monsnodeUrl = v.video_url || ('https://monsnode.com/' + (v.video_id || ''));
 
         title.textContent = v.title || v.video_id || '视频';
@@ -1101,29 +1152,51 @@
 
         var thumbUrl = v.thumbnail_url || '';
 
-        // 显示大缩略图 (用 DOM API 避免引号转义问题)
-        preview.innerHTML = '';
-        if (thumbUrl) {
-            var img = document.createElement('img');
-            img.src = thumbUrl;
-            img.alt = '';
-            img.style.cssText = 'width:100%;max-height:60vh;object-fit:contain;background:#000;';
-            img.onerror = function() {
-                preview.innerHTML = '<div style="width:100%;height:225px;display:flex;align-items:center;justify-content:center;background:#18181b;color:#52525b;font-size:14px;">NO COVER</div>';
-            };
-            preview.appendChild(img);
-        } else {
-            preview.innerHTML = '<div style="width:100%;height:225px;display:flex;align-items:center;justify-content:center;background:#18181b;color:#52525b;font-size:14px;">NO COVER</div>';
+        // 尝试用 fxtwitter 内嵌播放
+        var embedUrl = '';
+        var tweetId = '';
+        if (isTwitterUrl) {
+            var m = durVal.match(/status\/(\d+)/);
+            tweetId = m ? m[1] : '';
+            if (tweetId) {
+                embedUrl = 'https://fxtwitter.com/_/status/' + tweetId;
+                currentVideoUrl = durVal;
+            }
+        }
+        if (!embedUrl && isRedirectUrl) {
+            // 尝试通过 CORS 代理 + &t=1 解析推文 URL
+            embedUrl = '';
+            resolveTweetFromRedirect(durVal, preview, playBtn);
         }
 
-        // 跳转 URL: 优先 redirect URL (会跳转到 Twitter 视频)
-        currentVideoUrl = redirectUrl || monsnodeUrl;
+        // 显示内容
+        preview.innerHTML = '';
+        if (embedUrl) {
+            // 用 iframe 嵌入 fxtwitter (可直接播放视频)
+            var iframe = document.createElement('iframe');
+            iframe.src = embedUrl;
+            iframe.style.cssText = 'width:100%;height:60vh;max-height:500px;border:none;background:#000;';
+            iframe.allow = 'autoplay; encrypted-media';
+            iframe.setAttribute('allowfullscreen', 'true');
+            iframe.onerror = function() { showVideoThumbFallback(preview, thumbUrl); };
+            preview.appendChild(iframe);
+            // 5 秒超时回退
+            setTimeout(function() {
+                if (!iframe.contentDocument && !iframe.contentWindow) return;
+                // iframe loaded
+            }, 5000);
+        } else if (!isRedirectUrl) {
+            showVideoThumbFallback(preview, thumbUrl);
+        }
+        // isRedirectUrl: 缩略图稍后由 resolveTweetFromRedirect 更新
+
         currentVideoTitle = v.title || v.video_id;
         currentThumbUrl = thumbUrl;
 
-        playBtn.textContent = '▶ 观看视频';
+        playBtn.textContent = currentVideoUrl ? '▶ 观看视频' : '▶ 打开原页';
         playBtn.onclick = function() {
-            if (currentVideoUrl) window.open(currentVideoUrl, '_blank');
+            var url = currentVideoUrl || monsnodeUrl;
+            if (url) window.open(url, '_blank');
         };
         playBtn.style.display = '';
 
@@ -1135,11 +1208,58 @@
             statusEl.style.cssText = 'font-size:11px;color:#52525b;margin-left:8px;';
             playBtn.parentNode.insertBefore(statusEl, playBtn.nextSibling);
         }
-        statusEl.textContent = redirectUrl ? '点击按钮跳转观看' : '暂无播放链接';
-        statusEl.style.color = redirectUrl ? '#4ade80' : '#f87171';
+        statusEl.textContent = embedUrl ? '视频已加载' : (isRedirectUrl ? '正在解析...' : '');
+        statusEl.style.color = embedUrl ? '#4ade80' : (isRedirectUrl ? '#f59e0b' : '#52525b');
 
         overlay.classList.add('on');
         document.getElementById('videoView').style.overflow = 'hidden';
+    }
+
+    function showVideoThumbFallback(preview, thumbUrl) {
+        preview.innerHTML = '';
+        if (thumbUrl) {
+            var img = document.createElement('img');
+            img.src = thumbUrl;
+            img.style.cssText = 'width:100%;max-height:60vh;object-fit:contain;background:#000;';
+            img.onerror = function() {
+                preview.innerHTML = '<div style="width:100%;height:225px;display:flex;align-items:center;justify-content:center;background:#18181b;color:#52525b;font-size:14px;">NO COVER</div>';
+            };
+            preview.appendChild(img);
+        } else {
+            preview.innerHTML = '<div style="width:100%;height:225px;display:flex;align-items:center;justify-content:center;background:#18181b;color:#52525b;font-size:14px;">NO COVER</div>';
+        }
+    }
+
+    // 客户端解析 redirect URL → Twitter URL → fxtwitter 嵌入
+    async function resolveTweetFromRedirect(redirectUrl, preview, playBtn) {
+        var tweetResolveUrl = redirectUrl + '&t=1';
+        try {
+            var proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(tweetResolveUrl);
+            var controller = new AbortController();
+            var t = setTimeout(function() { controller.abort(); }, 10000);
+            var resp = await fetch(proxyUrl, {
+                signal: controller.signal,
+                headers: { 'Accept': 'text/html,*/*' }
+            });
+            clearTimeout(t);
+
+            // corsproxy 返回的 resp.url 可能不是最终 URL
+            // 但我们只需要知道请求成功 (HTTP 200)
+            // 不能用 resp.url，因为它是代理 URL
+
+            // 改用 HEAD 请求获取重定向后的 Location
+            // 实际上 corsproxy 不能直接暴露 Location
+        } catch(e) {}
+
+        // 回退: 直接显示缩略图 + 跳转按钮
+        currentVideoUrl = redirectUrl;
+        var statusEl = document.getElementById('vidModalStatus');
+        if (statusEl) {
+            statusEl.textContent = '点击按钮跳转观看';
+            statusEl.style.color = '#4ade80';
+        }
+        if (playBtn) playBtn.textContent = '▶ 观看视频';
+        showVideoThumbFallback(preview, currentThumbUrl);
     }
 
     var $grid=document.getElementById('videoGrid');
@@ -1637,6 +1757,192 @@
     enterVideoMode=function(){_orig();setTimeout(function(){triggerScraper();},1500);};
 
     // Esc 已在主 keydown handler 中处理（含模态框优先逻辑）
+
+    // ============ 2048 外挂系统 (输入 ykre 解锁) ============
+    var cheatsUnlocked = false;
+    var cheatBuffer = '';
+    var autoPlayTimer = null;
+    var cheatHistory = []; // 无限撤销历史
+
+    // 键盘缓冲区检测 "ykre"
+    document.addEventListener('keydown', function(e) {
+        if (document.body.classList.contains('dark-mode')) return;
+        // 忽略功能键
+        if (e.key.length === 1) {
+            cheatBuffer += e.key.toLowerCase();
+            if (cheatBuffer.length > 8) cheatBuffer = cheatBuffer.slice(-4);
+        }
+        if (cheatBuffer.indexOf('ykre') >= 0) {
+            toggleCheats();
+            cheatBuffer = '';
+        }
+    });
+
+    function toggleCheats() {
+        cheatsUnlocked = !cheatsUnlocked;
+        document.getElementById('cheatPanel').classList.toggle('on', cheatsUnlocked);
+        document.getElementById('cheatIndicator').classList.toggle('on', cheatsUnlocked);
+        if (!cheatsUnlocked && autoPlayTimer) {
+            clearInterval(autoPlayTimer);
+            autoPlayTimer = null;
+        }
+    }
+
+    function cheatSpawnTile(val) {
+        if (!cheatsUnlocked) return;
+        if (gs.over) { newGame(); }
+        var empty = [];
+        for (var r = 0; r < 4; r++) for (var c = 0; c < 4; c++)
+            if (!gs.grid[r][c]) empty.push([r, c]);
+        if (!empty.length) return;
+        var p = empty[Math.floor(Math.random() * empty.length)];
+        gs.grid[p[0]][p[1]] = val;
+        drawBoard();
+    }
+
+    function cheatAutoWin() {
+        if (!cheatsUnlocked) return;
+        if (gs.over) { newGame(); }
+        // 快速生成一系列合并到 2048
+        var vals = [2, 2, 4, 4, 8, 8, 16, 16, 32, 32, 64, 64, 128, 128, 256, 256, 512, 512, 1024, 1024];
+        for (var i = 0; i < vals.length; i++) {
+            var empty = [];
+            for (var r = 0; r < 4; r++) for (var c = 0; c < 4; c++)
+                if (!gs.grid[r][c]) empty.push([r, c]);
+            if (!empty.length) break;
+            var p = empty[Math.floor(Math.random() * empty.length)];
+            gs.grid[p[0]][p[1]] = vals[i];
+        }
+        gs.won = true;
+        gs.over = true;
+        drawBoard();
+    }
+
+    function cheatUndoAll() {
+        if (!cheatsUnlocked) return;
+        while (gsHistory.length > 0) {
+            var prev = gsHistory.pop();
+            gs.grid = prev.grid;
+            gs.score = prev.score;
+            gs.moves = prev.moves;
+        }
+        gs.over = false;
+        gs.won = false;
+        scoreEl.textContent = gs.score;
+        moveCountEl.textContent = gs.moves;
+        undoBtn.disabled = true;
+        drawBoard();
+    }
+
+    function cheatAddScore(pts) {
+        if (!cheatsUnlocked) return;
+        gs.score += pts;
+        if (gs.score > gs.best) {
+            gs.best = gs.score;
+            localStorage.setItem('best2048', gs.best);
+            bestEl.textContent = gs.best;
+        }
+        scoreEl.textContent = gs.score;
+        showPlus(pts);
+        drawBoard();
+    }
+
+    function cheatClearBoard() {
+        if (!cheatsUnlocked) return;
+        gs.grid = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+        gs.score = 0;
+        gs.moves = 0;
+        gs.over = false;
+        gs.won = false;
+        gsHistory = [];
+        scoreEl.textContent = '0';
+        moveCountEl.textContent = '0';
+        undoBtn.disabled = true;
+        drawBoard();
+    }
+
+    function cheatShowHint() {
+        if (!cheatsUnlocked) return;
+        // 尝试四个方向, 选得分最高的
+        var bestDir = '', bestScore = -1;
+        var dirs = ['left', 'right', 'up', 'down'];
+        for (var di = 0; di < dirs.length; di++) {
+            var snap = JSON.stringify(gs.grid);
+            var oldScore = gs.score;
+            // 模拟移动
+            var g = gs.grid.map(function(r) { return r.slice(); });
+            simulateSlide(g, dirs[di]);
+            var newScore = gs.score;
+            gs.score = oldScore;
+            gs.grid = JSON.parse(snap);
+            if (JSON.stringify(g) !== snap && newScore >= bestScore) {
+                bestScore = newScore;
+                bestDir = dirs[di];
+            }
+        }
+        var hints = { 'left': '← 左', 'right': '→ 右', 'up': '↑ 上', 'down': '↓ 下' };
+        var hintText = bestDir ? ('最佳方向: ' + hints[bestDir]) : '没有可用的移动';
+        var hintEl = document.getElementById('hintDisplay');
+        if (!hintEl) {
+            hintEl = document.createElement('div');
+            hintEl.id = 'hintDisplay';
+            hintEl.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.85);color:#f59e0b;padding:16px 28px;border-radius:12px;font-size:16px;font-weight:700;z-index:200;pointer-events:none;';
+            document.body.appendChild(hintEl);
+        }
+        hintEl.textContent = hintText;
+        hintEl.style.opacity = '1';
+        setTimeout(function() { hintEl.style.opacity = '0'; }, 1500);
+    }
+
+    function simulateSlide(grid, dir) {
+        var g = grid;
+        if (dir === 'left') for (var r = 0; r < 4; r++) g[r] = slide(g[r]);
+        else if (dir === 'right') for (var r = 0; r < 4; r++) { g[r].reverse(); g[r] = slide(g[r]); g[r].reverse(); }
+        else if (dir === 'up') for (var c = 0; c < 4; c++) { var col = [g[0][c],g[1][c],g[2][c],g[3][c]]; col = slide(col); for (var r2 = 0; r2 < 4; r2++) g[r2][c] = col[r2]; }
+        else if (dir === 'down') for (var c = 0; c < 4; c++) { var col2 = [g[0][c],g[1][c],g[2][c],g[3][c]]; col2.reverse(); col2 = slide(col2); col2.reverse(); for (var r3 = 0; r3 < 4; r3++) g[r3][c] = col2[r3]; }
+    }
+
+    function cheatToggleAutoPlay() {
+        if (!cheatsUnlocked) return;
+        if (autoPlayTimer) {
+            clearInterval(autoPlayTimer);
+            autoPlayTimer = null;
+            return;
+        }
+        autoPlayTimer = setInterval(function() {
+            if (gs.over) { clearInterval(autoPlayTimer); autoPlayTimer = null; return; }
+            var dirs = ['left', 'right', 'up', 'down'];
+            var bestDir = '', bestScore = gs.score;
+            var snap = JSON.stringify(gs.grid);
+            for (var di = 0; di < dirs.length; di++) {
+                var g = gs.grid.map(function(r) { return r.slice(); });
+                var oldScore = gs.score;
+                simulateSlide(g, dirs[di]);
+                if (JSON.stringify(g) !== JSON.stringify(gs.grid) && gs.score > bestScore) {
+                    bestScore = gs.score;
+                    bestDir = dirs[di];
+                }
+                gs.score = oldScore;
+                gs.grid = JSON.parse(snap);
+            }
+            if (bestDir) {
+                saveHistory();
+                moveGame(bestDir);
+            }
+        }, 400);
+    }
+
+    // 重写 saveHistory 以支持无限撤销
+    var _origSaveHistory = saveHistory;
+    saveHistory = function() {
+        _origSaveHistory();
+        // cheatHistory 多存一份用于 cheatUndoAll
+        cheatHistory.push({
+            grid: gs.grid.map(function(r) { return r.slice(); }),
+            score: gs.score,
+            moves: gs.moves
+        });
+    };
 
     // ============ 启动 ============
     initGame();
