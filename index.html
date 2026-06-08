@@ -1190,6 +1190,9 @@
 
         var thumbUrl = v.thumbnail_url || '';
 
+        // 检测是否是直接 MP4 视频地址 (fxtwitter API 返回)
+        var isMp4Url = !isTwitterUrl && (durVal.indexOf('.mp4') >= 0 || durVal.indexOf('video.twimg.com') >= 0 || durVal.indexOf('ext_tw_video') >= 0);
+
         // 尝试用 fxtwitter 内嵌播放
         var embedUrl = '';
         var tweetId = '';
@@ -1201,15 +1204,28 @@
                 currentVideoUrl = durVal;
             }
         }
-        if (!embedUrl && isRedirectUrl) {
-            // 尝试通过 CORS 代理 + &t=1 解析推文 URL
+        if (!isMp4Url && !embedUrl && isRedirectUrl) {
+            // 尝试通过 CORS 代理 + &t=1 解析推文 URL (仅对 monsnode redirect URL)
             embedUrl = '';
             resolveTweetFromRedirect(durVal, preview, playBtn);
         }
 
         // 显示内容
         preview.innerHTML = '';
-        if (embedUrl) {
+        if (isMp4Url) {
+            // ★ 直接播放 MP4 — 100% 不跳转网页
+            var video = document.createElement('video');
+            video.src = durVal;
+            video.controls = true;
+            video.autoplay = true;
+            video.style.cssText = 'width:100%;max-height:60vh;background:#000;display:block;';
+            video.setAttribute('playsinline', 'true');
+            video.setAttribute('webkit-playsinline', 'true');
+            video.setAttribute('x5-video-player-type', 'h5');
+            video.setAttribute('x5-video-playfullscreen', 'true');
+            preview.appendChild(video);
+            currentVideoUrl = durVal;
+        } else if (embedUrl) {
             // 用 iframe 嵌入 fxtwitter (可直接播放视频)
             var iframe = document.createElement('iframe');
             iframe.src = embedUrl;
@@ -1231,11 +1247,20 @@
         currentVideoTitle = v.title || v.video_id;
         currentThumbUrl = thumbUrl;
 
-        playBtn.textContent = currentVideoUrl ? '▶ 观看视频' : '▶ 打开原页';
-        playBtn.onclick = function() {
-            var url = currentVideoUrl || monsnodeUrl;
-            if (url) window.open(url, '_blank');
-        };
+        // 如果是 MP4 直链，点击直接在内置播放器重播
+        if (isMp4Url) {
+            playBtn.textContent = '▶ 重新播放';
+            playBtn.onclick = function() {
+                var vv = preview.querySelector('video');
+                if (vv) { vv.currentTime = 0; vv.play(); }
+            };
+        } else {
+            playBtn.textContent = currentVideoUrl ? '▶ 观看视频' : '▶ 打开原页';
+            playBtn.onclick = function() {
+                var url = currentVideoUrl || monsnodeUrl;
+                if (url) window.open(url, '_blank');
+            };
+        }
         playBtn.style.display = '';
 
         // 状态标签
@@ -1246,8 +1271,8 @@
             statusEl.style.cssText = 'font-size:11px;color:#52525b;margin-left:8px;';
             playBtn.parentNode.insertBefore(statusEl, playBtn.nextSibling);
         }
-        statusEl.textContent = embedUrl ? '视频已加载' : (isRedirectUrl ? '正在解析...' : '');
-        statusEl.style.color = embedUrl ? '#4ade80' : (isRedirectUrl ? '#f59e0b' : '#52525b');
+        statusEl.textContent = isMp4Url ? '✅ MP4 直链播放' : (embedUrl ? '视频已加载' : (isRedirectUrl ? '正在解析...' : ''));
+        statusEl.style.color = isMp4Url ? '#4ade80' : (embedUrl ? '#4ade80' : (isRedirectUrl ? '#f59e0b' : '#52525b'));
 
         overlay.classList.add('on');
         document.getElementById('videoView').style.overflow = 'hidden';

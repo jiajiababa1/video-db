@@ -160,9 +160,13 @@ async def scrape_with_playwright() -> dict:
                 log(f"[{label}] 共 {len(all_videos)} 个视频")
 
                 if all_videos:
-                    # 解析重定向 URL 获取真实视频源地址 (Playwright 环境用 httpx)
+                    # 解析重定向 URL 获取 Twitter 推文地址 (Playwright 环境用 httpx)
                     resolved = resolve_redirect_urls(all_videos, use_curl_cffi=False)
-                    log(f"[{label}] 已解析 {resolved} 个真实地址")
+                    log(f"[{label}] 已解析 {resolved} 个推文地址")
+
+                    # 通过 fxtwitter API 获取可直接播放的 MP4 地址
+                    mp4_resolved = resolve_video_urls(all_videos)
+                    log(f"[{label}] 已解析 {mp4_resolved} 个 MP4 地址")
 
                     saved = supabase_save(all_videos)
                     stats["videos_saved"] += saved
@@ -255,9 +259,13 @@ def scrape_with_curl_cffi() -> dict:
         log(f"[{label}] 共 {len(all_videos)} 个视频")
 
         if all_videos:
-            # 解析重定向 URL 获取真实视频源地址
+            # 解析重定向 URL 获取 Twitter 推文地址
             resolved = resolve_redirect_urls(all_videos, headers, use_curl_cffi=True)
-            log(f"[{label}] 已解析 {resolved} 个真实地址")
+            log(f"[{label}] 已解析 {resolved} 个推文地址")
+
+            # 通过 fxtwitter API 获取可直接播放的 MP4 地址
+            mp4_resolved = resolve_video_urls(all_videos)
+            log(f"[{label}] 已解析 {mp4_resolved} 个 MP4 地址")
 
             saved = supabase_save(all_videos)
             stats["videos_saved"] += saved
@@ -412,6 +420,40 @@ def resolve_redirect_urls(videos: list[dict], headers: dict = None, use_curl_cff
     return resolved
 
 
+# ========== 视频 URL 解析 (fxtwitter API → MP4) ==========
+
+def resolve_video_urls(videos: list[dict]) -> int:
+    """通过 fxtwitter API 获取可直接播放的 MP4 视频地址"""
+    if not videos:
+        return 0
+
+    resolved = 0
+    for v in videos:
+        dur = v.get("duration", "")
+        if not dur or ("twitter.com" not in dur and "x.com" not in dur):
+            continue
+        m = re.search(r"status/(\d+)", dur)
+        if not m:
+            continue
+        tweet_id = m.group(1)
+        try:
+            import httpx as hx
+            with hx.Client(timeout=15) as client:
+                resp = client.get(f"https://api.fxtwitter.com/status/{tweet_id}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    videos_list = (data.get("tweet", {}).get("media", {}) or {}).get("videos", [])
+                    if videos_list:
+                        mp4 = videos_list[0].get("url", "")
+                        if mp4:
+                            v["duration"] = mp4[:500]
+                            resolved += 1
+        except Exception:
+            pass
+
+    return resolved
+
+
 # ========== Supabase ==========
 
 def supabase_save(videos: list[dict]) -> int:
@@ -438,7 +480,7 @@ def supabase_save(videos: list[dict]) -> int:
             "thumbnail_url": (v["thumbnail"][:1000] if v["thumbnail"] else ""),
             "video_url": (v["url"][:1000] if v["url"] else ""),
             "author": v.get("author", "")[:200],
-            "duration": resolved_duration[:200],
+            "duration": resolved_duration[:500],
             "views": v.get("views", "")[:50],
             "source_page": v.get("source_page", "")[:500],
             "source_section": v.get("source_section", "")[:50],
