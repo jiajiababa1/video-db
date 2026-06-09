@@ -265,6 +265,22 @@
         }
         .vid-card:hover { transform:translateY(-4px); border-color:var(--vprimary); box-shadow:0 8px 24px rgba(99,102,241,0.12); }
         .vid-card:active { transform:scale(0.98); }
+        /* 无法播放的视频卡片 */
+        .vid-card.unplayable { opacity:0.55; border-color:#2a1a1a; }
+        .vid-card.unplayable:hover { opacity:0.8; border-color:#f87171; }
+        .vid-card.unplayable .vid-thumb::after {
+            content:'⚠️ 无法播放'; position:absolute; inset:0;
+            display:flex; align-items:center; justify-content:center;
+            background:rgba(0,0,0,0.6); color:#f87171; font-size:12px;
+            font-weight:600; z-index:1; pointer-events:none;
+        }
+        .vid-card.needs-rescrape { border-color:#78350f; }
+        .vid-card.needs-rescrape .vid-thumb::after {
+            content:'🔄 待重爬'; position:absolute; inset:0;
+            display:flex; align-items:center; justify-content:center;
+            background:rgba(0,0,0,0.5); color:#f59e0b; font-size:12px;
+            font-weight:600; z-index:1; pointer-events:none;
+        }
         /* hover/长按 播放图标覆盖层 */
         .vid-play-overlay {
             position:absolute; inset:0; background:rgba(0,0,0,0.45); display:flex;
@@ -798,6 +814,7 @@
                     <button class="vid-btn ghost" id="viewToggle" onclick="toggleViewMode()" title="切换视图密度">▦</button>
                     <button class="vid-btn ghost" id="sortBtn" onclick="toggleSort()" title="排序">↓ 最新</button>
                     <button class="vid-btn primary" id="refreshBtn">更新</button>
+                    <button class="vid-btn ghost" id="playableFilter" onclick="togglePlayableFilter()" title="筛选可播放/全部">🔇 全部</button>
                     <button class="vid-btn ghost" id="resolveBtn" onclick="batchResolveMp4()" title="解析当前页未缓存的 MP4">🎬 解析</button>
                 </div>
             </div>
@@ -1084,6 +1101,7 @@
     var lastTrigger=0, COOLDOWN=3600000;
     var compactView=false;
     var lastScrapeTime=null;
+    var playableFilter='all'; // 'all' | 'playable' | 'unplayable'
 
     // ============================================================
     // TOTP 动态密码验证 (Steam Guard 风格)
@@ -1449,7 +1467,7 @@
         video.onerror = function() {
             var parent = video.parentElement;
             if (parent) {
-                parent.innerHTML = '<div style="width:100%;padding:60px 20px;text-align:center;color:#f87171;font-size:14px;">视频加载失败<br><span style="font-size:11px;color:#52525b;">可能已被删除或设为私密</span></div>';
+                parent.innerHTML = '<div style="width:100%;padding:60px 20px;text-align:center;color:#f87171;font-size:14px;">视频加载失败<br><span style="font-size:11px;color:#52525b;">可能已被删除或设为私密</span><br><button onclick="var v=currentInlineVideo;if(v)markForRescrape(v.video_id,this)" style="margin-top:8px;padding:4px 12px;border-radius:4px;border:1px solid #f87171;background:transparent;color:#f87171;cursor:pointer;font-size:11px;">🔄 标记重爬</button></div>';
             }
         };
         video.play().catch(function() {
@@ -1519,7 +1537,16 @@
                 try {
                     fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
                         method: 'PATCH', headers: _h(),
-                        body: JSON.stringify({ duration: result.mp4Url })
+                        body: JSON.stringify({ duration: result.mp4Url, has_mp4: true, needs_rescrape: false })
+                    }).catch(function(){});
+                } catch(e) {}
+            }
+            if (!result.mp4Url && v.video_id) {
+                // 解析失败, 标记需要重爬
+                try {
+                    fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
+                        method: 'PATCH', headers: _h(),
+                        body: JSON.stringify({ needs_rescrape: true })
                     }).catch(function(){});
                 } catch(e) {}
             }
@@ -1611,6 +1638,15 @@
         sortOrder=sortOrder==='desc'?'asc':'desc';
         $sortBtn.textContent=sortOrder==='desc'?'↓ 最新':'↑ 最早';
         $sortLabel.textContent=sortOrder==='desc'?'最新优先':'最早优先';
+        loadVids(true);
+    }
+
+    // ============ 可播放性筛选 ============
+    function togglePlayableFilter(){
+        var btn=document.getElementById('playableFilter');
+        if(playableFilter==='all'){playableFilter='playable';btn.textContent='✅ 可播';btn.classList.add('active');}
+        else if(playableFilter==='playable'){playableFilter='unplayable';btn.textContent='⚠️ 失效';btn.classList.add('active');}
+        else{playableFilter='all';btn.textContent='🔇 全部';btn.classList.remove('active');}
         loadVids(true);
     }
 
@@ -1767,7 +1803,9 @@
                         source_page: (v.source_page || '').substring(0, 500),
                         source_section: (v.source_section || '').substring(0, 50),
                         scraped_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
+                        updated_at: new Date().toISOString(),
+                        has_mp4: false,
+                        needs_rescrape: true
                     };
                 });
                 try {
@@ -1792,7 +1830,7 @@
                     try {
                         await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
                             method: 'PATCH', headers: hds,
-                            body: JSON.stringify({ duration: mp4Url })
+                            body: JSON.stringify({ duration: mp4Url, has_mp4: true, needs_rescrape: false })
                         });
                         resolved++;
                     } catch(e) {}
@@ -1867,6 +1905,8 @@
         if(activeSection && activeSection !== 'favs') params+='&source_section=eq.'+encodeURIComponent(activeSection);
         // 作者过滤
         if(activeAuthor) params+='&author=eq.'+encodeURIComponent(activeAuthor);
+        // 可播放性筛选 (客户端过滤, 因为 has_mp4 列可能不存在)
+        // 不添加到 params, 在 render 之前过滤
         // 排序: 有播放量的按播放量排，否则按时间
         if (activeSection === 'ranking' || activeSection === 'trending') {
             params+='&order=views.desc.nullslast&limit='+sz+'&offset='+f;
@@ -1890,6 +1930,7 @@
         }
         if(activeSection && activeSection !== 'favs') countParams+='&source_section=eq.'+encodeURIComponent(activeSection);
         if(activeAuthor) countParams+='&author=eq.'+encodeURIComponent(activeAuthor);
+        // 可播放性筛选: 客户端过滤 (has_mp4 列可能不存在)
         countParams+='&limit=1';
         var cp=fetch(SUPABASE_URL+'/rest/v1/videos?'+countParams,{method:'GET',headers:ch});
 
@@ -1933,6 +1974,11 @@
 
     function card(v){
         var c=document.createElement('div');c.className='vid-card';
+        // 可播放性标记
+        var hasMp4 = v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0);
+        var needsRescrape = v.needs_rescrape === true || isInRescrapeList(v.video_id);
+        if(!hasMp4) c.classList.add('unplayable');
+        if(needsRescrape && !hasMp4) c.classList.add('needs-rescrape');
         // duration 字段: 可能是真实时长, 也可能是 URL (爬虫复用来存 redirect/resolved URL)
         var isRedirectUrl = v.duration && v.duration.indexOf('http') === 0;
         var dur = (v.duration && !isRedirectUrl) ? '<span class="vid-duration">' + esc(v.duration) + '</span>' : '';
@@ -1956,6 +2002,11 @@
             : '';
         var noImgDisplay = pu ? 'display:none;' : '';
         var sectionLabel = v.source_section ? '<span style="color:#3f3f46;font-size:10px;">#' + esc(v.source_section) + '</span>' : '';
+        // 播放状态标记
+        var statusLabel = '';
+        if(!hasMp4 && needsRescrape) statusLabel = '<span style="color:#f59e0b;font-size:9px;margin-left:4px;" title="等待重爬">🔄</span>';
+        else if(!hasMp4) statusLabel = '<span style="color:#f87171;font-size:9px;margin-left:4px;" title="无法播放">⚠️</span>';
+        else statusLabel = '<span style="color:#4ade80;font-size:9px;margin-left:4px;" title="可播放">✅</span>';
 
         c.innerHTML =
             '<div class="vid-thumb">' + imgHtml + dur + favBtnHtml +
@@ -1964,7 +2015,8 @@
             '<div class="vid-body"><div class="vid-title">' + esc(v.title || v.video_id) + '</div>' +
             '<div class="vid-foot">' + (v.rank ? '<span style="color:#f59e0b;font-weight:700;font-size:12px;">#' + esc(v.rank) + '</span>' : '<span class="vid-badge">' + esc(v.video_id) + '</span>') +
             (v.author ? '<span class="vid-author" data-author="' + esc(v.author) + '" onclick="event.stopPropagation();event.preventDefault();showAuthorPage(this.getAttribute(\'data-author\'))">@' + esc(v.author) + '</span>' : '') +
-            viewsHtml + sectionLabel +
+            viewsHtml + sectionLabel + statusLabel +
+            '<button class="vid-copy" onclick="event.stopPropagation();markForRescrape(\'' + esc(v.video_id) + '\',this)" title="标记重爬">🔄</button>' +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
 
         // 点击: 内联展开播放器 (紧挨卡片下方)
@@ -1981,6 +2033,38 @@
         c.addEventListener('touchend', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
         c.addEventListener('touchmove', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
         return c;
+    }
+
+    // ============ 标记重爬 (localStorage + Supabase 双存储) ============
+    function getRescrapeList() {
+        try { return JSON.parse(localStorage.getItem('vid_rescrape') || '[]'); } catch(e) { return []; }
+    }
+    function addToRescrapeList(videoId) {
+        var list = getRescrapeList();
+        if (list.indexOf(videoId) < 0) { list.push(videoId); }
+        localStorage.setItem('vid_rescrape', JSON.stringify(list));
+    }
+    function isInRescrapeList(videoId) {
+        return getRescrapeList().indexOf(videoId) >= 0;
+    }
+
+    async function markForRescrape(videoId, btn) {
+        if (!videoId) return;
+        // 1. localStorage 存储 (立即生效)
+        addToRescrapeList(videoId);
+        if (btn) { btn.textContent = '✓'; btn.style.color = '#f59e0b'; }
+        toast('已标记重爬: ' + videoId);
+        // 更新卡片样式
+        var card = btn.closest('.vid-card');
+        if (card) { card.classList.add('needs-rescrape'); card.classList.add('unplayable'); }
+        // 2. 尝试同步到 Supabase (如果 needs_rescrape 列存在)
+        try {
+            var hds = _h();
+            await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(videoId), {
+                method: 'PATCH', headers: hds,
+                body: JSON.stringify({ needs_rescrape: true, updated_at: new Date().toISOString() })
+            });
+        } catch(e) { /* 列不存在时静默失败 */ }
     }
 
     function copyLink(url,btn){
@@ -2015,9 +2099,20 @@
         if(reset){page=1;hasMore=true;buildSkeletons(8);}
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
+            // 客户端可播放性过滤
+            if (playableFilter === 'playable') {
+                r.data = r.data.filter(function(v){ return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0); });
+            } else if (playableFilter === 'unplayable') {
+                r.data = r.data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
+            }
             total=r.count;
             if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
-            else $stat.textContent='共 '+total.toLocaleString()+' 个视频';
+            else {
+                var playableCount = r.data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
+                var unplayableCount = r.data.length - playableCount;
+                var filterLabel = playableFilter==='all' ? '' : (playableFilter==='playable' ? ' [仅可播]' : ' [仅失效]');
+                $stat.innerHTML = '共 ' + total.toLocaleString() + ' 个视频' + filterLabel + ' | <span style="color:#4ade80;">✅'+playableCount+'</span> <span style="color:#f87171;">⚠️'+unplayableCount+'</span>';
+            }
             // 翻页指示器
             var maxPage = Math.ceil(total / PAGE_SIZE);
             var pi = document.getElementById('pageIndicator');
@@ -2043,9 +2138,20 @@
         page++; loading=true;
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
+            // 客户端可播放性过滤
+            if (playableFilter === 'playable') {
+                r.data = r.data.filter(function(v){ return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0); });
+            } else if (playableFilter === 'unplayable') {
+                r.data = r.data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
+            }
             total=r.count;
             if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
-            else $stat.textContent='共 '+total.toLocaleString()+' 个视频';
+            else {
+                var pc2 = r.data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
+                var uc2 = r.data.length - pc2;
+                var fl2 = playableFilter==='all' ? '' : (playableFilter==='playable' ? ' [仅可播]' : ' [仅失效]');
+                $stat.innerHTML = '共 ' + total.toLocaleString() + ' 个视频' + fl2 + ' | <span style="color:#4ade80;">✅'+pc2+'</span> <span style="color:#f87171;">⚠️'+uc2+'</span>';
+            }
             render(r.data,true);
         }catch(e){toast('加载失败: '+e.message);page--;}
         loading=false;
@@ -2124,15 +2230,21 @@
                 if (!v.monsnode_video_id) continue;
 
                 var mp4Url = await resolveViaTwjn(v.monsnode_video_id);
+                var patchData = { mp4_checked_at: new Date().toISOString(), updated_at: new Date().toISOString() };
                 if (mp4Url) {
-                    try {
-                        await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
-                            method: 'PATCH', headers: hds,
-                            body: JSON.stringify({ duration: mp4Url })
-                        });
-                        resolved++;
-                    } catch(e) {}
+                    patchData.duration = mp4Url;
+                    patchData.has_mp4 = true;
+                    patchData.needs_rescrape = false;
+                    resolved++;
+                } else {
+                    patchData.needs_rescrape = true;
                 }
+                try {
+                    await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
+                        method: 'PATCH', headers: hds,
+                        body: JSON.stringify(patchData)
+                    });
+                } catch(e) {}
 
                 if (checked % 5 === 0) {
                     btn.textContent = resolved + '/' + checked;

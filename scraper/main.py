@@ -1,6 +1,6 @@
 """
-monsnode 爬虫 v2: 抓取 → twjn.php 直接获取 MP4 → 存入 Supabase
-核心原理: twjn.php?v={视频ID} → base64解码 → video.twimg.com 直链 MP4
+monsnode 爬虫 v3: 抓取 → twjn.php 获取 MP4 → 存入 Supabase
+新增: 可播放性检测 + 重爬标记 + 数据质量统计
 """
 import os, re, sys, time, asyncio, base64
 from datetime import datetime, timezone
@@ -23,7 +23,7 @@ TARGET_SECTIONS = [
 MAX_RETRIES = 2
 MAX_VIDEOS_PER_SECTION = 300
 BATCH_SIZE = 50
-TWJN_CONCURRENCY = 8  # twjn.php 请求并发数
+TWJN_CONCURRENCY = 8
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
@@ -47,7 +47,6 @@ async def _stealth_inject(page):
         from playwright_stealth import stealth_async
         await stealth_async(page)
     except ImportError:
-        # 降级: 手动注入基础反检测脚本
         await page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
@@ -62,8 +61,13 @@ async def _stealth_inject(page):
         """)
 
 
-async def fetch_page(context, url: str, retries: int = MAX_RETRIES) -> str | None:
-    """用 Playwright 抓取单页, 等待 Cloudflare JS 验证完成"""
+async def fetch_page(context, url: str, retries: int = MAX_RETRIES, is_problem_page: bool = False) -> str | None:
+    """用 Playwright 抓取单页, 等待 Cloudflare JS 验证完成
+    is_problem_page: trending/latest 等被 Cloudflare 重点保护的页面, 需要更长等待
+    """
+    wait_time = 45000 if is_problem_page else 30000
+    extra_sleep = 5 if is_problem_page else 2
+
     for attempt in range(1, retries + 1):
         page = None
         try:
@@ -80,39 +84,40 @@ async def fetch_page(context, url: str, retries: int = MAX_RETRIES) -> str | Non
                 "Sec-Fetch-User": "?1",
                 "Cache-Control": "no-cache",
             })
-            # 先用 domcontentloaded 快速加载, 给 Cloudflare 时间执行 JS
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            # 等待 Cloudflare 验证完成 → 真正内容出现
+            await page.goto(url, wait_until="domcontentloaded", timeout=wait_time)
+
+            # 等待 Cloudflare 验证完成
             try:
-                await page.wait_for_selector("div.listn", timeout=45000)
-                # 额外等一下确保动态内容加载完成
-                await asyncio.sleep(2)
+                await page.wait_for_selector("div.listn", timeout=wait_time)
+                await asyncio.sleep(extra_sleep)
                 return await page.content()
             except Exception:
-                # 有些页面可能没有 listn, 再等一下用 load 事件
                 try:
                     await page.wait_for_load_state("networkidle", timeout=20000)
                 except Exception:
                     pass
-                await asyncio.sleep(3)
+                await asyncio.sleep(extra_sleep)
+
             html = await page.content()
             if "listn" in html:
                 return html
-            # Cloudflare 挑战页, 多等一会儿
+
+            # Cloudflare 挑战页 - 给问题页面更长时间
             if 'challenges.cloudflare.com' in html or 'お待ちください' in html:
-                log(f"检测到 Cloudflare 挑战页, 等待 15 秒...", "DEBUG")
-                await asyncio.sleep(15)
+                wait_sec = 25 if is_problem_page else 15
+                log(f"检测到 Cloudflare 挑战页, 等待 {wait_sec} 秒...", "DEBUG")
+                await asyncio.sleep(wait_sec)
                 html = await page.content()
                 if "listn" in html:
                     return html
-            # 调试: 失败时保存截图 + HTML 片段
+
+            # 调试: 失败时保存截图
             if attempt == retries:
                 try:
                     title = await page.title()
                     body_preview = (html or "")[:600]
                     log(f"页面标题: {title}", "DEBUG")
                     log(f"HTML 前 600 字符: {body_preview}", "DEBUG")
-                    # 保存截图到 /tmp (GitHub Actions 可访问)
                     await page.screenshot(path="/tmp/monsnode_debug.png", full_page=False)
                     log("已保存截图: /tmp/monsnode_debug.png", "DEBUG")
                 except Exception:
@@ -141,7 +146,7 @@ def parse_video_cards(html: str, page_url: str, section: str) -> list[dict]:
         if not card_id or not card_id.isdigit():
             continue
 
-        vid = "v" + card_id  # 推文ID 作为我们的 video_id
+        vid = "v" + card_id
         if vid in seen_ids:
             continue
         seen_ids.add(vid)
@@ -153,7 +158,6 @@ def parse_video_cards(html: str, page_url: str, section: str) -> list[dict]:
 
         if img_link:
             href = img_link.get("href", "")
-            # 提取 monsnode 内部视频ID (用于 twjn.php)
             m = re.search(r"redirect\.php\?v=(\d+)", href)
             if m:
                 monsnode_video_id = m.group(1)
@@ -224,12 +228,10 @@ def parse_video_cards(html: str, page_url: str, section: str) -> list[dict]:
     return videos
 
 
-# ========== twjn.php → MP4 直链 (核心) ==========
+# ========== twjn.php → MP4 直链 ==========
 
 async def resolve_via_twjn(context, videos: list[dict]) -> dict[str, str]:
-    """通过 twjn.php 直接获取 MP4 直链
-    twjn.php 也有 Cloudflare 保护, 需要 stealth + 等待 JS 执行
-    """
+    """通过 twjn.php 直接获取 MP4 直链"""
     mp4_urls = {}
     sem = asyncio.Semaphore(TWJN_CONCURRENCY)
 
@@ -244,18 +246,15 @@ async def resolve_via_twjn(context, videos: list[dict]) -> dict[str, str]:
                 page = None
                 try:
                     page = await context.new_page()
-                    # 注入反检测
                     from playwright_stealth import stealth_async
                     await stealth_async(page)
                     await page.goto(
                         f"https://monsnode.com/twjn.php?v={monsnode_id}",
                         wait_until="domcontentloaded", timeout=20000
                     )
-                    # twjn.php 也可能被 Cloudflare 保护, 等 JS 执行完
                     await page.wait_for_timeout(3000)
                     html = await page.content()
 
-                    # 检查是否被 Cloudflare 拦截
                     if 'challenges.cloudflare.com' in html or 'お待ちください' in html:
                         await page.wait_for_timeout(5000)
                         html = await page.content()
@@ -306,10 +305,10 @@ async def resolve_via_twjn(context, videos: list[dict]) -> dict[str, str]:
     return results
 
 
-# ========== Supabase 保存 ==========
+# ========== Supabase 操作 ==========
 
 def supabase_save(videos: list[dict]) -> int:
-    """批量 upsert 到 Supabase"""
+    """批量 upsert 到 Supabase, 自动兼容旧表结构 (无 has_mp4 等新列)"""
     if not videos:
         return 0
     import httpx as hx
@@ -320,74 +319,189 @@ def supabase_save(videos: list[dict]) -> int:
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates",
     }
+
+    # 构建记录: 先包含新字段, 如果数据库不支持会自动回退
     records = []
     for v in videos:
-        # duration 字段存: MP4直链 (可播放) 或 空
         mp4 = v.get("duration", "") or ""
-        if mp4 and not mp4.startswith("http"):
-            mp4 = ""
+        has_mp4 = bool(mp4 and mp4.startswith("http") and "video.twimg.com" in mp4)
 
-        records.append({
+        rec = {
             "video_id": v["video_id"],
             "title": (v["title"][:500] if v.get("title") else ""),
             "thumbnail_url": (v["thumbnail"][:1000] if v.get("thumbnail") else ""),
             "video_url": (v["url"][:1000] if v.get("url") else ""),
             "author": (v.get("author") or "")[:200],
-            "duration": mp4[:500],
+            "duration": mp4[:500] if has_mp4 else "",
             "views": (v.get("views") or "")[:50],
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
             "source_page": (v.get("source_page") or "")[:500],
             "source_section": (v.get("source_section") or "")[:50],
             "scraped_at": now,
             "updated_at": now,
-        })
+        }
+        # 尝试包含新字段 (数据库可能没有这些列, 失败时会自动剥离)
+        rec["has_mp4"] = has_mp4
+        rec["needs_rescrape"] = not has_mp4
+        rec["mp4_checked_at"] = now
+        records.append(rec)
 
     saved = 0
     client = hx.Client(timeout=30)
+    _new_cols_ok = True  # 数据库是否有新列
+
+    def _strip_new_cols(rec):
+        """移除新列 (兼容旧表)"""
+        for k in ("has_mp4", "needs_rescrape", "mp4_checked_at", "playable"):
+            rec.pop(k, None)
+        return rec
+
     try:
         for i in range(0, len(records), BATCH_SIZE):
             batch = records[i:i + BATCH_SIZE]
-            ok = False
-            for attempt in range(1, 4):
-                try:
-                    resp = client.post(
-                        SUPABASE_URL + "/rest/v1/videos",
-                        headers=headers,
-                        json=batch
-                    )
-                    if resp.status_code in (200, 201, 409):
-                        saved += len(batch)
-                        ok = True
-                        break
-                    else:
-                        log(f"Supabase {resp.status_code}: {resp.text[:100]}", "WARN")
-                        if attempt < 3:
-                            time.sleep(2 ** attempt)
-                except Exception as e:
-                    log(f"Supabase 异常: {e}", "WARN")
-                    time.sleep(1)
-
-            if not ok:
-                for rec in batch:
-                    try:
-                        resp = client.post(
+            try:
+                resp = client.post(
+                    SUPABASE_URL + "/rest/v1/videos",
+                    headers=headers,
+                    json=batch
+                )
+                if resp.status_code in (200, 201, 409):
+                    saved += len(batch)
+                elif resp.status_code == 400 and _new_cols_ok:
+                    # 可能是新列不存在, 剥离后重试
+                    err_text = resp.text.lower()
+                    if "column" in err_text and ("has_mp4" in err_text or "needs_rescrape" in err_text):
+                        log("检测到数据库无新列, 自动兼容旧表结构...", "WARN")
+                        _new_cols_ok = False
+                        batch = [_strip_new_cols(r) for r in batch]
+                        resp2 = client.post(
                             SUPABASE_URL + "/rest/v1/videos",
                             headers=headers,
-                            json=[rec]
+                            json=batch
                         )
-                        if resp.status_code in (200, 201, 409):
-                            saved += 1
-                    except Exception:
-                        pass
+                        if resp2.status_code in (200, 201, 409):
+                            saved += len(batch)
+                        else:
+                            log(f"Supabase {resp2.status_code}: {resp2.text[:100]}", "WARN")
+                    else:
+                        log(f"Supabase {resp.status_code}: {resp.text[:100]}", "WARN")
+                else:
+                    log(f"Supabase {resp.status_code}: {resp.text[:100]}", "WARN")
+                    # 如果已知无新列, 先剥离再逐条重试
+                    if not _new_cols_ok:
+                        for rec in batch:
+                            _strip_new_cols(rec)
+                            try:
+                                resp2 = client.post(
+                                    SUPABASE_URL + "/rest/v1/videos",
+                                    headers=headers,
+                                    json=[rec]
+                                )
+                                if resp2.status_code in (200, 201, 409):
+                                    saved += 1
+                            except Exception:
+                                pass
+            except Exception as e:
+                log(f"Supabase 批量异常: {e}", "WARN")
     finally:
         client.close()
     return saved
 
 
+def fetch_rescrape_candidates(limit: int = 100) -> list[dict]:
+    """获取需要重爬的视频列表 (无 MP4 的视频)
+    兼容旧表: needs_rescrape 列不存在时, 用 duration 判断
+    """
+    import httpx as hx
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+    }
+    try:
+        # 先尝试用 needs_rescrape 列查询
+        resp = hx.get(
+            SUPABASE_URL + "/rest/v1/videos"
+            "?select=video_id,monsnode_video_id,source_section"
+            "&needs_rescrape=eq.true"
+            "&monsnode_video_id=not.is.null"
+            "&order=created_at.desc"
+            f"&limit={limit}",
+            headers=headers,
+            timeout=20
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        # 列不存在, 用 duration 判断: 空 or 不含 video.twimg.com
+        resp2 = hx.get(
+            SUPABASE_URL + "/rest/v1/videos"
+            "?select=video_id,monsnode_video_id,source_section"
+            "&or=(duration.is.null,duration.not.ilike.*video.twimg.com*)"
+            "&monsnode_video_id=not.is.null"
+            "&order=created_at.desc"
+            f"&limit={limit}",
+            headers=headers,
+            timeout=20
+        )
+        if resp2.status_code == 200:
+            return resp2.json()
+    except Exception as e:
+        log(f"获取重爬候选失败: {e}", "WARN")
+    return []
+
+
+def update_mp4_status(video_id: str, mp4_url: str | None):
+    """更新单个视频的 MP4 状态 (兼容旧表)"""
+    import httpx as hx
+    now = datetime.now(timezone.utc).isoformat()
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json",
+    }
+    # 先尝试包含新字段
+    data = {
+        "mp4_checked_at": now,
+        "updated_at": now,
+    }
+    if mp4_url:
+        data["duration"] = mp4_url[:500]
+        data["has_mp4"] = True
+        data["needs_rescrape"] = False
+    else:
+        data["needs_rescrape"] = True
+
+    try:
+        resp = hx.patch(
+            SUPABASE_URL + f"/rest/v1/videos?video_id=eq.{video_id}",
+            headers=headers,
+            json=data,
+            timeout=15
+        )
+        # 如果新列不存在, 只用旧字段重试
+        if resp.status_code == 400 and "column" in resp.text.lower():
+            data.pop("has_mp4", None)
+            data.pop("needs_rescrape", None)
+            data.pop("mp4_checked_at", None)
+            data.pop("playable", None)
+            if not mp4_url:
+                # 没有 MP4 也没有新列可标记, 至少更新 checked_at
+                data = {"duration": "", "updated_at": now}
+            hx.patch(
+                SUPABASE_URL + f"/rest/v1/videos?video_id=eq.{video_id}",
+                headers=headers,
+                json=data,
+                timeout=15
+            )
+    except Exception:
+        pass
+
+
 # ========== 主流程 ==========
 
-async def scrape_all():
-    """主流程: 抓取卡片 → twjn.php 获取 MP4 → 保存"""
+async def scrape_all(rescrape_mode: bool = False):
+    """主流程: 抓取卡片 → twjn.php 获取 MP4 → 保存
+    rescrape_mode: True 时优先重爬 needs_rescrape 的视频
+    """
     from playwright.async_api import async_playwright
 
     stats = {
@@ -397,11 +511,11 @@ async def scrape_all():
         "videos_found": 0,
         "videos_saved": 0,
         "mp4_resolved": 0,
+        "rescraped": 0,
         "errors": [],
     }
 
     async with async_playwright() as p:
-        # 加日本 IP 出口的 user-agent
         user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -427,19 +541,53 @@ async def scrape_all():
             locale="ja-JP",
             timezone_id="Asia/Tokyo",
             permissions=["geolocation"],
-            geolocation={"latitude": 35.6895, "longitude": 139.6917},  # 东京
+            geolocation={"latitude": 35.6895, "longitude": 139.6917},
         )
 
         try:
+            # ====== 重爬模式: 优先处理 needs_rescrape 的视频 ======
+            if rescrape_mode:
+                log("=" * 55)
+                log("重爬模式: 获取 needs_rescrape 的视频...")
+                candidates = fetch_rescrape_candidates(200)
+                log(f"找到 {len(candidates)} 个需要重爬的视频")
+
+                if candidates:
+                    # 用 twjn.php 重新解析 MP4
+                    results = await resolve_via_twjn(context, [
+                        {"video_id": c["video_id"], "monsnode_video_id": c["monsnode_video_id"]}
+                        for c in candidates
+                    ])
+
+                    rescraped_ok = 0
+                    for c in candidates:
+                        vid = c["video_id"]
+                        mp4 = results.get(vid)
+                        update_mp4_status(vid, mp4)
+                        if mp4:
+                            rescraped_ok += 1
+
+                    stats["rescraped"] = rescraped_ok
+                    log(f"重爬完成: {rescraped_ok}/{len(candidates)} 个视频恢复了 MP4")
+                else:
+                    log("没有需要重爬的视频")
+
+            # ====== 正常抓取模式 ======
             for path, label, max_pages in TARGET_SECTIONS:
                 section_url = urljoin(BASE_URL, path)
                 all_videos = []
-                log(f"[{label}] {section_url}")
+
+                # trending 和 latest 是 Cloudflare 重点保护页面
+                is_problem = label in ("trending", "latest")
+                if is_problem:
+                    log(f"[{label}] {section_url} (重点页面, 增强等待)")
+                else:
+                    log(f"[{label}] {section_url}")
 
                 # 步骤1: 抓取页面、解析卡片
                 for page_num in range(1, max_pages + 1):
                     url = section_url if page_num == 1 else build_page_url(section_url, page_num)
-                    html = await fetch_page(context, url)
+                    html = await fetch_page(context, url, is_problem_page=is_problem)
 
                     if not html:
                         if page_num == 1:
@@ -466,7 +614,7 @@ async def scrape_all():
                     if len(all_videos) >= MAX_VIDEOS_PER_SECTION:
                         break
 
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3 if is_problem else 2)
 
                 stats["sections_crawled"] += 1
                 stats["videos_found"] += len(all_videos)
@@ -475,7 +623,7 @@ async def scrape_all():
                 if not all_videos:
                     continue
 
-                # 步骤2: twjn.php → MP4 直链 (用同一个 Playwright 浏览器)
+                # 步骤2: twjn.php → MP4 直链
                 log(f"[{label}] twjn.php 获取 MP4 直链 ({len(all_videos)} 个)...")
                 mp4_urls = await resolve_via_twjn(context, all_videos)
                 stats["mp4_resolved"] += len(mp4_urls)
@@ -486,7 +634,6 @@ async def scrape_all():
                     vid = v["video_id"]
                     if vid in mp4_urls:
                         v["duration"] = mp4_urls[vid]
-                    # 没有 MP4 的保持 duration 为空 (前端会客户端解析)
 
                 # 步骤3: 存入 Supabase
                 saved = supabase_save(all_videos)
@@ -504,8 +651,16 @@ async def scrape_all():
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rescrape", action="store_true", help="重爬模式: 优先处理 needs_rescrape 的视频")
+    parser.add_argument("--fast", action="store_true", help="快速模式: 只抓首页")
+    args = parser.parse_args()
+
     print("=" * 55)
-    log("monsnode 爬虫 v2 (twjn.php 直链 MP4)")
+    log("monsnode 爬虫 v3 (可播放性检测 + 重爬标记)")
+    if args.rescrape:
+        log("模式: 重爬 (优先恢复无 MP4 的视频)")
     log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌ 未设置'}")
     log(f"SUPABASE_KEY={'已设置' if SUPABASE_KEY else '❌ 未设置'}")
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -513,16 +668,22 @@ def main():
         sys.exit(1)
     if not SUPABASE_URL.startswith("http"):
         log(f"SUPABASE_URL 缺少协议头: {SUPABASE_URL}", "ERROR")
-        log("请在 GitHub Secrets 中填写完整 URL, 例如: https://xxx.supabase.co", "ERROR")
         sys.exit(1)
     print("=" * 55)
 
-    stats = asyncio.run(scrape_all())
+    if args.fast:
+        global TARGET_SECTIONS
+        TARGET_SECTIONS = [(path, label, 1) for path, label, _ in TARGET_SECTIONS]
+        log("快速模式: 每个板块只抓首页")
+
+    stats = asyncio.run(scrape_all(rescrape_mode=args.rescrape))
 
     print("\n" + "=" * 55)
     print(f"  板块: {stats['sections_crawled']}  页面: {stats['pages_crawled']}")
     print(f"  发现: {stats['videos_found']}  保存: {stats['videos_saved']}")
     print(f"  MP4 直链: {stats['mp4_resolved']} (成功率: {stats['mp4_resolved']/max(stats['videos_found'],1)*100:.0f}%)")
+    if stats.get("rescraped"):
+        print(f"  重爬恢复: {stats['rescraped']} 个视频")
     if stats["errors"]:
         print(f"  错误: {len(stats['errors'])}")
         for e in stats["errors"][:3]:
