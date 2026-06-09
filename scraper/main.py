@@ -27,8 +27,10 @@ BATCH_SIZE = 100
 MP4_BROWSER_CONCURRENCY = 15  # 浏览器内并发 fetch 数 (一次 eval 的并发量)
 MP4_BROWSER_BATCH = 50        # 每批处理多少个视频
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
+_raw_url = os.environ.get("SUPABASE_URL", "")
+_raw_key = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_URL = _raw_url.strip().strip("'\"") if _raw_url else ""
+SUPABASE_KEY = _raw_key.strip().strip("'\"").replace("\n", "").replace("\r", "") if _raw_key else ""
 
 
 def log(msg: str, level: str = "INFO"):
@@ -201,17 +203,24 @@ async def scrape_all():
         "errors": [],
     }
 
-    pw = await async_playwright().start()
-    browser = await pw.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox", "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage", "--disable-gpu",
-            "--disable-blink-features=AutomationControlled",
-            "--no-first-run", "--no-default-browser-check",
-            "--mute-audio",
-        ]
-    )
+    log("启动浏览器...")
+    try:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox", "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage", "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+                "--no-first-run", "--no-default-browser-check",
+                "--mute-audio",
+            ]
+        )
+        log("浏览器已启动")
+    except Exception as e:
+        log(f"浏览器启动失败: {e}", "ERROR")
+        raise
+
     context = await browser.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         viewport={"width": 1366, "height": 768},
@@ -227,31 +236,43 @@ async def scrape_all():
             t0 = time.time()
             log(f"[{label}] {section_url}")
 
-            page = await context.new_page()
+            page = None
             try:
+                page = await context.new_page()
                 for page_num in range(1, max_pages + 1):
                     url = section_url if page_num == 1 else build_page_url(section_url, page_num)
                     try:
+                        log(f"  加载页面...")
                         await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
                         # 等待视频卡片加载
                         try:
                             await page.wait_for_selector("div.listn", timeout=20000)
-                        except Exception:
-                            # 可能被 Cloudflare 挑战
+                            log(f"  卡片已加载")
+                        except Exception as wait_err:
                             content = await page.content()
                             if "challenges.cloudflare.com" in content or "お待ちください" in content:
-                                log(f"  等待 Cloudflare 验证...")
+                                log(f"  Cloudflare 挑战, 等待中...")
                                 await asyncio.sleep(20)
+                                content = await page.content()
+                            else:
+                                log(f"  等待卡片超时: {str(wait_err)[:80]}", "WARN")
                         await asyncio.sleep(1)
 
-                        # 用 JS 提取卡片数据 (比 BS4 快)
-                        cards = await page.evaluate(EXTRACT_CARDS_JS)
-                        cards = [c for c in cards if isinstance(c, dict) and c.get("video_id")]
+                        # 用 JS 提取卡片数据
+                        try:
+                            raw = await page.evaluate(EXTRACT_CARDS_JS)
+                            cards = [c for c in raw if isinstance(c, dict) and c.get("video_id")]
+                        except Exception as eval_err:
+                            log(f"  JS 提取失败: {eval_err}", "ERROR")
+                            cards = []
 
                         stats["pages_crawled"] += 1
                         log(f"  第{page_num}页: {len(cards)} 个视频 ({time.time()-t0:.0f}s)")
 
                         if not cards:
+                            if page_num == 1:
+                                stats["errors"].append(f"{label}: 第1页无视频")
                             break
 
                         existing = {v["video_id"] for v in all_videos}
@@ -259,7 +280,6 @@ async def scrape_all():
                         if not new and page_num > 1:
                             break
 
-                        # 补充字段
                         for c in new:
                             c["source_section"] = label
                             c["source_page"] = url
@@ -272,12 +292,16 @@ async def scrape_all():
                         await asyncio.sleep(1)
 
                     except Exception as e:
-                        log(f"  第{page_num}页失败: {str(e)[:60]}", "WARN")
+                        log(f"  第{page_num}页异常: {type(e).__name__}: {str(e)[:100]}", "WARN")
                         if page_num == 1:
                             stats["errors"].append(f"{label}: {str(e)[:80]}")
                         break
+            except Exception as e:
+                log(f"  [{label}] 板块异常: {type(e).__name__}: {str(e)[:100]}", "ERROR")
+                stats["errors"].append(f"{label}: {str(e)[:80]}")
             finally:
-                await page.close()
+                if page:
+                    await page.close()
 
             stats["sections_crawled"] += 1
             stats["videos_found"] += len(all_videos)
@@ -287,13 +311,13 @@ async def scrape_all():
             if not all_videos:
                 continue
 
-            # MP4 解析: 在浏览器中通过 JS fetch 并发调 twjn.php
-            # (利用浏览器的 Cloudflare 通行证, 从任何 IP 都能调通)
+            # MP4 解析: 浏览器内 JS fetch 并发调 twjn.php
             t1 = time.time()
             mp4_urls = {}
-            mp4_page = await context.new_page()
+            mp4_page = None
             try:
-                # 先打开 monsnode 任意页面获取通行证
+                mp4_page = await context.new_page()
+                log(f"  打开 monsnode 首页获取通行证...")
                 await mp4_page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(2)
 
@@ -303,39 +327,50 @@ async def scrape_all():
                     if mid and mid.isdigit():
                         targets.append(mid)
 
-                log(f"  twjn.php 解析 {len(targets)} 个 (浏览器内并发)...")
+                log(f"  twjn.php 解析 {len(targets)} 个 (浏览器内 JS fetch)...")
 
-                # 分批在浏览器中执行 JS fetch
                 for batch_start in range(0, len(targets), MP4_BROWSER_BATCH):
                     batch = targets[batch_start:batch_start + MP4_BROWSER_BATCH]
-                    batch_results = await mp4_page.evaluate(RESOLVE_MP4_JS, batch)
-                    if batch_results:
-                        mp4_urls.update(batch_results)
+                    try:
+                        batch_results = await mp4_page.evaluate(RESOLVE_MP4_JS, batch)
+                        if batch_results:
+                            mp4_urls.update(batch_results)
+                    except Exception as eval_err:
+                        log(f"  JS MP4 解析异常: {type(eval_err).__name__}: {str(eval_err)[:100]}", "ERROR")
                     done = min(batch_start + MP4_BROWSER_BATCH, len(targets))
                     log(f"    {done}/{len(targets)} → {len(mp4_urls)} MP4")
+            except Exception as e:
+                log(f"  MP4 解析异常: {type(e).__name__}: {str(e)[:100]}", "ERROR")
             finally:
-                await mp4_page.close()
+                if mp4_page:
+                    await mp4_page.close()
 
             stats["mp4_resolved"] += len(mp4_urls)
             log(f"[{label}] MP4 解析: {len(mp4_urls)}/{len(all_videos)} ({time.time()-t1:.0f}s)")
 
-            # 合并 MP4 结果
+            # 合并 MP4
             for v in all_videos:
                 mid = v.get("monsnode_video_id", "").strip()
                 if mid in mp4_urls:
                     v["duration"] = mp4_urls[mid]
 
-            # 保存
+            # 保存到 Supabase
             t2 = time.time()
-            saved = supabase_save(all_videos)
-            stats["videos_saved"] += saved
-            log(f"[{label}] 保存 {saved} ({time.time()-t2:.0f}s)")
+            try:
+                saved = supabase_save(all_videos)
+                stats["videos_saved"] += saved
+                log(f"[{label}] 保存 {saved} ({time.time()-t2:.0f}s)")
+            except Exception as e:
+                log(f"[{label}] 保存失败: {type(e).__name__}: {str(e)[:100]}", "ERROR")
 
-        # 自动修复残留视频
+        # 自动修复残留
         log("\n自动修复残留视频...")
-        async with httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=50)) as client:
-            auto_fixed = await auto_rescrape(client, limit=100)
-            stats["auto_rescrape_count"] = auto_fixed
+        try:
+            async with httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=50)) as client:
+                auto_fixed = await auto_rescrape(client, limit=100)
+                stats["auto_rescrape_count"] = auto_fixed
+        except Exception as e:
+            log(f"自动修复异常: {type(e).__name__}: {str(e)[:100]}", "ERROR")
 
     finally:
         await context.close()
@@ -447,8 +482,9 @@ def main():
     print("=" * 55)
     mode = "自动修复" if args.rescrape else "全浏览器爬取"
     log(f"monsnode 爬虫 v5 — {mode}")
-    log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌ 未设置'}")
-    log(f"SUPABASE_KEY={'已设置' if SUPABASE_KEY else '❌ 未设置'}")
+    log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌ 未设置'} ({len(SUPABASE_URL)} 字符)")
+    key_ok = SUPABASE_KEY and len(SUPABASE_KEY) > 100
+    log(f"SUPABASE_KEY={'已设置' if key_ok else '❌ 异常'} ({len(SUPABASE_KEY)} 字符)")
     if not SUPABASE_URL or not SUPABASE_KEY:
         log("请设置 SUPABASE_URL 和 SUPABASE_KEY 环境变量", "ERROR")
         sys.exit(1)
