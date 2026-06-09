@@ -4,7 +4,7 @@ monsnode 爬虫 v4: 快速模式
   Playwright 仅用于 curl_cffi 失败的页面 (trending/latest)
   Twitter API 作为 MP4 备用来源
 """
-import os, re, sys, time, asyncio, base64, json
+import os, re, sys, time, asyncio, base64, json, concurrent.futures
 from datetime import datetime, timezone
 from urllib.parse import urljoin
 
@@ -581,9 +581,197 @@ async def scrape_all():
     return stats
 
 
+# ========== 重爬模式: 修复无 MP4 的旧视频 ==========
+
+def fetch_monsnode_id_from_page(video_id: str) -> str | None:
+    """访问 monsnode 视频详情页, 提取 monsnode 内部 ID (用于 twjn.php)
+    视频页 URL: https://monsnode.com/v{tweet_id}
+    页面中包含 redirect.php?v=MONSNODE_ID 链接
+    """
+    tweet_id = video_id[1:] if video_id.startswith("v") else video_id
+    url = f"{BASE_URL}/v{tweet_id}"
+
+    for attempt in range(1, 4):
+        try:
+            resp = cffi_requests.get(
+                url, headers=CFFI_HEADERS,
+                impersonate="chrome131",
+                timeout=20
+            )
+            if resp.status_code != 200:
+                time.sleep(3 * attempt)
+                continue
+            # 找第一个 redirect.php?v=XXXXX 链接（通常就是当前视频）
+            m = re.search(r"redirect\.php\?v=(\d+)", resp.text)
+            if m:
+                return m.group(1)
+            time.sleep(2 * attempt)
+        except Exception:
+            time.sleep(2 * attempt)
+    return None
+
+
+async def rescrape_mode():
+    """从 Supabase 拉取无 MP4 的视频, 用 twjn.php 重新解析并更新
+    策略:
+      1. 有 monsnode_video_id → 直接 twjn.php
+      2. 无 monsnode_video_id → 先爬视频详情页获取 ID, 再 twjn.php
+      3. 以上都失败 → 不再尝试 (标记 needs_rescrape=false)
+    """
+    log("=" * 55)
+    log("重爬模式: 修复数据库中无 MP4 的旧视频")
+
+    import httpx as hx
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+    }
+    resp = hx.get(
+        SUPABASE_URL + "/rest/v1/videos"
+        "?select=video_id,monsnode_video_id,source_section"
+        "&or=(duration.is.null,duration.not.ilike.*video.twimg.com*)"
+        "&order=created_at.desc"
+        "&limit=500",
+        headers=headers,
+        timeout=20
+    )
+    if resp.status_code != 200:
+        log(f"查询失败: {resp.status_code}", "ERROR")
+        return
+    candidates = resp.json()
+    total = len(candidates)
+    log(f"找到 {total} 个需要重爬的视频")
+
+    if not total:
+        log("没有需要重爬的视频!")
+        return
+
+    # 按板块统计
+    sections = {}
+    for c in candidates:
+        s = c.get("source_section", "unknown")
+        sections[s] = sections.get(s, 0) + 1
+    for s, n in sorted(sections.items()):
+        log(f"  {s}: {n} 个")
+
+    # 分类
+    direct_twjn = []     # 已有 monsnode_video_id, 直接调 twjn.php
+    need_fetch_id = []   # 需先爬详情页获取 monsnode_video_id
+    no_tweet_id = []     # video_id 不是有效 tweet ID 的
+
+    for c in candidates:
+        vid = c["video_id"]
+        mid = (c.get("monsnode_video_id") or "").strip()
+        tid = vid[1:] if vid.startswith("v") else ""
+
+        if mid and mid.isdigit():
+            direct_twjn.append((vid, mid))
+        elif tid.isdigit() and len(tid) >= 15:
+            need_fetch_id.append(vid)
+        else:
+            no_tweet_id.append(vid)
+
+    log(f"  直接 twjn.php: {len(direct_twjn)} 个")
+    log(f"  需先获取 ID: {len(need_fetch_id)} 个")
+    if no_tweet_id:
+        log(f"  无效 tweet ID: {len(no_tweet_id)} 个")
+
+    if not direct_twjn and not need_fetch_id:
+        log("没有可用的解析路径!")
+        return
+
+    t0 = time.time()
+    resolved = 0
+    sem_twjn = asyncio.Semaphore(MP4_CONCURRENCY)
+
+    async with httpx.AsyncClient(timeout=15, limits=httpx.Limits(max_connections=100)) as client:
+
+        async def _save(vid, mp4, monsnode_mid=None):
+            now = datetime.now(timezone.utc).isoformat()
+            data = {"mp4_checked_at": now, "updated_at": now}
+            if mp4:
+                data["duration"] = mp4[:500]
+                data["has_mp4"] = True
+                data["needs_rescrape"] = False
+                if monsnode_mid:
+                    data["monsnode_video_id"] = monsnode_mid
+            else:
+                data["needs_rescrape"] = True
+            try:
+                await client.patch(
+                    SUPABASE_URL + f"/rest/v1/videos?video_id=eq.{vid}",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=data, timeout=15
+                )
+            except Exception:
+                pass
+
+        # 阶段 1: 对没有 monsnode_video_id 的视频, 先爬详情页获取 ID
+        fetched_ids = {}  # vid -> monsnode_id
+        if need_fetch_id:
+            log(f"\n阶段 1: 爬取 {len(need_fetch_id)} 个视频详情页获取 monsnode ID...")
+            # 使用线程池执行同步的 curl_cffi 请求
+            import concurrent.futures
+            fetch_count = 0
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                futures = {pool.submit(fetch_monsnode_id_from_page, vid): vid for vid in need_fetch_id}
+                for future in concurrent.futures.as_completed(futures):
+                    vid = futures[future]
+                    try:
+                        mid = future.result()
+                        if mid:
+                            fetched_ids[vid] = mid
+                            direct_twjn.append((vid, mid))
+                        fetch_count += 1
+                        if fetch_count % 20 == 0:
+                            elapsed = time.time() - t0
+                            log(f"  已获取: {fetch_count}/{len(need_fetch_id)} → 成功 {len(fetched_ids)} ({elapsed:.0f}s)")
+                    except Exception:
+                        fetch_count += 1
+            elapsed = time.time() - t0
+            log(f"  详情页爬取完成: {len(fetched_ids)}/{len(need_fetch_id)} 获取到 monsnode ID ({elapsed:.0f}s)")
+
+        # 阶段 2: 所有有 monsnode_video_id 的视频, 并发调 twjn.php
+        if direct_twjn:
+            log(f"\n阶段 2: twjn.php 批量解析 {len(direct_twjn)} 个视频...")
+            total_tasks = len(direct_twjn)
+
+            async def _twjn_one(vid, mid):
+                result = await resolve_one_twjn(client, vid, mid, sem_twjn)
+                _, mp4 = result
+                if mp4:
+                    await _save(vid, mp4, monsnode_mid=mid)
+                    return "ok"
+                else:
+                    await _save(vid, None)
+                    return "fail"
+
+            all_tasks = [_twjn_one(vid, mid) for vid, mid in direct_twjn]
+            for batch_start in range(0, total_tasks, MP4_BATCH_SIZE):
+                batch = all_tasks[batch_start:batch_start + MP4_BATCH_SIZE]
+                results = await asyncio.gather(*batch)
+                ok = sum(1 for r in results if r == "ok")
+                resolved += ok
+                done = min(batch_start + MP4_BATCH_SIZE, total_tasks)
+                elapsed = time.time() - t0
+                log(f"  {done}/{total_tasks} ({done*100//max(total_tasks,1)}%) 恢复 {resolved} MP4 ({elapsed:.0f}s)")
+
+        # 标记完全无法处理的
+        for vid in no_tweet_id:
+            await _save(vid, None)
+
+    log(f"\n重爬完成: {resolved}/{total} 个视频恢复 MP4 ({time.time()-t0:.0f}s)")
+
+
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rescrape", action="store_true", help="重爬模式: 修复数据库中无 MP4 的视频")
+    args = parser.parse_args()
+
     print("=" * 55)
-    log("monsnode 爬虫 v4 (快速模式: curl_cffi + httpx 并发)")
+    mode = "重爬 (修复旧视频)" if args.rescrape else "正常"
+    log(f"monsnode 爬虫 v4 — 模式: {mode}")
     log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌ 未设置'}")
     log(f"SUPABASE_KEY={'已设置' if SUPABASE_KEY else '❌ 未设置'}")
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -591,18 +779,20 @@ def main():
         sys.exit(1)
     print("=" * 55)
 
-    stats = asyncio.run(scrape_all())
-
-    print("\n" + "=" * 55)
-    print(f"  板块: {stats['sections_crawled']}  页面: {stats['pages_crawled']}")
-    print(f"  发现: {stats['videos_found']}  保存: {stats['videos_saved']}")
-    rate = stats['mp4_resolved'] / max(stats['videos_found'], 1) * 100
-    print(f"  MP4: {stats['mp4_resolved']} ({rate:.0f}%)  PW回退: {stats['pw_fallbacks']}")
-    if stats["errors"]:
-        print(f"  错误: {len(stats['errors'])}")
-        for e in stats["errors"][:3]:
-            print(f"    - {e[:120]}")
-    print("=" * 55)
+    if args.rescrape:
+        asyncio.run(rescrape_mode())
+    else:
+        stats = asyncio.run(scrape_all())
+        print("\n" + "=" * 55)
+        print(f"  板块: {stats['sections_crawled']}  页面: {stats['pages_crawled']}")
+        print(f"  发现: {stats['videos_found']}  保存: {stats['videos_saved']}")
+        rate = stats['mp4_resolved'] / max(stats['videos_found'], 1) * 100
+        print(f"  MP4: {stats['mp4_resolved']} ({rate:.0f}%)  PW回退: {stats['pw_fallbacks']}")
+        if stats["errors"]:
+            print(f"  错误: {len(stats['errors'])}")
+            for e in stats["errors"][:3]:
+                print(f"    - {e[:120]}")
+        print("=" * 55)
 
 
 if __name__ == "__main__":
