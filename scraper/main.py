@@ -265,6 +265,75 @@ def resolve_mp4_urls(tweet_ids: dict[str, str]) -> dict[str, str]:
     return mp4_urls
 
 
+async def resolve_mp4_via_twitter_page(browser, tweet_ids: dict[str, str]) -> dict[str, str]:
+    """用 Playwright 直接加载 Twitter 移动版页面, 从 HTML 中提取视频 URL
+    这是 fxtwitter API 失败后的兜底方案, 最可靠 (真实浏览器渲染)
+    """
+    mp4_urls = {}
+    sem = asyncio.Semaphore(3)  # 限并发
+
+    async def _get_one(vid: str, tid: str):
+        async with sem:
+            page = None
+            try:
+                page = await browser.new_page()
+                # 移动版 Twitter 页面更轻量
+                await page.goto(
+                    f"https://mobile.twitter.com/i/status/{tid}",
+                    wait_until="domcontentloaded", timeout=20000
+                )
+                await page.wait_for_timeout(1500)
+                html = await page.content()
+
+                # 尝试多种正则匹配 video URL
+                patterns = [
+                    r'https?://video\.twimg\.com/[^"\'<>\s]+\.mp4',
+                    r'video\.twimg\.com/amplify_video/[^"\'<>\s]+',
+                    r'video\.twimg\.com/ext_tw_video/[^"\'<>\s]+',
+                ]
+                for pat in patterns:
+                    m = re.search(pat, html)
+                    if m:
+                        url = m.group(0)
+                        if not url.startswith("http"):
+                            url = "https://" + url
+                        return vid, url
+
+                # 尝试从 Twitter 页面中的 data 属性提取
+                m = re.search(r'data-media-url="([^"]+)"', html)
+                if m:
+                    return vid, m.group(1)
+
+                m = re.search(r'property="og:video"[^>]+content="([^"]+)"', html)
+                if m:
+                    return vid, m.group(1)
+
+            except Exception:
+                pass
+            finally:
+                if page:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+        return vid, None
+
+    to_resolve = list(tweet_ids.items())
+    total = len(to_resolve)
+    log(f"  Twitter 页面直接解析: {total} 个 (移动版)...")
+
+    for i in range(0, total, 10):
+        batch = to_resolve[i:i + 10]
+        tasks = [_get_one(vid, tid) for vid, tid in batch]
+        results = await asyncio.gather(*tasks)
+        for vid, url in results:
+            if url:
+                mp4_urls[vid] = url
+        log(f"  Twitter 页面解析: {min(i+10, total)}/{total} → 已获取 {len(mp4_urls)} 个")
+
+    return mp4_urls
+
+
 # ========== Supabase 保存 ==========
 
 def supabase_save(videos: list[dict]) -> int:
@@ -434,7 +503,16 @@ async def scrape_all():
                     log(f"[{label}] 获取 MP4 直链 ({len(tweet_ids)} 个)...")
                     mp4_urls = resolve_mp4_urls(tweet_ids)
                     stats["mp4_resolved"] += len(mp4_urls)
-                    log(f"[{label}] 已获取 {len(mp4_urls)} 个 MP4")
+                    log(f"[{label}] fxtwitter API: {len(mp4_urls)} 个 MP4")
+
+                    # 步骤3b: 对未解析的推文, 用 Playwright 直接解析 Twitter 页面
+                    unresolved = {vid: tid for vid, tid in tweet_ids.items() if vid not in mp4_urls}
+                    if unresolved:
+                        log(f"[{label}] Twitter 页面兜底: {len(unresolved)} 个未解析...")
+                        mp4_urls2 = await resolve_mp4_via_twitter_page(browser, unresolved)
+                        mp4_urls.update(mp4_urls2)
+                        stats["mp4_resolved"] += len(mp4_urls2)
+                        log(f"[{label}] Twitter 页面兜底: +{len(mp4_urls2)} 个 MP4")
 
                     # 将结果合并到视频数据
                     for v in all_videos:
