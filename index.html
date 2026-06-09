@@ -2261,7 +2261,7 @@
 
             var mp4 = await resolveViaTwjn(monsnodeId);
             if (mp4) {
-                // 解析成功 → 更新 Supabase + 修复卡片 UI
+                // 解析成功 → 更新 Supabase
                 try {
                     await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(videoId), {
                         method: 'PATCH', headers: _h(),
@@ -2271,8 +2271,59 @@
                 // 从本地重爬列表中移除
                 var rl = getRescrapeList().filter(function(id) { return id !== videoId; });
                 localStorage.setItem('vid_rescrape', JSON.stringify(rl));
+                // 按钮状态
                 if (btn) { btn.textContent = '✅'; btn.style.color = '#7a9a7a'; }
-                if (card) { card.classList.remove('needs-rescrape', 'unplayable'); }
+                // 修复卡片 UI — 无需刷新页面
+                if (card) {
+                    card.classList.remove('needs-rescrape', 'unplayable');
+                    card.classList.add('has-mp4');
+                    // 更新状态标签 ⚠️/🔄 → ✅
+                    var statusSpan = card.querySelector('.vid-foot span[style]');
+                    var spans = card.querySelectorAll('.vid-foot span');
+                    for (var si = 0; si < spans.length; si++) {
+                        var txt = spans[si].textContent;
+                        if (txt === '⚠️' || txt === '🔄' || txt === '✅') {
+                            spans[si].textContent = '✅';
+                            spans[si].style.color = '#7a9a7a';
+                            break;
+                        }
+                    }
+                    // 补充预览 video 元素 (让悬停预览生效)
+                    var thumb = card.querySelector('.vid-thumb');
+                    if (thumb && !thumb.querySelector('.vid-preview-video')) {
+                        var pv = document.createElement('video');
+                        pv.className = 'vid-preview-video loading';
+                        pv.muted = true;
+                        pv.setAttribute('playsinline', '');
+                        pv.setAttribute('preload', 'none');
+                        pv.setAttribute('disablepictureinpicture', '');
+                        var ps = document.createElement('div');
+                        ps.className = 'preview-spinner';
+                        thumb.appendChild(pv);
+                        thumb.appendChild(ps);
+                        // 绑定悬停预览事件
+                        (function(pvEl, mp4Url) {
+                            var timer = null;
+                            function start() {
+                                if (!pvEl.src) { pvEl.src = mp4Url + '#t=0.1'; pvEl.load(); pvEl.classList.add('loading'); }
+                                pvEl.currentTime = 0;
+                                pvEl.muted = true;
+                                pvEl.play().then(function() { pvEl.classList.remove('loading'); }).catch(function() {});
+                                timer = setTimeout(function() { pvEl.pause(); }, 3500);
+                            }
+                            function stop() { clearTimeout(timer); pvEl.pause(); pvEl.classList.add('loading'); }
+                            card.addEventListener('mouseenter', start);
+                            card.addEventListener('mouseleave', stop);
+                            var pressT;
+                            card.addEventListener('touchstart', function(e) {
+                                if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
+                                pressT = setTimeout(function() { card.classList.add('vid-press'); start(); }, 400);
+                            }, {passive: true});
+                            card.addEventListener('touchend', function() { clearTimeout(pressT); card.classList.remove('vid-press'); stop(); });
+                            card.addEventListener('touchmove', function() { clearTimeout(pressT); card.classList.remove('vid-press'); stop(); });
+                        })(pv, mp4);
+                    }
+                }
                 toast('解析成功: ' + videoId);
                 return;
             }
