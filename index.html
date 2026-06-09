@@ -802,10 +802,12 @@
                     <span class="vid-badge" id="vidModalBadge"></span>
                     <span class="vid-author" id="vidModalAuthor"></span>
                     <span style="flex:1;"></span>
-                    <button class="vid-btn vote-up" id="vidModalVoteUp" onclick="voteMonsnode('good')" title="支持 (monsnode reports.php)">👍</button>
+                    <button class="vid-btn vote-up" id="vidModalVoteUp" onclick="voteMonsnode('good')" title="支持">👍</button>
                     <button class="vid-btn vote-down" id="vidModalVoteDown" onclick="voteMonsnode('bad')" title="反对">👎</button>
-                    <button class="vid-btn ghost" id="vidModalMonsnodeLink" onclick="openOnMonsnode()" title="在 monsnode 打开">↗️ monsnode</button>
-                    <button class="vid-btn ghost" onclick="copyVideoLink()">🔗 复制</button>
+                    <button class="vid-btn ghost" id="vidModalMonsnodeLink" onclick="openOnMonsnode()" title="在 monsnode 打开">↗️</button>
+                    <button class="vid-btn ghost" id="vidModalShareBtn" onclick="" title="分享视频" style="display:none;">📤</button>
+                    <button class="vid-btn ghost" id="vidModalDownloadBtn" onclick="" title="下载 MP4" style="display:none;">⬇️</button>
+                    <button class="vid-btn ghost" onclick="copyVideoLink()">🔗</button>
                     <button class="vid-btn primary" id="vidModalPlayBtn" onclick="playVideo()">▶ 播放视频</button>
                 </div>
             </div>
@@ -1245,70 +1247,132 @@
 
     function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 
+    // CORS 代理池 (轮换使用避免缓存)
+    var CORS_PROXY_LIST = [
+        'https://corsproxy.io/?',
+        'https://api.allorigins.win/raw?url=',
+        'https://cors-anywhere.herokuapp.com/',
+    ];
+    var _proxyIdx = 0;
+    function getProxy() {
+        _proxyIdx = (_proxyIdx + 1) % CORS_PROXY_LIST.length;
+        return CORS_PROXY_LIST[_proxyIdx];
+    }
+
     // ========== twjn.php 解析 → MP4 直链 (核心) ==========
-    // twjn.php 页面中有 `var u = atob('base64编码的MP4直链')`
-    // 直接解码即可拿到 video.twimg.com 直链, 速度极快 (1 次 HTTP 请求)
+    // 关键修复:
+    //   1. 用 var\s+u\s*=\s*atob 精确匹配 (避免匹配代理注入的脚本)
+    //   2. 每次请求加随机参数破坏代理缓存 (_r=)
+    //   3. 代理失败时自动换下一个
     async function resolveViaTwjn(monsnodeVideoId) {
         if (!monsnodeVideoId) return null;
-        for (var attempt = 1; attempt <= 2; attempt++) {
+
+        var url = 'https://monsnode.com/twjn.php?v=' + monsnodeVideoId + '&_r=' + Math.random();
+
+        for (var attempt = 1; attempt <= 3; attempt++) {
+            var proxy = getProxy();
             try {
-                var proxyUrl = CORS_PROXY + encodeURIComponent(
-                    'https://monsnode.com/twjn.php?v=' + monsnodeVideoId
-                );
-                var resp = await fetch(proxyUrl);
-                if (!resp.ok) { if (attempt < 2) await sleep(500); continue; }
+                var proxyUrl = proxy + encodeURIComponent(url);
+                var resp = await fetch(proxyUrl, { cache: 'no-store' });
+                if (!resp.ok) { await sleep(400); continue; }
                 var html = await resp.text();
 
-                // 提取 base64 编码的 MP4 URL: atob('...')
-                var m = html.match(/atob\('([^']+)'\)/);
-                if (m) {
-                    var mp4Url = atob(m[1]);
-                    if (mp4Url.indexOf('video.twimg.com') >= 0) {
-                        return mp4Url;
-                    }
+                // 精确匹配 monsnode 的: var u = atob('...')
+                var m = html.match(/var\s+u\s*=\s*atob\('([^']+)'\)/);
+                if (m && m[1]) {
+                    try {
+                        var mp4Url = atob(m[1]);
+                        if (mp4Url.indexOf('video.twimg.com') >= 0) {
+                            return mp4Url;
+                        }
+                    } catch(e) {}
                 }
+
+                // 备选: 宽松匹配 (排除 corsproxy 注入的脚本)
+                var m2 = html.match(/atob\('(https?:\/\/[^'"]+\.mp4[^'"]*)'\)/);
+                if (m2 && m2[1]) {
+                    if (m2[1].indexOf('video.twimg.com') >= 0) return m2[1];
+                }
+
                 return null;
             } catch(e) {
-                if (attempt < 2) await sleep(500);
+                await sleep(300);
             }
         }
         return null;
     }
 
-    // 一站式解析: 从视频对象获取 MP4 直链
-    // 策略: 1) duration 已有 MP4 → 直接用  2) monsnode_video_id → twjn.php  3) fxtwitter 兜底
+    // 通过推文 ID 获取 MP4 (fxtwitter + vxtwitter, 仅返回 MP4 URL 不使用 iframe)
+    async function resolveViaTwitterApi(tweetId) {
+        // 并行尝试 fxtwitter 和 vxtwitter
+        var urls = ['https://api.fxtwitter.com/status/', 'https://api.vxtwitter.com/status/'];
+        for (var u = 0; u < urls.length; u++) {
+            try {
+                var resp = await fetch(urls[u] + tweetId);
+                if (!resp.ok) continue;
+                var data = await resp.json();
+                var media = data.tweet && data.tweet.media;
+                if (!media) continue;
+                // 先尝试 videos
+                var videos = media.videos || [];
+                if (videos.length) {
+                    // 取最高画质 (最后一个通常是最高)
+                    var best = null, bestRes = 0;
+                    for (var vi = 0; vi < videos.length; vi++) {
+                        var vurl = videos[vi].url || '';
+                        var rm = vurl.match(/(\d+)x(\d+)/);
+                        var res = rm ? parseInt(rm[1]) * parseInt(rm[2]) : 0;
+                        if (res >= bestRes) { bestRes = res; best = vurl; }
+                    }
+                    if (best) return best;
+                }
+                // 回退到 media_extended
+                var ext = media.media_extended || media.extended_entities || media.all;
+                if (ext) {
+                    var ev = ext.video_info || (ext[0] && ext[0].video_info);
+                    if (ev && ev.variants) {
+                        ev.variants.sort(function(a, b) {
+                            return ((b.bitrate || 0) - (a.bitrate || 0));
+                        });
+                        if (ev.variants[0] && ev.variants[0].url) return ev.variants[0].url;
+                    }
+                }
+            } catch(e) {}
+        }
+        return null;
+    }
+
+    // 一站式解析: 获取 MP4 直链 (永不使用 iframe)
+    // 策略: 1) duration 缓存命中 → 2) twjn.php → 3) Twitter API → 4) card 内客户端解析
     async function resolveVideoSource(v) {
         var dur = v.duration || '';
         var info = classifyUrl(dur);
         var tid = extractTweetId(v.video_id);
 
-        // 1. 已经是 MP4 直链 → 直接用
-        if (info.type === 'mp4') return { mp4Url: info.url, tweetId: null };
+        // 1. duration 中已有 MP4 直链 → 直接用
+        if (info.type === 'mp4') return { mp4Url: info.url, source: 'cache' };
 
-        // 2. twjn.php 解析 (最快最可靠)
+        // 2. twjn.php 解析 (有 monsnode_video_id 时)
         var monsnodeId = v.monsnode_video_id || '';
         if (monsnodeId) {
-            var mp4Url = await resolveViaTwjn(monsnodeId);
-            if (mp4Url) return { mp4Url: mp4Url, tweetId: null };
+            var mp4 = await resolveViaTwjn(monsnodeId);
+            if (mp4) return { mp4Url: mp4, source: 'twjn' };
         }
 
-        // 3. fxtwitter API 兜底
+        // 3. Twitter API 获取 MP4 (有推文 ID 时)
         if (tid) {
-            try {
-                var resp = await fetch('https://api.fxtwitter.com/status/' + tid);
-                if (resp.ok) {
-                    var data = await resp.json();
-                    var media = data.tweet && data.tweet.media;
-                    var videos = media && media.videos;
-                    if (videos && videos.length) {
-                        return { mp4Url: videos[videos.length - 1].url, tweetId: tid };
-                    }
-                }
-            } catch(e) {}
+            var mp4_2 = await resolveViaTwitterApi(tid);
+            if (mp4_2) return { mp4Url: mp4_2, source: 'twitter_api' };
         }
 
-        // 都失败了, 但返回找到的推文 ID (用于 fxtwitter iframe)
-        return { mp4Url: null, tweetId: tid || null };
+        // 4. 尝试从 video_id 构建 monsnode URL 估计 monsnode_video_id
+        //    对于没有 monsnode_video_id 的旧记录, 尝试通过 video_id 中的数字推测
+        if (!monsnodeId && tid) {
+            // 没办法直接获取 monsnode_video_id, 标记为需要重新抓取
+            return { mp4Url: null, source: 'not_found', needRescrape: true };
+        }
+
+        return { mp4Url: null, source: 'not_found' };
     }
 
     // 创建 <video> 元素 (自动播放, 绝不跳转, iOS 优化)
@@ -1339,20 +1403,7 @@
         return video;
     }
 
-    // 创建 fxtwitter 嵌入 iframe
-    function createFxtwitterIframe(tweetId) {
-        var iframe = document.createElement('iframe');
-        iframe.src = 'https://fxtwitter.com/_/status/' + tweetId;
-        iframe.style.cssText = 'width:100%;height:60vh;max-height:60dvh;border:none;background:#000;';
-        iframe.allow = 'autoplay; encrypted-media; fullscreen';
-        iframe.setAttribute('allowfullscreen', 'true');
-        iframe.setAttribute('webkitallowfullscreen', 'true');
-        iframe.setAttribute('playsinline', 'true');
-        iframe.setAttribute('scrolling', 'no');
-        return iframe;
-    }
-
-    // 视频模态框入口 — 同步弹窗, 异步解析, 100% 不跳转
+    // 视频模态框入口 — 同步弹窗, 异步解析, 100% 不跳转, 永不使用 iframe
     function showVideoModal(v) {
         try {
             var overlay = document.getElementById('vidModalOverlay');
@@ -1361,6 +1412,8 @@
             var badge = document.getElementById('vidModalBadge');
             var author = document.getElementById('vidModalAuthor');
             var playBtn = document.getElementById('vidModalPlayBtn');
+            var dlBtn = document.getElementById('vidModalDownloadBtn');
+            var shareBtn = document.getElementById('vidModalShareBtn');
 
             var dur = v.duration || '';
             var info = classifyUrl(dur);
@@ -1371,15 +1424,18 @@
             author.textContent = v.author ? '@' + v.author : '';
             currentVideoTitle = v.title || v.video_id;
             currentThumbUrl = thumbUrl;
+            currentVideoUrl = info.type === 'mp4' ? info.url : '';
             currentMonsnodeVideoId = v.monsnode_video_id || '';
 
-            // 重置投票按钮状态
+            // 重置按钮状态
             var vu = document.getElementById('vidModalVoteUp');
             var vd = document.getElementById('vidModalVoteDown');
             var ml = document.getElementById('vidModalMonsnodeLink');
             if (vu) { vu.classList.remove('voted'); vu.style.display = currentMonsnodeVideoId ? '' : 'none'; }
             if (vd) { vd.classList.remove('voted'); vd.style.display = currentMonsnodeVideoId ? '' : 'none'; }
             if (ml) ml.style.display = currentMonsnodeVideoId ? '' : 'none';
+            if (dlBtn) dlBtn.style.display = 'none';
+            if (shareBtn) shareBtn.style.display = 'none';
 
             // 先显示缩略图
             showVideoThumbFallback(preview, thumbUrl);
@@ -1398,19 +1454,11 @@
 
             // 快速路径: 已经是 MP4 直链
             if (info.type === 'mp4') {
-                preview.innerHTML = '';
-                var video = createVideoPlayer(info.url);
-                preview.appendChild(video);
-                currentVideoUrl = info.url;
-                playBtn.textContent = '▶ 重新播放';
-                playBtn.disabled = false;
-                playBtn.onclick = function() { video.currentTime = 0; video.play(); };
-                statusEl.textContent = '✅ MP4 直接播放';
-                statusEl.style.color = '#4ade80';
+                setVideoPlayer(preview, info.url, playBtn, statusEl, dlBtn, shareBtn);
                 return;
             }
 
-            // 异步解析路径: 尝试所有方式获取 MP4
+            // 异步解析
             playBtn.textContent = '⏳ 解析中...';
             playBtn.disabled = true;
             playBtn.onclick = function() {};
@@ -1419,74 +1467,18 @@
 
             resolveVideoSource(v).then(function(result) {
                 if (result.mp4Url) {
-                    // 成功获取 MP4 → 直接播视频
-                    preview.innerHTML = '';
-                    var vv = createVideoPlayer(result.mp4Url);
-                    preview.appendChild(vv);
-                    currentVideoUrl = result.mp4Url;
-                    playBtn.textContent = '▶ 重新播放';
-                    playBtn.disabled = false;
-                    playBtn.onclick = function() { vv.currentTime = 0; vv.play(); };
-                    statusEl.textContent = '✅ MP4 直接播放';
+                    setVideoPlayer(preview, result.mp4Url, playBtn, statusEl, dlBtn, shareBtn);
+                    statusEl.textContent = (result.source === 'cache' ? '✅ 已缓存' : result.source === 'twjn' ? '⚡ twjn.php 直链' : '🔄 Twitter API') + ' MP4';
                     statusEl.style.color = '#4ade80';
-                } else if (result.tweetId) {
-                    // 有推文 ID 但无 MP4 → fxtwitter iframe 嵌入 (绝不跳转)
-                    preview.innerHTML = '';
-                    preview.appendChild(createFxtwitterIframe(result.tweetId));
+                } else {
+                    // 无法解析 → 显示错误并提供操作选项
+                    var vidForDisplay = v.video_id || '(未知)';
+                    preview.innerHTML = '<div style="width:100%;padding:40px 20px;text-align:center;background:#18181b;flex-direction:column;display:flex;align-items:center;justify-content:center;"><div style="color:#71717a;font-size:14px;">暂时无法获取视频</div><div style="color:#3f3f46;font-size:11px;margin-top:4px;">' + esc(vidForDisplay) + '</div><div style="color:#52525b;font-size:11px;margin-top:8px;">请尝试重新解析或等待爬虫更新</div></div>';
                     currentVideoUrl = '';
                     playBtn.textContent = '🔄 重新解析';
                     playBtn.disabled = false;
-                    playBtn.onclick = function() {
-                        preview.innerHTML = '<div style="width:100%;height:225px;display:flex;align-items:center;justify-content:center;background:#18181b;flex-direction:column;"><div class="vid-spinner"></div><div style="color:#52525b;font-size:12px;margin-top:12px;">重新解析中...</div></div>';
-                        playBtn.disabled = true;
-                        // 重新尝试: twjn.php 优先 → fxtwitter 兜底
-                        var retryP = v.monsnode_video_id
-                            ? resolveViaTwjn(v.monsnode_video_id).then(function(mp4) {
-                                if (mp4) return mp4;
-                                return fetch('https://api.fxtwitter.com/status/' + result.tweetId)
-                                    .then(function(r){ return r.ok ? r.json() : null; })
-                                    .then(function(d){
-                                        var vs = (d && d.tweet && d.tweet.media && d.tweet.media.videos) || [];
-                                        return vs.length ? vs[vs.length - 1].url : null;
-                                    }).catch(function(){ return null; });
-                              })
-                            : fetch('https://api.fxtwitter.com/status/' + result.tweetId)
-                                .then(function(r){ return r.ok ? r.json() : null; })
-                                .then(function(d){
-                                    var vs = (d && d.tweet && d.tweet.media && d.tweet.media.videos) || [];
-                                    return vs.length ? vs[vs.length - 1].url : null;
-                                }).catch(function(){ return null; });
-                        retryP.then(function(newMp4) {
-                            if (newMp4) {
-                                preview.innerHTML = '';
-                                var vv2 = createVideoPlayer(newMp4);
-                                preview.appendChild(vv2);
-                                playBtn.textContent = '▶ 重新播放';
-                                playBtn.disabled = false;
-                                playBtn.onclick = function() { vv2.currentTime = 0; vv2.play(); };
-                                statusEl.textContent = '✅ MP4 直接播放';
-                                statusEl.style.color = '#4ade80';
-                            } else {
-                                preview.innerHTML = '';
-                                preview.appendChild(createFxtwitterIframe(result.tweetId));
-                                playBtn.textContent = '🔄 重新解析';
-                                playBtn.disabled = false;
-                                statusEl.textContent = 'MP4 暂不可用 (已嵌入播放)';
-                                statusEl.style.color = '#f59e0b';
-                            }
-                        });
-                    };
-                    statusEl.textContent = '视频已嵌入 (fxtwitter 播放)';
-                    statusEl.style.color = '#4ade80';
-                } else {
-                    // 完全无法解析 → 显示错误和重试按钮
-                    var vidForDisplay = v.video_id || '(未知)';
-                    preview.innerHTML = '<div style="width:100%;padding:60px 20px;text-align:center;background:#18181b;flex-direction:column;display:flex;align-items:center;justify-content:center;"><div style="color:#a1a1aa;font-size:32px;margin-bottom:12px;">📭</div><div style="color:#71717a;font-size:14px;">无法获取视频源</div><div style="color:#3f3f46;font-size:11px;margin-top:4px;">' + esc(vidForDisplay) + '</div></div>';
-                    currentVideoUrl = '';
-                    playBtn.textContent = '🔄 重新尝试';
-                    playBtn.disabled = false;
                     playBtn.onclick = function() { showVideoModal(v); };
-                    statusEl.textContent = '未找到可播放源';
+                    statusEl.textContent = result.needRescrape ? '需重新抓取' : '暂无可用源';
                     statusEl.style.color = '#f59e0b';
                 }
 
@@ -1501,8 +1493,7 @@
                     } catch(e) {}
                 }
             }).catch(function() {
-                // 网络错误 → 重试
-                preview.innerHTML = '<div style="width:100%;padding:60px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#18181b;"><div style="color:#f87171;font-size:32px;margin-bottom:12px;">🌐</div><div style="color:#f87171;font-size:14px;">网络错误</div><div style="color:#52525b;font-size:11px;margin-top:4px;">请检查网络连接后重试</div></div>';
+                preview.innerHTML = '<div style="width:100%;padding:40px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#18181b;"><div style="color:#f87171;font-size:14px;">网络错误</div><div style="color:#52525b;font-size:11px;margin-top:4px;">请检查网络连接后重试</div></div>';
                 currentVideoUrl = '';
                 playBtn.textContent = '🔄 重试';
                 playBtn.disabled = false;
@@ -1512,6 +1503,55 @@
             });
         } catch(e) {
             console.log('showVideoModal error:', e.message);
+        }
+    }
+
+    // 设置视频播放器 + 下载/分享按钮
+    function setVideoPlayer(preview, mp4Url, playBtn, statusEl, dlBtn, shareBtn) {
+        preview.innerHTML = '';
+        var vv = createVideoPlayer(mp4Url);
+        preview.appendChild(vv);
+        currentVideoUrl = mp4Url;
+        playBtn.textContent = '▶ 重新播放';
+        playBtn.disabled = false;
+        playBtn.onclick = function() { vv.currentTime = 0; vv.play(); };
+
+        // 下载按钮
+        if (dlBtn) {
+            dlBtn.style.display = '';
+            dlBtn.onclick = function() {
+                var a = document.createElement('a');
+                a.href = mp4Url;
+                a.download = (currentVideoTitle || 'video') + '.mp4';
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                toast('下载已开始');
+            };
+        }
+
+        // 分享按钮 (Web Share API)
+        if (shareBtn) {
+            shareBtn.style.display = '';
+            shareBtn.onclick = function() {
+                var shareData = { title: currentVideoTitle, url: mp4Url };
+                if (navigator.share) {
+                    navigator.share(shareData).catch(function(){});
+                } else {
+                    // 降级: 复制链接
+                    if (navigator.clipboard) {
+                        navigator.clipboard.writeText(mp4Url).then(function() { toast('链接已复制'); });
+                    } else {
+                        var ta = document.createElement('textarea');
+                        ta.value = mp4Url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                        document.body.appendChild(ta); ta.select();
+                        try { document.execCommand('copy'); toast('链接已复制'); } catch(e) {}
+                        document.body.removeChild(ta);
+                    }
+                }
+            };
         }
     }
 
@@ -1947,16 +1987,8 @@
     }
 
     function playVideo() {
-        // 优先使用预览区内的 <video> 重播
         var vv = document.getElementById('vidModalPreview').querySelector('video');
         if (vv) { vv.currentTime = 0; vv.play(); return; }
-        // 检查是否有 iframe, 刷新它
-        var iframe = document.getElementById('vidModalPreview').querySelector('iframe');
-        if (iframe) {
-            iframe.src = iframe.src; // 刷新 iframe
-            return;
-        }
-        // 不做任何跳转
     }
 
     function copyVideoLink() {
