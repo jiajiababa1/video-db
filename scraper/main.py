@@ -41,27 +41,76 @@ def build_page_url(base_url: str, page: int) -> str:
 
 # ========== 页面抓取 (Playwright) ==========
 
-async def fetch_page(browser, url: str, retries: int = MAX_RETRIES) -> str | None:
+async def _stealth_inject(page):
+    """注入反检测脚本, 隐藏 headless 特征"""
+    await page.add_init_script("""
+        // 移除 webdriver 标记
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        // 伪造 plugins 和 mimeTypes
+        Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP','ja','en-US','en']});
+        // 伪造 chrome 对象
+        window.chrome = {runtime: {}};
+        // 移除 PhantomJS 痕迹
+        delete window.callPhantom;
+        // 伪造权限
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+            Promise.resolve({state: Notification.permission}) :
+            originalQuery(parameters)
+        );
+    """)
+
+
+async def fetch_page(context, url: str, retries: int = MAX_RETRIES) -> str | None:
     """用 Playwright 抓取单页, 等待 Cloudflare JS 验证完成"""
     for attempt in range(1, retries + 1):
         page = None
         try:
-            page = await browser.new_page()
+            page = await context.new_page()
+            await _stealth_inject(page)
             await page.set_extra_http_headers({
                 "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "DNT": "1",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Cache-Control": "no-cache",
             })
+            # 先用 domcontentloaded 快速加载, 给 Cloudflare 时间执行 JS
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # 等待 Cloudflare 验证完成 → 真正内容出现
             try:
-                await page.wait_for_selector("div.listn", timeout=30000)
-                await asyncio.sleep(1)
+                await page.wait_for_selector("div.listn", timeout=45000)
+                # 额外等一下确保动态内容加载完成
+                await asyncio.sleep(2)
                 return await page.content()
             except Exception:
-                pass
+                # 有些页面可能没有 listn, 再等一下用 load 事件
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=20000)
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
             html = await page.content()
             if "listn" in html:
                 return html
+            # 调试: 失败时保存截图 + HTML 片段
+            if attempt == retries:
+                try:
+                    title = await page.title()
+                    body_preview = (html or "")[:600]
+                    log(f"页面标题: {title}", "DEBUG")
+                    log(f"HTML 前 600 字符: {body_preview}", "DEBUG")
+                    # 保存截图到 /tmp (GitHub Actions 可访问)
+                    await page.screenshot(path="/tmp/monsnode_debug.png", full_page=False)
+                    log("已保存截图: /tmp/monsnode_debug.png", "DEBUG")
+                except Exception:
+                    pass
             log(f"页面无视频内容 (attempt {attempt})", "WARN")
         except Exception as e:
             log(f"网络错误 (attempt {attempt}): {str(e)[:80]}", "WARN")
@@ -171,7 +220,7 @@ def parse_video_cards(html: str, page_url: str, section: str) -> list[dict]:
 
 # ========== twjn.php → MP4 直链 (核心) ==========
 
-async def resolve_via_twjn(browser, videos: list[dict]) -> dict[str, str]:
+async def resolve_via_twjn(context, videos: list[dict]) -> dict[str, str]:
     """通过 twjn.php 直接获取 MP4 直链
     twjn.php 页面中有一段 `var u = atob('base64编码的MP4直链')`
     只需解码即可拿到 video.twimg.com 的直链
@@ -188,7 +237,7 @@ async def resolve_via_twjn(browser, videos: list[dict]) -> dict[str, str]:
         async with sem:
             page = None
             try:
-                page = await browser.new_page()
+                page = await context.new_page()
                 await page.goto(
                     f"https://monsnode.com/twjn.php?v={monsnode_id}",
                     wait_until="domcontentloaded", timeout=15000
@@ -329,12 +378,33 @@ async def scrape_all():
     }
 
     async with async_playwright() as p:
+        # 加日本 IP 出口的 user-agent
+        user_agent = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        )
         browser = await p.chromium.launch(
             headless=True,
             args=[
                 "--no-sandbox", "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage", "--disable-gpu"
+                "--disable-dev-shm-usage", "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-site-isolation-trials",
+                "--disable-web-security",
+                "--no-first-run", "--no-default-browser-check",
+                "--disable-infobars", "--hide-scrollbars",
+                "--mute-audio",
             ]
+        )
+        context = await browser.new_context(
+            user_agent=user_agent,
+            viewport={"width": 1366, "height": 768},
+            locale="ja-JP",
+            timezone_id="Asia/Tokyo",
+            permissions=["geolocation"],
+            geolocation={"latitude": 35.6895, "longitude": 139.6917},  # 东京
         )
 
         try:
@@ -346,7 +416,7 @@ async def scrape_all():
                 # 步骤1: 抓取页面、解析卡片
                 for page_num in range(1, max_pages + 1):
                     url = section_url if page_num == 1 else build_page_url(section_url, page_num)
-                    html = await fetch_page(browser, url)
+                    html = await fetch_page(context, url)
 
                     if not html:
                         if page_num == 1:
@@ -384,7 +454,7 @@ async def scrape_all():
 
                 # 步骤2: twjn.php → MP4 直链 (用同一个 Playwright 浏览器)
                 log(f"[{label}] twjn.php 获取 MP4 直链 ({len(all_videos)} 个)...")
-                mp4_urls = await resolve_via_twjn(browser, all_videos)
+                mp4_urls = await resolve_via_twjn(context, all_videos)
                 stats["mp4_resolved"] += len(mp4_urls)
                 log(f"[{label}] 已获取 {len(mp4_urls)} 个 MP4 直链")
 
@@ -403,6 +473,7 @@ async def scrape_all():
                 await asyncio.sleep(2)
 
         finally:
+            await context.close()
             await browser.close()
 
     stats["finished_at"] = datetime.now(timezone.utc).isoformat()
