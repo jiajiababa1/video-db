@@ -1,35 +1,23 @@
-name: 爬虫定时运行
+name: Scraper v5 (Browser)
 
 on:
   schedule:
-    # 每 2 小时运行一次 (UTC 时间)
     - cron: '0 */2 * * *'
-  # 允许手动触发
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 安装 Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: 安装 Python 依赖
-        run: pip install curl_cffi httpx beautifulsoup4 lxml playwright
-
-      - name: 安装 Playwright 浏览器
-        run: |
+      - run: pip install httpx playwright
+      - run: |
           playwright install chromium
           sudo playwright install-deps chromium 2>/dev/null || true
-
-      - name: 运行爬虫
-        env:
+      - env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scraper/main.py

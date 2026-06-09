@@ -1,15 +1,13 @@
 """
-monsnode 爬虫 v4: 快速模式
-  curl_cffi 抓页面 (2s/页) → httpx 并发解析 MP4 (0.3s/个) → Supabase
-  Playwright 仅用于 curl_cffi 失败的页面 (trending/latest)
-  Twitter API 作为 MP4 备用来源
+monsnode 爬虫 v5 — 全浏览器方案
+  Playwright 负责所有 monsnode 请求 (利用浏览器 Cloudflare 通行证)
+  twjn.php MP4 解析在浏览器中通过 JS fetch 并发执行
+  Supabase 保存通过 httpx
+  适用: 任何 IP (含 GitHub Actions 数据中心)
 """
-import os, re, sys, time, asyncio, base64, json, concurrent.futures
+import os, sys, time, asyncio, json
 from datetime import datetime, timezone
 from urllib.parse import urljoin
-
-from curl_cffi import requests as cffi_requests
-from bs4 import BeautifulSoup
 import httpx
 
 BASE_URL = "https://monsnode.com"
@@ -25,12 +23,12 @@ TARGET_SECTIONS = [
 ]
 
 MAX_VIDEOS_PER_SECTION = 300
-BATCH_SIZE = 100          # Supabase 批量写入
-MP4_CONCURRENCY = 50      # twjn.php HTTP 并发数 (无浏览器开销, 可以很高)
-MP4_BATCH_SIZE = 100
+BATCH_SIZE = 100
+MP4_BROWSER_CONCURRENCY = 15  # 浏览器内并发 fetch 数 (一次 eval 的并发量)
+MP4_BROWSER_BATCH = 50        # 每批处理多少个视频
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
 
 
 def log(msg: str, level: str = "INFO"):
@@ -43,334 +41,107 @@ def build_page_url(base_url: str, page: int) -> str:
     return f"{base_url}{sep}p={page}"
 
 
-# ========== 快速页面抓取 (curl_cffi) ==========
+# ========== 浏览器内 JS 函数 (发送给 page.evaluate 执行) ==========
 
-CFFI_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
-    "DNT": "1",
-    "Cache-Control": "no-cache",
+EXTRACT_CARDS_JS = """
+() => {
+    const cards = document.querySelectorAll('div.listn');
+    const results = [];
+    for (const card of cards) {
+        const id = card.getAttribute('id') || '';
+        if (!id || !/^\\d+$/.test(id)) continue;
+        const vid = 'v' + id;
+        const a = card.querySelector('a');
+        let href = '';
+        let monsnodeId = '';
+        if (a) {
+            href = a.getAttribute('href') || '';
+            const m = href.match(/redirect\\.php\\?v=(\\d+)/);
+            if (m) monsnodeId = m[1];
+        }
+        const img = card.querySelector('img');
+        const thumbnail = img ? (img.getAttribute('src') || '') : '';
+        const title = img ? (img.getAttribute('alt') || '').split('\\n')[0].trim().substring(0, 500) : '';
+        const userEl = card.querySelector('.user span, .user a');
+        const author = userEl ? userEl.textContent.trim().substring(0, 200) : '';
+        const viewEl = card.querySelector('.view, .views, .count, .like, .heart, .point');
+        let views = '';
+        if (viewEl) {
+            const m = viewEl.textContent.match(/[\\d,]+/);
+            if (m) views = m[0].replace(/,/g, '');
+        }
+        const durEl = card.querySelector('.time, .duration, .length, .dur');
+        const durationLabel = durEl ? durEl.textContent.trim().substring(0, 20) : '';
+        let rankNum = '';
+        if (window.location.href.includes('ranking')) {
+            const rankEl = card.querySelector('.rank, .number');
+            if (rankEl) rankNum = rankEl.textContent.replace(/\\D/g, '');
+        }
+        results.push({
+            video_id: vid,
+            url: '/v' + id,
+            monsnode_video_id: monsnodeId,
+            title: title,
+            thumbnail: thumbnail,
+            author: author,
+            duration: durationLabel,
+            views: views,
+            rank: rankNum
+        });
+    }
+    return results;
 }
+"""
 
-
-def fetch_page_cffi(url: str, retries: int = 2) -> str | None:
-    """curl_cffi 抓取单页, TLS 指纹伪装 Chrome 131"""
-    for attempt in range(1, retries + 1):
-        try:
-            resp = cffi_requests.get(
-                url, headers=CFFI_HEADERS,
-                impersonate="chrome131",
-                timeout=20
-            )
-            if resp.status_code == 200 and "listn" in resp.text:
-                return resp.text
-            if resp.status_code == 403 or resp.status_code == 503:
-                log(f"  curl_cffi 被拦截 ({resp.status_code})", "DEBUG")
-                return None
-            if attempt < retries:
-                time.sleep(3 * attempt)
-        except Exception as e:
-            log(f"  curl_cffi 错误 (attempt {attempt}): {str(e)[:60]}", "DEBUG")
-            if attempt < retries:
-                time.sleep(2 * attempt)
-    return None
-
-
-# ========== Playwright 回退 (仅用于 curl_cffi 失败的页面) ==========
-
-async def fetch_page_playwright(context, url: str) -> str | None:
-    """Playwright 回退, 用于 Cloudflare 重点保护页面"""
-    page = None
-    try:
-        page = await context.new_page()
-        # stealth 注入 (优先用 playwright_stealth, 失败则手动注入)
-        try:
-            from playwright_stealth import stealth_async
-            await stealth_async(page)
-        except ImportError:
-            await page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-                Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP','ja','en-US','en']});
-                window.chrome = {runtime: {}};
-            """)
-        await page.set_extra_http_headers({
-            "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        })
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-        try:
-            await page.wait_for_selector("div.listn", timeout=45000)
-            await asyncio.sleep(2)
-            return await page.content()
-        except Exception:
-            pass
-        await asyncio.sleep(5)
-        html = await page.content()
-        if "listn" in html:
-            return html
-        if 'challenges.cloudflare.com' in html or 'お待ちください' in html:
-            log("  Cloudflare 挑战页, 等待 25 秒...", "DEBUG")
-            await asyncio.sleep(25)
-            html = await page.content()
-            if "listn" in html:
-                return html
-    except Exception as e:
-        log(f"  Playwright 错误: {str(e)[:60]}", "DEBUG")
-    finally:
-        if page:
-            await page.close()
-    return None
-
-
-# ========== 卡片解析 ==========
-
-def parse_video_cards(html: str, page_url: str, section: str) -> list[dict]:
-    """解析 monsnode HTML, 提取视频卡片"""
-    soup = BeautifulSoup(html, "lxml")
-    videos = []
-    seen_ids = set()
-
-    for card in soup.find_all("div", class_="listn"):
-        card_id = card.get("id", "").strip()
-        if not card_id or not card_id.isdigit():
-            continue
-        vid = "v" + card_id
-        if vid in seen_ids:
-            continue
-        seen_ids.add(vid)
-
-        img_link = card.find("a")
-        monsnode_video_id = ""
-        thumbnail = ""
-        title = ""
-
-        if img_link:
-            href = img_link.get("href", "")
-            m = re.search(r"redirect\.php\?v=(\d+)", href)
-            if m:
-                monsnode_video_id = m.group(1)
-            img = img_link.find("img")
-            if img:
-                src = img.get("src", "")
-                if src:
-                    thumbnail = src
-                alt = img.get("alt", "").strip()
-                if alt:
-                    lines = [l.strip() for l in alt.split("\n") if l.strip()]
-                    title = lines[0][:500] if lines else ""
-
-        if thumbnail and not thumbnail.startswith("http"):
-            thumbnail = urljoin(BASE_URL, thumbnail)
-
-        author = ""
-        user_div = card.find("div", class_="user")
-        if user_div:
-            user_link = user_div.find("a")
-            if user_link:
-                user_span = user_link.find("span")
-                if user_span:
-                    author = user_span.get_text(strip=True)
-
-        views = ""
-        for cls in ("view", "views", "count", "like", "heart", "point"):
-            v_el = card.find(class_=cls)
-            if v_el:
-                nums = re.findall(r'[\d,]+', v_el.get_text(strip=True))
-                if nums:
-                    views = nums[0].replace(",", "")
-                break
-
-        duration_label = ""
-        for cls in ("time", "duration", "length", "dur"):
-            d_el = card.find(class_=cls)
-            if d_el:
-                duration_label = d_el.get_text(strip=True)[:20]
-                break
-
-        rank_num = ""
-        if "ranking" in section:
-            rank_el = card.find(class_="rank") or card.find(class_="number")
-            if rank_el:
-                rank_num = re.sub(r'\D', '', rank_el.get_text(strip=True))
-
-        videos.append({
-            "video_id": vid,
-            "url": urljoin(BASE_URL, "/" + vid),
-            "monsnode_video_id": monsnode_video_id,
-            "title": title,
-            "thumbnail": thumbnail,
-            "author": author,
-            "duration": duration_label,
-            "views": views,
-            "rank": rank_num,
-            "source_section": section,
-            "source_page": page_url,
-        })
-
-    return videos
-
-
-# ========== MP4 快速解析 (httpx 异步, 无浏览器) ==========
-
-# twjn.php 的 Cloudflare 配置较松, 普通 HTTP 请求有较高成功率
-# 加 curl_cffi 的 impersonation 能力 (httpx 做不到, 但用正确 headers 能过)
-TWJN_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://monsnode.com/",
+RESOLVE_MP4_JS = """
+async (videoIds) => {
+    const results = {};
+    const fetchOne = async (id) => {
+        try {
+            const resp = await fetch('/twjn.php?v=' + id);
+            const text = await resp.text();
+            const match = text.match(/var\\s+u\\s*=\\s*atob\\('([^']+)'\\)/);
+            if (match) {
+                const mp4 = atob(match[1]);
+                if (mp4.includes('video.twimg.com')) {
+                    results[id] = mp4;
+                }
+            }
+        } catch(e) {}
+    };
+    const chunks = [];
+    for (let i = 0; i < videoIds.length; i += 50) {
+        chunks.push(videoIds.slice(i, i + 50));
+    }
+    for (const chunk of chunks) {
+        await Promise.all(chunk.map(fetchOne));
+    }
+    return results;
 }
-
-
-async def resolve_one_twjn(client: httpx.AsyncClient, vid: str, monsnode_id: str, sem: asyncio.Semaphore) -> tuple[str, str | None]:
-    """通过 twjn.php 获取单个 MP4 直链 (纯 HTTP, 无浏览器)"""
-    async with sem:
-        url = f"https://monsnode.com/twjn.php?v={monsnode_id}"
-        for attempt in range(1, 3):
-            try:
-                resp = await client.get(url, headers=TWJN_HEADERS, timeout=15)
-                if resp.status_code != 200:
-                    if attempt < 2:
-                        await asyncio.sleep(2)
-                    continue
-                html = resp.text
-                # 检查 Cloudflare 拦截
-                if 'challenges.cloudflare.com' in html or 'お待ちください' in html:
-                    if attempt < 2:
-                        await asyncio.sleep(3)
-                    continue
-                # var u = atob('...')
-                m = re.search(r"var\s+u\s*=\s*atob\('([^']+)'\)", html)
-                if m:
-                    mp4 = base64.b64decode(m.group(1)).decode('utf-8')
-                    if 'video.twimg.com' in mp4:
-                        return vid, mp4
-                # 宽松匹配
-                m2 = re.search(r"atob\('([^']+\.mp4[^']*)'\)", html)
-                if m2 and 'video.twimg.com' in m2.group(1):
-                    return vid, m2.group(1)
-                return vid, None
-            except Exception:
-                if attempt < 2:
-                    await asyncio.sleep(1)
-        return vid, None
-
-
-async def resolve_one_twitter(client: httpx.AsyncClient, tweet_id: str, sem: asyncio.Semaphore) -> tuple[str, str | None]:
-    """通过 Twitter API 获取 MP4 (fxtwitter / vxtwitter)"""
-    async with sem:
-        for api in ("https://api.fxtwitter.com/status/", "https://api.vxtwitter.com/status/"):
-            try:
-                resp = await client.get(api + tweet_id, timeout=10)
-                if resp.status_code != 200:
-                    continue
-                data = resp.json()
-                media = data.get("tweet", {}).get("media")
-                if not media:
-                    continue
-                videos = media.get("videos") or []
-                best_url = None
-                best_res = 0
-                for v in videos:
-                    vurl = v.get("url", "")
-                    rm = re.search(r'(\d+)x(\d+)', vurl)
-                    res = int(rm.group(1)) * int(rm.group(2)) if rm else 0
-                    if res >= best_res:
-                        best_res = res
-                        best_url = vurl
-                if best_url:
-                    return tweet_id, best_url
-                # 回退: media_extended
-                ext = media.get("media_extended") or media.get("extended_entities") or []
-                if isinstance(ext, list) and ext:
-                    variants = ext[0].get("video_info", {}).get("variants", [])
-                elif isinstance(ext, dict):
-                    variants = ext.get("video_info", {}).get("variants", [])
-                else:
-                    continue
-                if variants:
-                    variants.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
-                    if variants[0].get("url"):
-                        return tweet_id, variants[0]["url"]
-            except Exception:
-                continue
-        return tweet_id, None
-
-
-async def resolve_all_mp4(videos: list[dict]) -> dict[str, str]:
-    """批量解析 MP4: twjn.php 优先 → Twitter API 回退"""
-    mp4_urls = {}
-    sem_twjn = asyncio.Semaphore(MP4_CONCURRENCY)
-    sem_tw = asyncio.Semaphore(20)
-
-    # 分离: 有 monsnode_video_id 的走 twjn.php; 其他的走 Twitter API
-    twjn_targets = [(v["video_id"], v["monsnode_video_id"]) for v in videos if v.get("monsnode_video_id")]
-    twitter_targets = []
-    for v in videos:
-        tid = v["video_id"][1:] if v["video_id"].startswith("v") else ""
-        if tid.isdigit() and len(tid) >= 15:
-            twitter_targets.append((v["video_id"], tid))
-
-    async with httpx.AsyncClient(timeout=15, limits=httpx.Limits(max_connections=100)) as client:
-        # 阶段 1: twjn.php 批量并发
-        if twjn_targets:
-            log(f"  twjn.php 解析 {len(twjn_targets)} 个视频 (并发 {MP4_CONCURRENCY})...")
-            tasks = [resolve_one_twjn(client, vid, mid, sem_twjn) for vid, mid in twjn_targets]
-            for batch_start in range(0, len(tasks), MP4_BATCH_SIZE):
-                batch = tasks[batch_start:batch_start + MP4_BATCH_SIZE]
-                results = await asyncio.gather(*batch)
-                for vid, mp4 in results:
-                    if mp4:
-                        mp4_urls[vid] = mp4
-                done = min(batch_start + MP4_BATCH_SIZE, len(tasks))
-                log(f"    twjn: {done}/{len(tasks)} → 已获 {len(mp4_urls)} MP4")
-
-        # 阶段 2: 对没有 MP4 的, 用 Twitter API 回退
-        remaining = [(vid, tid) for vid, tid in twitter_targets if vid not in mp4_urls]
-        if remaining:
-            log(f"  Twitter API 回退 {len(remaining)} 个视频...")
-            tw_tasks = [resolve_one_twitter(client, tid, sem_tw) for vid, tid in remaining]
-            tw_results = await asyncio.gather(*tw_tasks)
-            for tweet_id, mp4 in tw_results:
-                if mp4:
-                    # 找到对应的 video_id
-                    for vid, tid in remaining:
-                        if tid == tweet_id:
-                            mp4_urls[vid] = mp4
-                            break
-            log(f"    Twitter API: 已获 {sum(1 for r in tw_results if r[1])} MP4")
-
-    return mp4_urls
+"""
 
 
 # ========== Supabase 操作 ==========
 
 def supabase_save(videos: list[dict]) -> int:
-    """通过 RPC upsert_videos 批量 upsert (ON CONFLICT video_id)
-    回退方案: 如果 RPC 不可用, 用旧 merge-duplicates
-    """
+    """通过 RPC upsert_videos 批量 upsert"""
     if not videos:
         return 0
-    import httpx as hx
     now = datetime.now(timezone.utc).isoformat()
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": "Bearer " + SUPABASE_KEY,
         "Content-Type": "application/json",
     }
-
     records = []
     for v in videos:
         mp4 = v.get("duration", "") or ""
         has_mp4 = bool(mp4 and mp4.startswith("http") and "video.twimg.com" in mp4)
-
         records.append({
             "video_id": v["video_id"],
-            "title": (v["title"][:500] if v.get("title") else ""),
-            "thumbnail_url": (v["thumbnail"][:1000] if v.get("thumbnail") else ""),
-            "video_url": (v["url"][:1000] if v.get("url") else ""),
+            "title": (v["title"] or "")[:500],
+            "thumbnail_url": (v["thumbnail"] or "")[:1000],
+            "video_url": urljoin(BASE_URL, v.get("url", ""))[:1000],
             "author": (v.get("author") or "")[:200],
             "duration": mp4[:500] if has_mp4 else "",
             "views": (v.get("views") or "")[:50],
@@ -384,124 +155,40 @@ def supabase_save(videos: list[dict]) -> int:
         })
 
     saved = 0
-    client = hx.Client(timeout=60)
+    client = httpx.Client(timeout=60)
+    rpc_url = SUPABASE_URL + "/rest/v1/rpc/upsert_videos"
 
-    def _save_via_rpc(batch):
-        """通过 upsert_videos RPC 函数保存"""
-        resp = client.post(
-            SUPABASE_URL + "/rest/v1/rpc/upsert_videos",
-            headers=headers,
-            json={"videos": batch}
-        )
-        return resp.status_code in (200, 201, 204)
-
-    def _save_via_rest(batch):
-        """回退: 用旧 merge-duplicates (有问题但作为备选)"""
-        rest_headers = {**headers, "Prefer": "resolution=merge-duplicates"}
-        resp = client.post(
-            SUPABASE_URL + "/rest/v1/videos",
-            headers=rest_headers,
-            json=batch
-        )
-        return resp.status_code in (200, 201)
-
-    # 分批处理
-    use_rpc = True
     for i in range(0, len(records), BATCH_SIZE):
         batch = records[i:i + BATCH_SIZE]
-        ok = False
-
-        if use_rpc:
-            try:
-                ok = _save_via_rpc(batch)
-                if not ok:
-                    # RPC 可能不存在, 回退
-                    log("  RPC 不可用, 回退到 REST upsert...", "DEBUG")
-                    use_rpc = False
-            except Exception:
-                use_rpc = False
-
-        if not use_rpc:
-            try:
-                ok = _save_via_rest(batch)
-            except Exception as e:
-                log(f"  Supabase 保存异常: {e}", "WARN")
-
-        if ok:
-            saved += len(batch)
-        else:
-            # 逐条重试
+        try:
+            resp = client.post(rpc_url, headers=headers, json={"videos": batch})
+            if resp.status_code in (200, 201, 204):
+                saved += len(batch)
+            else:
+                # 逐条重试
+                for rec in batch:
+                    try:
+                        r = client.post(rpc_url, headers=headers, json={"videos": [rec]})
+                        if r.status_code in (200, 201, 204):
+                            saved += 1
+                    except Exception:
+                        pass
+        except Exception:
             for rec in batch:
                 try:
-                    if use_rpc:
-                        ok2 = _save_via_rpc([rec])
-                    else:
-                        ok2 = _save_via_rest([rec])
-                    if ok2:
+                    r = client.post(rpc_url, headers=headers, json={"videos": [rec]})
+                    if r.status_code in (200, 201, 204):
                         saved += 1
                 except Exception:
                     pass
-
     client.close()
     return saved
 
 
 # ========== 主流程 ==========
 
-async def _resolve_with_detail_fallback(all_videos: list[dict], label: str, stats: dict, client: httpx.AsyncClient) -> int:
-    """对未能通过 twjn.php 直接解析的视频, 爬详情页获取 monsnode ID 后重试
-    返回额外恢复的 MP4 数量
-    """
-    # 找出需要回退的视频: 无 monsnode_video_id 但有有效 tweet ID 的
-    need_fallback = []
-    for v in all_videos:
-        mid = (v.get("monsnode_video_id") or "").strip()
-        dur = v.get("duration", "") or ""
-        already_has_mp4 = bool(dur and dur.startswith("http") and "video.twimg.com" in dur)
-        if already_has_mp4:
-            continue
-        tid = v["video_id"][1:] if v["video_id"].startswith("v") else ""
-        if not mid and tid.isdigit() and len(tid) >= 15:
-            need_fallback.append(v)
-
-    if not need_fallback:
-        return 0
-
-    log(f"  [{label}] {len(need_fallback)} 个视频无 MP4, 尝试详情页回退...")
-    extra = 0
-    sem = asyncio.Semaphore(MP4_CONCURRENCY)
-
-    # 在线程池中爬详情页获取 monsnode ID
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(fetch_monsnode_id_from_page, v["video_id"]): v for v in need_fallback}
-        for future in concurrent.futures.as_completed(futures):
-            v = futures[future]
-            try:
-                mid = future.result()
-                if not mid:
-                    continue
-                # 拿到 ID, 立即调 twjn.php
-                vid = v["video_id"]
-                result = await resolve_one_twjn(client, vid, mid, sem)
-                _, mp4 = result
-                if mp4:
-                    v["duration"] = mp4
-                    v["monsnode_video_id"] = mid
-                    extra += 1
-            except Exception:
-                pass
-
-    if extra:
-        stats["mp4_resolved"] += extra
-        log(f"  [{label}] 详情页回退恢复 {extra} MP4")
-    return extra
-
-
 async def scrape_all():
-    """主流程: curl_cffi 抓取 → httpx 并发解析 MP4 → 保存
-    每完成一个板块自动对无 MP4 的视频做详情页回退
-    全部板块完成后自动运行 rescrape 修复数据库中残留视频
-    """
+    """全浏览器爬取: Playwright 页面 → JS 提取卡片 → JS 并发解析 MP4 → Supabase"""
     from playwright.async_api import async_playwright
 
     stats = {
@@ -511,86 +198,86 @@ async def scrape_all():
         "videos_found": 0,
         "videos_saved": 0,
         "mp4_resolved": 0,
-        "detail_fallback_saved": 0,
-        "pw_fallbacks": 0,
-        "auto_rescrape_count": 0,
         "errors": [],
     }
 
-    pw = None
-    pw_context = None
-
-    async def _ensure_pw():
-        nonlocal pw, pw_context
-        if pw is None:
-            pw = await async_playwright().start()
-            browser = await pw.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox", "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage", "--disable-gpu",
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-first-run", "--no-default-browser-check",
-                    "--mute-audio",
-                ]
-            )
-            pw_context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                viewport={"width": 1366, "height": 768},
-                locale="ja-JP",
-                timezone_id="Asia/Tokyo",
-                geolocation={"latitude": 35.6895, "longitude": 139.6917},
-            )
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox", "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage", "--disable-gpu",
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run", "--no-default-browser-check",
+            "--mute-audio",
+        ]
+    )
+    context = await browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        viewport={"width": 1366, "height": 768},
+        locale="ja-JP",
+        timezone_id="Asia/Tokyo",
+        geolocation={"latitude": 35.6895, "longitude": 139.6917},
+    )
 
     try:
         for path, label, max_pages in TARGET_SECTIONS:
             section_url = urljoin(BASE_URL, path)
             all_videos = []
             t0 = time.time()
+            log(f"[{label}] {section_url}")
 
-            is_problem = label in ("trending", "latest")
-            method = "Playwright" if is_problem else "curl_cffi"
-            log(f"[{label}] {section_url} ({method})")
+            page = await context.new_page()
+            try:
+                for page_num in range(1, max_pages + 1):
+                    url = section_url if page_num == 1 else build_page_url(section_url, page_num)
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                        # 等待视频卡片加载
+                        try:
+                            await page.wait_for_selector("div.listn", timeout=20000)
+                        except Exception:
+                            # 可能被 Cloudflare 挑战
+                            content = await page.content()
+                            if "challenges.cloudflare.com" in content or "お待ちください" in content:
+                                log(f"  等待 Cloudflare 验证...")
+                                await asyncio.sleep(20)
+                        await asyncio.sleep(1)
 
-            for page_num in range(1, max_pages + 1):
-                url = section_url if page_num == 1 else build_page_url(section_url, page_num)
-                html = None
+                        # 用 JS 提取卡片数据 (比 BS4 快)
+                        cards = await page.evaluate(EXTRACT_CARDS_JS)
+                        cards = [c for c in cards if isinstance(c, dict) and c.get("video_id")]
 
-                if not is_problem:
-                    html = fetch_page_cffi(url)
+                        stats["pages_crawled"] += 1
+                        log(f"  第{page_num}页: {len(cards)} 个视频 ({time.time()-t0:.0f}s)")
 
-                if html is None:
-                    if is_problem or page_num == 1:
-                        log(f"  切换到 Playwright 回退...")
-                        await _ensure_pw()
-                        html = await fetch_page_playwright(pw_context, url)
-                        if html:
-                            stats["pw_fallbacks"] += 1
+                        if not cards:
+                            break
 
-                if not html:
-                    if page_num == 1:
-                        stats["errors"].append(f"抓取失败: {url}")
+                        existing = {v["video_id"] for v in all_videos}
+                        new = [c for c in cards if c["video_id"] not in existing]
+                        if not new and page_num > 1:
+                            break
+
+                        # 补充字段
+                        for c in new:
+                            c["source_section"] = label
+                            c["source_page"] = url
+
+                        all_videos.extend(new)
+
+                        if len(all_videos) >= MAX_VIDEOS_PER_SECTION:
+                            break
+
+                        await asyncio.sleep(1)
+
+                    except Exception as e:
+                        log(f"  第{page_num}页失败: {str(e)[:60]}", "WARN")
+                        if page_num == 1:
+                            stats["errors"].append(f"{label}: {str(e)[:80]}")
                         break
-                    else:
-                        break
-
-                stats["pages_crawled"] += 1
-                videos = parse_video_cards(html, url, label)
-                log(f"  第{page_num}页: {len(videos)} 个视频 ({time.time()-t0:.0f}s)")
-
-                if not videos:
-                    break
-
-                existing = {v["video_id"] for v in all_videos}
-                new = [v for v in videos if v["video_id"] not in existing]
-                if not new and page_num > 1:
-                    break
-                all_videos.extend(new)
-
-                if len(all_videos) >= MAX_VIDEOS_PER_SECTION:
-                    break
-
-                await asyncio.sleep(1 if is_problem else 0.5)
+            finally:
+                await page.close()
 
             stats["sections_crawled"] += 1
             stats["videos_found"] += len(all_videos)
@@ -600,20 +287,43 @@ async def scrape_all():
             if not all_videos:
                 continue
 
-            # MP4 解析
+            # MP4 解析: 在浏览器中通过 JS fetch 并发调 twjn.php
+            # (利用浏览器的 Cloudflare 通行证, 从任何 IP 都能调通)
             t1 = time.time()
-            mp4_urls = await resolve_all_mp4(all_videos)
+            mp4_urls = {}
+            mp4_page = await context.new_page()
+            try:
+                # 先打开 monsnode 任意页面获取通行证
+                await mp4_page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
+
+                targets = []
+                for v in all_videos:
+                    mid = v.get("monsnode_video_id", "").strip()
+                    if mid and mid.isdigit():
+                        targets.append(mid)
+
+                log(f"  twjn.php 解析 {len(targets)} 个 (浏览器内并发)...")
+
+                # 分批在浏览器中执行 JS fetch
+                for batch_start in range(0, len(targets), MP4_BROWSER_BATCH):
+                    batch = targets[batch_start:batch_start + MP4_BROWSER_BATCH]
+                    batch_results = await mp4_page.evaluate(RESOLVE_MP4_JS, batch)
+                    if batch_results:
+                        mp4_urls.update(batch_results)
+                    done = min(batch_start + MP4_BROWSER_BATCH, len(targets))
+                    log(f"    {done}/{len(targets)} → {len(mp4_urls)} MP4")
+            finally:
+                await mp4_page.close()
+
             stats["mp4_resolved"] += len(mp4_urls)
             log(f"[{label}] MP4 解析: {len(mp4_urls)}/{len(all_videos)} ({time.time()-t1:.0f}s)")
 
+            # 合并 MP4 结果
             for v in all_videos:
-                if v["video_id"] in mp4_urls:
-                    v["duration"] = mp4_urls[v["video_id"]]
-
-            # 详情页回退: 对没拿到 MP4 的视频自动爬详情页获取 monsnode ID
-            async with httpx.AsyncClient(timeout=15, limits=httpx.Limits(max_connections=100)) as fallback_client:
-                extra = await _resolve_with_detail_fallback(all_videos, label, stats, fallback_client)
-                stats["detail_fallback_saved"] += extra
+                mid = v.get("monsnode_video_id", "").strip()
+                if mid in mp4_urls:
+                    v["duration"] = mp4_urls[mid]
 
             # 保存
             t2 = time.time()
@@ -621,69 +331,36 @@ async def scrape_all():
             stats["videos_saved"] += saved
             log(f"[{label}] 保存 {saved} ({time.time()-t2:.0f}s)")
 
+        # 自动修复残留视频
+        log("\n自动修复残留视频...")
+        async with httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=50)) as client:
+            auto_fixed = await auto_rescrape(client, limit=100)
+            stats["auto_rescrape_count"] = auto_fixed
+
     finally:
-        if pw:
-            try:
-                await pw_context.close()
-                await pw.stop()
-            except Exception:
-                pass
+        await context.close()
+        await browser.close()
+        await pw.stop()
 
     stats["finished_at"] = datetime.now(timezone.utc).isoformat()
-
-    # 自动 rescrape: 修复数据库中残留的无 MP4 旧视频
-    log("\n自动修复数据库中残留视频...")
-    async with httpx.AsyncClient(timeout=15, limits=httpx.Limits(max_connections=100)) as auto_client:
-        auto_fixed = await auto_rescrape(auto_client)
-        stats["auto_rescrape_count"] = auto_fixed
-
     return stats
 
 
-# ========== 详情页 ID 提取 + 自动修复逻辑 ==========
-
-def fetch_monsnode_id_from_page(video_id: str) -> str | None:
-    """访问 monsnode 视频详情页, 提取 monsnode 内部 ID (用于 twjn.php)
-    URL: https://monsnode.com/v{tweet_id}, 页面含 redirect.php?v=MONSNODE_ID
-    """
-    tweet_id = video_id[1:] if video_id.startswith("v") else video_id
-    url = f"{BASE_URL}/v{tweet_id}"
-
-    for attempt in range(1, 4):
-        try:
-            resp = cffi_requests.get(
-                url, headers=CFFI_HEADERS,
-                impersonate="chrome131",
-                timeout=20
-            )
-            if resp.status_code != 200:
-                time.sleep(3 * attempt)
-                continue
-            m = re.search(r"redirect\.php\?v=(\d+)", resp.text)
-            if m:
-                return m.group(1)
-            time.sleep(2 * attempt)
-        except Exception:
-            time.sleep(2 * attempt)
-    return None
+# ========== 自动修复 ==========
 
 async def auto_rescrape(client: httpx.AsyncClient | None = None, limit: int = 100) -> int:
-    """自动修复数据库中 needs_rescrape=true 的视频
-    如果 client 未提供则创建一个新的
-    返回修复数量
-    """
-    import httpx as hx
+    """修复数据库中 needs_rescrape=true 的视频 (使用浏览器 twjn.php)"""
     supabase_headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": "Bearer " + SUPABASE_KEY,
     }
 
-    # 查询需要修复的视频
-    resp = hx.get(
+    # 查询需要修复的
+    resp = httpx.get(
         SUPABASE_URL + "/rest/v1/videos"
-        "?select=video_id,monsnode_video_id,source_section"
+        "?select=video_id,monsnode_video_id"
         "&needs_rescrape=eq.true"
-        "&order=created_at.desc"
+        "&monsnode_video_id=not.eq."  # monsnode_id 不为空
         f"&limit={limit}",
         headers=supabase_headers,
         timeout=20
@@ -692,155 +369,84 @@ async def auto_rescrape(client: httpx.AsyncClient | None = None, limit: int = 10
         return 0
 
     candidates = resp.json()
-    if not candidates:
-        log("  没有需要修复的视频")
-        return 0
-
-    log(f"  发现 {len(candidates)} 个需要修复的视频")
-
-    # 分类
-    direct_twjn = []
-    need_fetch_id = []
-
+    targets = []
     for c in candidates:
-        vid = c["video_id"]
         mid = (c.get("monsnode_video_id") or "").strip()
-        tid = vid[1:] if vid.startswith("v") else ""
-
         if mid and mid.isdigit():
-            direct_twjn.append((vid, mid))
-        elif tid.isdigit() and len(tid) >= 15:
-            need_fetch_id.append(vid)
+            targets.append((c["video_id"], mid))
 
-    if not direct_twjn and not need_fetch_id:
+    if not targets:
+        log("  没有可修复的视频")
         return 0
 
-    t0 = time.time()
+    log(f"  发现 {len(targets)} 个待修复视频")
+
+    # 用浏览器解析 MP4
+    from playwright.async_api import async_playwright
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(headless=True, args=["--no-sandbox", "--disable-gpu"])
+    context = await browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        locale="ja-JP", timezone_id="Asia/Tokyo",
+    )
+    page = await context.new_page()
+
     resolved = 0
-    sem = asyncio.Semaphore(MP4_CONCURRENCY)
-
-    own_client = client is None
-    if own_client:
-        client = httpx.AsyncClient(timeout=15, limits=httpx.Limits(max_connections=100))
-
     try:
-        async def _save(vid, mp4, monsnode_mid=None):
-            now = datetime.now(timezone.utc).isoformat()
-            data = {"mp4_checked_at": now, "updated_at": now}
-            if mp4:
-                data["duration"] = mp4[:500]
-                data["has_mp4"] = True
-                data["needs_rescrape"] = False
-                if monsnode_mid:
-                    data["monsnode_video_id"] = monsnode_mid
-            else:
-                data["needs_rescrape"] = True
-            try:
-                await client.patch(
-                    SUPABASE_URL + f"/rest/v1/videos?video_id=eq.{vid}",
-                    headers={**supabase_headers, "Content-Type": "application/json"},
-                    json=data, timeout=15
-                )
-            except Exception:
-                pass
+        await page.goto(BASE_URL + "/", wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2)
 
-        # 阶段 1: 详情页获取 monsnode ID
-        if need_fetch_id:
-            log(f"  爬取 {len(need_fetch_id)} 个详情页获取 monsnode ID...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-                futures = {pool.submit(fetch_monsnode_id_from_page, vid): vid for vid in need_fetch_id}
-                for future in concurrent.futures.as_completed(futures):
-                    vid = futures[future]
+        mids = [mid for _, mid in targets]
+        vid_map = {mid: vid for vid, mid in targets}
+
+        for batch_start in range(0, len(mids), MP4_BROWSER_BATCH):
+            batch = mids[batch_start:batch_start + MP4_BROWSER_BATCH]
+            batch_results = await page.evaluate(RESOLVE_MP4_JS, batch)
+            if not batch_results:
+                continue
+
+            for mid, mp4 in batch_results.items():
+                vid = vid_map.get(mid)
+                if vid:
+                    now = datetime.now(timezone.utc).isoformat()
+                    data = {
+                        "duration": mp4[:500],
+                        "has_mp4": True,
+                        "needs_rescrape": False,
+                        "mp4_checked_at": now,
+                        "updated_at": now,
+                    }
                     try:
-                        mid = future.result()
-                        if mid:
-                            direct_twjn.append((vid, mid))
+                        await client.patch(
+                            SUPABASE_URL + f"/rest/v1/videos?video_id=eq.{vid}",
+                            headers={**supabase_headers, "Content-Type": "application/json"},
+                            json=data, timeout=15
+                        )
+                        resolved += 1
                     except Exception:
                         pass
-            log(f"  获取到 {len(direct_twjn)} 个有效 monsnode ID")
+            done = min(batch_start + MP4_BROWSER_BATCH, len(mids))
+            log(f"  {done}/{len(mids)} → 修复 {resolved}")
 
-        # 阶段 2: twjn.php 批量解析
-        if direct_twjn:
-            async def _twjn_one(vid, mid):
-                result = await resolve_one_twjn(client, vid, mid, sem)
-                _, mp4 = result
-                if mp4:
-                    await _save(vid, mp4, monsnode_mid=mid)
-                    return "ok"
-                else:
-                    await _save(vid, None)
-                    return "fail"
-
-            tasks = [_twjn_one(vid, mid) for vid, mid in direct_twjn]
-            for batch_start in range(0, len(tasks), MP4_BATCH_SIZE):
-                batch = tasks[batch_start:batch_start + MP4_BATCH_SIZE]
-                results = await asyncio.gather(*batch)
-                resolved += sum(1 for r in results if r == "ok")
-            elapsed = time.time() - t0
-            log(f"  自动修复: {resolved}/{len(tasks)} ({elapsed:.0f}s)")
     finally:
-        if own_client and client:
-            await client.aclose()
+        await page.close()
+        await context.close()
+        await browser.close()
+        await pw.stop()
 
+    log(f"  自动修复: {resolved}/{len(targets)}")
     return resolved
-
-
-async def rescrape_mode():
-    """独立的完整重爬: 修复所有无 MP4 的视频 (不限数量)"""
-    log("=" * 55)
-    log("重爬模式: 修复数据库中所有无 MP4 的视频")
-    log("=" * 55)
-
-    import httpx as hx
-    supabase_headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": "Bearer " + SUPABASE_KEY,
-    }
-    resp = hx.get(
-        SUPABASE_URL + "/rest/v1/videos"
-        "?select=video_id,monsnode_video_id,source_section"
-        "&or=(duration.is.null,duration.not.ilike.*video.twimg.com*)"
-        "&order=created_at.desc"
-        "&limit=500",
-        headers=supabase_headers,
-        timeout=20
-    )
-    if resp.status_code != 200:
-        log(f"查询失败: {resp.status_code}", "ERROR")
-        return
-
-    candidates = resp.json()
-    total = len(candidates)
-    log(f"找到 {total} 个需要重爬的视频")
-
-    if not total:
-        log("所有视频已有 MP4!")
-        return
-
-    # 按板块统计
-    sections = {}
-    for c in candidates:
-        s = c.get("source_section", "unknown")
-        sections[s] = sections.get(s, 0) + 1
-    for s, n in sorted(sections.items()):
-        log(f"  {s}: {n} 个")
-
-    # 重用 auto_rescrape 逻辑
-    async with httpx.AsyncClient(timeout=15, limits=httpx.Limits(max_connections=100)) as client:
-        resolved = await auto_rescrape(client, limit=500)
-
-    log(f"\n重爬完成: {resolved}/{total} 个视频恢复 MP4")
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rescrape", action="store_true", help="重爬模式: 修复数据库中无 MP4 的视频")
+    parser.add_argument("--rescrape", action="store_true", help="仅修复已存在的无 MP4 视频")
     args = parser.parse_args()
 
     print("=" * 55)
-    mode = "重爬 (修复旧视频)" if args.rescrape else "正常"
-    log(f"monsnode 爬虫 v4 — 模式: {mode}")
+    mode = "自动修复" if args.rescrape else "全浏览器爬取"
+    log(f"monsnode 爬虫 v5 — {mode}")
     log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌ 未设置'}")
     log(f"SUPABASE_KEY={'已设置' if SUPABASE_KEY else '❌ 未设置'}")
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -849,15 +455,19 @@ def main():
     print("=" * 55)
 
     if args.rescrape:
-        asyncio.run(rescrape_mode())
+        async def _run():
+            async with httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=50)) as client:
+                await auto_rescrape(client, limit=500)
+        asyncio.run(_run())
     else:
         stats = asyncio.run(scrape_all())
         print("\n" + "=" * 55)
         print(f"  板块: {stats['sections_crawled']}  页面: {stats['pages_crawled']}")
         print(f"  发现: {stats['videos_found']}  保存: {stats['videos_saved']}")
         rate = stats['mp4_resolved'] / max(stats['videos_found'], 1) * 100
-        print(f"  MP4: {stats['mp4_resolved']} ({rate:.0f}%)  详情页回退: {stats['detail_fallback_saved']}")
-        print(f"  PW回退: {stats['pw_fallbacks']}  自动修复: {stats['auto_rescrape_count']}")
+        print(f"  MP4: {stats['mp4_resolved']} ({rate:.0f}%)")
+        if stats.get("auto_rescrape_count"):
+            print(f"  自动修复: {stats['auto_rescrape_count']}")
         if stats["errors"]:
             print(f"  错误: {len(stats['errors'])}")
             for e in stats["errors"][:3]:
