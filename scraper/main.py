@@ -11,11 +11,13 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://monsnode.com"
 
 TARGET_SECTIONS = [
-    ("/?t=24h", "24h", 2),
-    ("/?t=3d", "3d", 2),
-    ("/trending", "trending", 2),
-    ("/", "home", 2),
-    ("/latest", "latest", 2),
+    ("/?t=24h", "24h", 4),
+    ("/?t=3d", "3d", 4),
+    ("/?t=7d", "7d", 4),
+    ("/trending", "trending", 4),
+    ("/", "home", 4),
+    ("/latest", "latest", 4),
+    ("/?ranking=1", "ranking", 3),
 ]
 
 MAX_RETRIES = 2
