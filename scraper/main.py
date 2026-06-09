@@ -11,16 +11,14 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://monsnode.com"
 
 TARGET_SECTIONS = [
-    ("/?t=24h", "24h", 4),
-    ("/?t=3d", "3d", 4),
-    ("/?t=7d", "7d", 4),
-    ("/trending", "trending", 4),
-    ("/", "home", 4),
-    ("/latest", "latest", 4),
-    ("/?ranking=1", "ranking", 3),
+    ("/?t=24h", "24h", 2),
+    ("/?t=3d", "3d", 2),
+    ("/trending", "trending", 2),
+    ("/", "home", 2),
+    ("/latest", "latest", 2),
 ]
 
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 MAX_VIDEOS_PER_SECTION = 300
 BATCH_SIZE = 50
 TWJN_CONCURRENCY = 8  # twjn.php 请求并发数
@@ -42,25 +40,24 @@ def build_page_url(base_url: str, page: int) -> str:
 # ========== 页面抓取 (Playwright) ==========
 
 async def _stealth_inject(page):
-    """注入反检测脚本, 隐藏 headless 特征"""
-    await page.add_init_script("""
-        // 移除 webdriver 标记
-        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        // 伪造 plugins 和 mimeTypes
-        Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-        Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP','ja','en-US','en']});
-        // 伪造 chrome 对象
-        window.chrome = {runtime: {}};
-        // 移除 PhantomJS 痕迹
-        delete window.callPhantom;
-        // 伪造权限
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-            Promise.resolve({state: Notification.permission}) :
-            originalQuery(parameters)
-        );
-    """)
+    """用 playwright-stealth 全面隐藏 headless 特征"""
+    try:
+        from playwright_stealth import stealth_async
+        await stealth_async(page)
+    except ImportError:
+        # 降级: 手动注入基础反检测脚本
+        await page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP','ja','en-US','en']});
+            window.chrome = {runtime: {}};
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                Promise.resolve({state: Notification.permission}) :
+                originalQuery(parameters)
+            );
+        """)
 
 
 async def fetch_page(context, url: str, retries: int = MAX_RETRIES) -> str | None:
