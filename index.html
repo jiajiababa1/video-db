@@ -1267,24 +1267,157 @@
     }
     function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 
-    // 从 Twitter 移动版页面直接提取视频 URL (用 corsproxy, 最可靠兜底)
+    // 从 HTML 中提取所有可能的视频 URL
+    function extractVideoUrlsFromHtml(html) {
+        var urls = [];
+        // 直接 MP4 链接
+        var m = html.match(/https?:\/\/[^"'<\s]+\.mp4[^"'<\s]*/gi);
+        if (m) urls = urls.concat(m);
+        // video.twimg.com 的各种格式
+        m = html.match(/(?:https?:)?\/\/video\.twimg\.com\/[^"'<\s]+/gi);
+        if (m) {
+            for (var i = 0; i < m.length; i++) {
+                var u = m[i];
+                if (u.indexOf('http') !== 0) u = 'https:' + u;
+                urls.push(u);
+            }
+        }
+        // og:video meta
+        m = html.match(/property="og:video"[^>]+content="([^"]+)"/gi);
+        if (m) {
+            for (var i = 0; i < m.length; i++) {
+                var cm = m[i].match(/content="([^"]+)"/);
+                if (cm) urls.push(cm[1]);
+            }
+        }
+        // twitter:player:stream
+        m = html.match(/property="twitter:player:stream"[^>]+content="([^"]+)"/gi);
+        if (m) {
+            for (var i = 0; i < m.length; i++) {
+                var cm2 = m[i].match(/content="([^"]+)"/);
+                if (cm2) urls.push(cm2[1]);
+            }
+        }
+        // data-url / data-media-url 属性
+        m = html.match(/data-(?:media-)?url="(https?:\/\/[^"]+)"/gi);
+        if (m) {
+            for (var i = 0; i < m.length; i++) {
+                var dm = m[i].match(/"(https?:\/\/[^"]+)"/);
+                if (dm && dm[1].indexOf('video') >= 0) urls.push(dm[1]);
+            }
+        }
+        // <source> 标签
+        var srcRe = /<source[^>]+src="([^"]+)"/gi;
+        var sm;
+        while ((sm = srcRe.exec(html)) !== null) {
+            if (sm[1].indexOf('video') >= 0) urls.push(sm[1]);
+        }
+        return urls;
+    }
+
+    // 从 HTML 中提取所有链接 (用于二级页面跳转)
+    function extractLinksFromHtml(html, baseUrl) {
+        var links = [];
+        var linkRe = /<a[^>]+href="([^"]+)"[^>]*>/gi;
+        var lm;
+        while ((lm = linkRe.exec(html)) !== null) {
+            var href = lm[1];
+            // 只收集可能的视频相关链接
+            if (href.indexOf('video') >= 0 || href.indexOf('status') >= 0 ||
+                href.indexOf('mp4') >= 0 || href.indexOf('twimg') >= 0 ||
+                href.indexOf('redirect') >= 0) {
+                if (href.indexOf('http') !== 0) {
+                    if (href.indexOf('/') === 0) {
+                        href = (baseUrl || 'https://monsnode.com').replace(/\/[^\/]*$/, '') + href;
+                    }
+                }
+                links.push(href);
+            }
+        }
+        return links;
+    }
+
+    // 从 Twitter 页面提取视频 (已知推文ID, 直接加载移动版)
     async function resolveViaTwitterPage(tweetId) {
         try {
-            // Twitter 移动版页面更轻量, 包含视频源信息
             var url = 'https://mobile.twitter.com/i/status/' + tweetId;
             var proxyUrl = CORS_PROXY + encodeURIComponent(url);
             var resp = await fetch(proxyUrl);
             if (!resp.ok) return null;
             var html = await resp.text();
-            // 搜索 video.twimg.com 的视频 URL
-            var m = html.match(/https?:\/\/video\.twimg\.com\/[^"'<\s]+\.mp4/);
-            if (m) return m[0];
-            // 搜索 amplify_video URL 片段
-            m = html.match(/video\.twimg\.com\/amplify_video\/[^"'<\s]+/);
-            if (m) return 'https://' + m[0];
-            // 搜索 ext_tw_video URL 片段
-            m = html.match(/video\.twimg\.com\/ext_tw_video\/[^"'<\s]+/);
-            if (m) return 'https://' + m[0];
+            var urls = extractVideoUrlsFromHtml(html);
+            var mp4 = urls.filter(function(u) { return u.indexOf('.mp4') >= 0 || u.indexOf('video.twimg.com') >= 0; });
+            if (mp4.length > 0) {
+                mp4.sort(function(a, b) {
+                    var sa = (a.match(/(\d+)x(\d+)/) || [0, 0, 0]);
+                    var sb = (b.match(/(\d+)x(\d+)/) || [0, 0, 0]);
+                    return (parseInt(sb[1]) * parseInt(sb[2])) - (parseInt(sa[1]) * parseInt(sa[2]));
+                });
+                return mp4[0];
+            }
+            return null;
+        } catch(e) { return null; }
+    }
+
+    // 双页面连续解析: 第一步跟重定向→解析, 第二步跟进链接→再解析
+    // 模拟真实用户操作: 点封面→看到链接→点链接→看到视频
+    async function resolveViaTwoPageChain(redirectUrl) {
+        try {
+            // ===== 第一页: 跟重定向 =====
+            var url1 = redirectUrl;
+            if (url1.indexOf('?') >= 0 && url1.indexOf('t=') === -1) {
+                url1 += '&t=1'; // 告诉 monsnode 直接 302 跳转
+            }
+            var proxy1 = CORS_PROXY + encodeURIComponent(url1);
+            var resp1 = await fetch(proxy1);
+            if (!resp1.ok) return null;
+            var html1 = await resp1.text();
+
+            // 解析第一页: 找视频
+            var urls = extractVideoUrlsFromHtml(html1);
+            // 过滤, 优先 .mp4 结尾的
+            var mp4Urls = urls.filter(function(u) { return u.indexOf('.mp4') >= 0; });
+            if (mp4Urls.length > 0) {
+                // 取最高画质 (URL 中尺寸大的)
+                mp4Urls.sort(function(a, b) {
+                    var sa = (a.match(/(\d+)x(\d+)/) || [0, 0, 0]);
+                    var sb = (b.match(/(\d+)x(\d+)/) || [0, 0, 0]);
+                    return (parseInt(sb[1]) * parseInt(sb[2])) - (parseInt(sa[1]) * parseInt(sa[2]));
+                });
+                return mp4Urls[0];
+            }
+
+            // 第一页只有 video.twimg.com 非 mp4 链接 (可能是 m3u8)
+            var twimgUrls = urls.filter(function(u) { return u.indexOf('video.twimg.com') >= 0; });
+            if (twimgUrls.length > 0) return twimgUrls[0];
+
+            // ===== 第二页: 从第一页找链接继续跟进 =====
+            // 从重定向 URL 推断 base
+            var baseMatch = url1.match(/(https?:\/\/[^\/]+)/);
+            var base = baseMatch ? baseMatch[1] : 'https://monsnode.com';
+            var links = extractLinksFromHtml(html1, base);
+
+            // 过滤有效的视频链接
+            var targetLinks = links.filter(function(l) {
+                return l.indexOf('video') >= 0 || l.indexOf('status') >= 0 ||
+                       l.indexOf('twimg') >= 0 || l.indexOf('redirect') >= 0;
+            });
+
+            // 逐个尝试二级链接 (最多3个)
+            for (var li = 0; li < Math.min(targetLinks.length, 3); li++) {
+                try {
+                    var proxy2 = CORS_PROXY + encodeURIComponent(targetLinks[li]);
+                    var resp2 = await fetch(proxy2);
+                    if (!resp2.ok) continue;
+                    var html2 = await resp2.text();
+                    var urls2 = extractVideoUrlsFromHtml(html2);
+                    var mp4_2 = urls2.filter(function(u) { return u.indexOf('.mp4') >= 0; });
+                    if (mp4_2.length > 0) return mp4_2[0];
+                    var tw_2 = urls2.filter(function(u) { return u.indexOf('video.twimg.com') >= 0; });
+                    if (tw_2.length > 0) return tw_2[0];
+                } catch(e) {}
+            }
+
             return null;
         } catch(e) { return null; }
     }
@@ -1333,13 +1466,18 @@
             if (!tid) tid = info.tweetId;
         }
 
-        // 4. 从 redirect URL 解析推文 ID → 再试
-        if (!tid && info.type === 'redirect') {
-            tid = await resolveRedirectToTweetId(info.url);
-            if (tid) {
-                mp4Url = await resolveFxtwitterMp4(tid);
-                if (!mp4Url) mp4Url = await resolveViaTwitterPage(tid);
-                if (mp4Url) return { mp4Url: mp4Url, tweetId: tid };
+        // 4. 从 redirect URL → 双页面链式解析 (模拟真实操作)
+        if (!mp4Url && info.type === 'redirect') {
+            mp4Url = await resolveViaTwoPageChain(info.url);
+            if (mp4Url) return { mp4Url: mp4Url, tweetId: null };
+            // 如果双页解析也失败, 至少尝试提取推文 ID
+            if (!tid) {
+                tid = await resolveRedirectToTweetId(info.url);
+                if (tid) {
+                    mp4Url = await resolveFxtwitterMp4(tid);
+                    if (!mp4Url) mp4Url = await resolveViaTwitterPage(tid);
+                    if (mp4Url) return { mp4Url: mp4Url, tweetId: tid };
+                }
             }
         }
 
@@ -1351,6 +1489,13 @@
                 if (!mp4Url) mp4Url = await resolveViaTwitterPage(tid);
                 if (mp4Url) return { mp4Url: mp4Url, tweetId: tid };
             }
+        }
+
+        // 6. 尝试用 video_id 构建 monsnode URL 做双页链式解析
+        if (!mp4Url && v.video_id && !info.type) {
+            var monsnodeRedirect = 'https://monsnode.com/redirect.php?v=' + (v.video_id.indexOf('v') === 0 ? v.video_id.substring(1) : v.video_id);
+            // 注意: 这里的 v.video_id 是 "v{tweet_id}" 格式, redirect.php 需要的是数字 video_id
+            // 但我们没有那个数字 video_id, 所以用 video_url 或跳过
         }
 
         // 都失败了, 但返回能找到的推文 ID (用于 fxtwitter iframe)

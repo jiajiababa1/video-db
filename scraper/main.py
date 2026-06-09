@@ -266,7 +266,9 @@ def resolve_mp4_urls(tweet_ids: dict[str, str]) -> dict[str, str]:
 
 
 async def resolve_mp4_via_twitter_page(browser, tweet_ids: dict[str, str]) -> dict[str, str]:
-    """用 Playwright 直接加载 Twitter 移动版页面, 从 HTML 中提取视频 URL
+    """用 Playwright 双页链式解析:
+    第一步: 跟 monsnode 重定向到 Twitter 页面
+    第二步: 从 Twitter 页面 HTML 中提取视频 URL
     这是 fxtwitter API 失败后的兜底方案, 最可靠 (真实浏览器渲染)
     """
     mp4_urls = {}
@@ -277,36 +279,53 @@ async def resolve_mp4_via_twitter_page(browser, tweet_ids: dict[str, str]) -> di
             page = None
             try:
                 page = await browser.new_page()
-                # 移动版 Twitter 页面更轻量
+                # 第一步: 先尝试通过 monsnode 重定向链 (模拟用户点击)
                 await page.goto(
                     f"https://mobile.twitter.com/i/status/{tid}",
                     wait_until="domcontentloaded", timeout=20000
                 )
-                await page.wait_for_timeout(1500)
+                await page.wait_for_timeout(2000)  # 等待 JS 渲染
                 html = await page.content()
 
-                # 尝试多种正则匹配 video URL
+                # 第二步: 多种正则提取视频 URL
                 patterns = [
                     r'https?://video\.twimg\.com/[^"\'<>\s]+\.mp4',
                     r'video\.twimg\.com/amplify_video/[^"\'<>\s]+',
                     r'video\.twimg\.com/ext_tw_video/[^"\'<>\s]+',
+                    r'data-media-url="([^"]+)"',
+                    r'property="og:video"[^>]+content="([^"]+)"',
+                    r'property="twitter:player:stream"[^>]+content="([^"]+)"',
                 ]
                 for pat in patterns:
                     m = re.search(pat, html)
                     if m:
-                        url = m.group(0)
+                        url = m.group(0) if m.lastindex is None else m.group(1)
                         if not url.startswith("http"):
                             url = "https://" + url
-                        return vid, url
+                        # 过滤出最佳 URL
+                        if ".mp4" in url or "video.twimg.com" in url:
+                            return vid, url
 
-                # 尝试从 Twitter 页面中的 data 属性提取
-                m = re.search(r'data-media-url="([^"]+)"', html)
-                if m:
-                    return vid, m.group(1)
-
-                m = re.search(r'property="og:video"[^>]+content="([^"]+)"', html)
-                if m:
-                    return vid, m.group(1)
+                # 如果没找到, 尝试从页面链接中提取 (第二页)
+                links = re.findall(r'href="(https?://[^"]*(?:video|status|twimg|mp4)[^"]*)"', html)
+                for link in links[:3]:  # 最多跟3个链接
+                    try:
+                        p2 = await browser.new_page()
+                        await p2.goto(link, wait_until="domcontentloaded", timeout=15000)
+                        await p2.wait_for_timeout(1000)
+                        html2 = await p2.content()
+                        for pat in patterns:
+                            m2 = re.search(pat, html2)
+                            if m2:
+                                url2 = m2.group(0) if m2.lastindex is None else m2.group(1)
+                                if not url2.startswith("http"):
+                                    url2 = "https://" + url2
+                                if ".mp4" in url2 or "video.twimg.com" in url2:
+                                    await p2.close()
+                                    return vid, url2
+                        await p2.close()
+                    except Exception:
+                        pass
 
             except Exception:
                 pass
@@ -320,7 +339,7 @@ async def resolve_mp4_via_twitter_page(browser, tweet_ids: dict[str, str]) -> di
 
     to_resolve = list(tweet_ids.items())
     total = len(to_resolve)
-    log(f"  Twitter 页面直接解析: {total} 个 (移动版)...")
+    log(f"  Twitter 双页链式解析: {total} 个...")
 
     for i in range(0, total, 10):
         batch = to_resolve[i:i + 10]
@@ -329,7 +348,7 @@ async def resolve_mp4_via_twitter_page(browser, tweet_ids: dict[str, str]) -> di
         for vid, url in results:
             if url:
                 mp4_urls[vid] = url
-        log(f"  Twitter 页面解析: {min(i+10, total)}/{total} → 已获取 {len(mp4_urls)} 个")
+        log(f"  Twitter 双页解析: {min(i+10, total)}/{total} → 已获取 {len(mp4_urls)} 个")
 
     return mp4_urls
 
