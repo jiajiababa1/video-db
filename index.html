@@ -304,6 +304,28 @@
             border-width:10px 0 10px 18px; border-color:transparent transparent transparent #fff;
             margin-left:3px;
         }
+        /* 悬停视频预览 (鼠标悬停播放前3秒) */
+        .vid-preview-video {
+            position:absolute; inset:0; width:100%; height:100%;
+            object-fit:cover; display:none; z-index:1; background:#000;
+            pointer-events:none;
+        }
+        .vid-thumb .preview-spinner {
+            position:absolute; inset:0; z-index:1; display:none;
+            align-items:center; justify-content:center; background:rgba(0,0,0,0.5);
+        }
+        .vid-thumb .preview-spinner::after {
+            content:''; width:24px; height:24px; border:2px solid rgba(255,255,255,0.2);
+            border-top-color:#fff; border-radius:50%; animation:spin 0.6s linear infinite;
+        }
+        @media (hover: hover) {
+            .vid-card.has-mp4:hover .vid-preview-video { display:block; }
+            .vid-card.has-mp4:hover .vid-thumb img { opacity:0; }
+            .vid-card.has-mp4:hover .vid-preview-video.loading + .preview-spinner { display:flex; }
+        }
+        .vid-card.has-mp4.vid-press .vid-preview-video { display:block; }
+        .vid-card.has-mp4.vid-press .vid-thumb img { opacity:0; }
+        .vid-card.has-mp4.vid-press .vid-preview-video.loading + .preview-spinner { display:flex; }
         .vid-thumb { position:relative; width:100%; padding-top:56.25%; background:#18181b; overflow:hidden; }
         .vid-thumb img {
             position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
@@ -713,6 +735,7 @@
         <div class="sidebar-section">
             <div class="sidebar-label">我的</div>
             <button class="sidebar-item" data-section="favs" onclick="selectSidebar('favs','⭐ 我的收藏')"><span class="ico">⭐</span>我的收藏 <span class="badge" id="favsCount">0</span></button>
+            <button class="sidebar-item" data-section="history" onclick="selectSidebar('history','🕐 观看历史')"><span class="ico">🕐</span>观看历史 <span class="badge" id="histCount">0</span></button>
         </div>
     </nav>
 
@@ -839,6 +862,7 @@
             <button class="vid-tab" data-section="7d">📆 7天</button>
             <button class="vid-tab" data-section="ranking">🏆 排行</button>
             <button class="vid-tab" data-section="favs" id="favTab" style="display:none;">⭐ 收藏</button>
+            <button class="vid-tab" data-section="history" id="histTab" style="display:none;">🕐 历史</button>
         </div>
         <div class="author-header" id="authorHeader">
             <button class="author-back" onclick="backToMainView()">← 返回全部</button>
@@ -1241,6 +1265,9 @@
         if (!found) {
             tabs[0].classList.add('active'); // fallback to 全部
         }
+        // 更新收藏和历史标签可见性
+        updateFavsBadge();
+        updateHistBadge();
         activeSection = section;
         activeAuthor = '';
         document.getElementById('authorHeader').classList.remove('on');
@@ -1285,6 +1312,36 @@
         if (badge) badge.textContent = count;
         var favTab = document.getElementById('favTab');
         if (favTab) favTab.style.display = count > 0 ? '' : 'none';
+    }
+
+    // ============ 观看历史 (localStorage) ============
+    function getHistory() {
+        try { return JSON.parse(localStorage.getItem('vid_history') || '[]'); } catch(e) { return []; }
+    }
+    function saveHistoryData(list) {
+        localStorage.setItem('vid_history', JSON.stringify(list));
+        updateHistBadge();
+    }
+    function addToHistory(vid) {
+        var list = getHistory();
+        // 移除重复项
+        list = list.filter(function(item) { return item !== vid; });
+        list.unshift(vid);
+        // 最多保留 200 条
+        if (list.length > 200) list = list.slice(0, 200);
+        saveHistoryData(list);
+    }
+    function clearHistory() {
+        localStorage.removeItem('vid_history');
+        updateHistBadge();
+        if (activeSection === 'history') loadVids(true);
+    }
+    function updateHistBadge() {
+        var count = getHistory().length;
+        var badge = document.getElementById('histCount');
+        if (badge) badge.textContent = count;
+        var histTab = document.getElementById('histTab');
+        if (histTab) histTab.style.display = count > 0 ? '' : 'none';
     }
 
     // ============================================================
@@ -1896,13 +1953,20 @@
             var ids = favs.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
             params += '&video_id=in.('+ids+')';
         }
+        // 观看历史模式: 筛选指定 video_id 列表
+        else if(activeSection === 'history') {
+            var hist = getHistory();
+            if (!hist.length) return {data:[],count:0};
+            var hids = hist.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
+            params += '&video_id=in.('+hids+')';
+        }
         // 搜索条件
         else if(q&&q.trim()){
             var t=encodeURIComponent(q.trim());
             params+='&or=(title.ilike.*'+t+'*,author.ilike.*'+t+'*)';
         }
-        // 分类过滤 (非收藏模式)
-        if(activeSection && activeSection !== 'favs') params+='&source_section=eq.'+encodeURIComponent(activeSection);
+        // 分类过滤 (非收藏/历史模式)
+        if(activeSection && activeSection !== 'favs' && activeSection !== 'history') params+='&source_section=eq.'+encodeURIComponent(activeSection);
         // 作者过滤
         if(activeAuthor) params+='&author=eq.'+encodeURIComponent(activeAuthor);
         // 可播放性筛选 (客户端过滤, 因为 has_mp4 列可能不存在)
@@ -1924,11 +1988,16 @@
             if (!favs2.length) return {data:[],count:0};
             var ids2 = favs2.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
             countParams += '&video_id=in.('+ids2+')';
+        } else if(activeSection === 'history') {
+            var hist2 = getHistory();
+            if (!hist2.length) return {data:[],count:0};
+            var hids2 = hist2.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
+            countParams += '&video_id=in.('+hids2+')';
         } else if(q&&q.trim()){
             var t2=encodeURIComponent(q.trim());
             countParams+='&or=(title.ilike.*'+t2+'*,author.ilike.*'+t2+'*)';
         }
-        if(activeSection && activeSection !== 'favs') countParams+='&source_section=eq.'+encodeURIComponent(activeSection);
+        if(activeSection && activeSection !== 'favs' && activeSection !== 'history') countParams+='&source_section=eq.'+encodeURIComponent(activeSection);
         if(activeAuthor) countParams+='&author=eq.'+encodeURIComponent(activeAuthor);
         // 可播放性筛选: 客户端过滤 (has_mp4 列可能不存在)
         countParams+='&limit=1';
@@ -1972,6 +2041,13 @@
 
     function hideSkeletons(){$skel.style.display='none';}
 
+    // 从 v 中提取 MP4 预览 URL (仅缓存命中)
+    function getPreviewMp4(v) {
+        var dur = v.duration || '';
+        if (dur.indexOf('http') === 0 && (dur.indexOf('.mp4') >= 0 || dur.indexOf('video.twimg.com') >= 0)) return dur;
+        return null;
+    }
+
     function card(v){
         var c=document.createElement('div');c.className='vid-card';
         // 可播放性标记
@@ -1979,6 +2055,9 @@
         var needsRescrape = v.needs_rescrape === true || isInRescrapeList(v.video_id);
         if(!hasMp4) c.classList.add('unplayable');
         if(needsRescrape && !hasMp4) c.classList.add('needs-rescrape');
+        // 预览 MP4
+        var previewMp4 = getPreviewMp4(v);
+        if (previewMp4) c.classList.add('has-mp4');
         // duration 字段: 可能是真实时长, 也可能是 URL (爬虫复用来存 redirect/resolved URL)
         var isRedirectUrl = v.duration && v.duration.indexOf('http') === 0;
         var dur = (v.duration && !isRedirectUrl) ? '<span class="vid-duration">' + esc(v.duration) + '</span>' : '';
@@ -2008,8 +2087,13 @@
         else if(!hasMp4) statusLabel = '<span style="color:#f87171;font-size:9px;margin-left:4px;" title="无法播放">⚠️</span>';
         else statusLabel = '<span style="color:#4ade80;font-size:9px;margin-left:4px;" title="可播放">✅</span>';
 
+        // 预览 video 元素 (悬停时播放前3秒)
+        var previewVideoHtml = previewMp4
+            ? '<video class="vid-preview-video loading" muted playsinline preload="none" disablepictureinpicture></video><div class="preview-spinner"></div>'
+            : '';
+
         c.innerHTML =
-            '<div class="vid-thumb">' + imgHtml + dur + favBtnHtml +
+            '<div class="vid-thumb">' + imgHtml + previewVideoHtml + dur + favBtnHtml +
             '<div class="vid-play-overlay"><div class="play-icon"></div></div>' +
             '<div class="vid-noimg" style="' + noImgDisplay + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>' +
             '<div class="vid-body"><div class="vid-title">' + esc(v.title || v.video_id) + '</div>' +
@@ -2019,19 +2103,74 @@
             '<button class="vid-copy" onclick="event.stopPropagation();markForRescrape(\'' + esc(v.video_id) + '\',this)" title="标记重爬">🔄</button>' +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
 
+        // === 悬停预览 (桌面端: 鼠标悬停播放前3秒) ===
+        if (previewMp4) {
+            var previewVideo = c.querySelector('.vid-preview-video');
+            var previewTimer = null;
+
+            function startPreview() {
+                if (!previewVideo.src) {
+                    previewVideo.src = previewMp4 + '#t=0.1';
+                    previewVideo.load();
+                    previewVideo.classList.add('loading');
+                }
+                previewVideo.currentTime = 0;
+                previewVideo.muted = true;
+                previewVideo.play().then(function() {
+                    previewVideo.classList.remove('loading');
+                }).catch(function() {});
+                // 3 秒后渐隐
+                previewTimer = setTimeout(function() {
+                    previewVideo.pause();
+                }, 3500);
+            }
+
+            function stopPreview() {
+                clearTimeout(previewTimer);
+                previewVideo.pause();
+                previewVideo.classList.add('loading');
+            }
+
+            c.addEventListener('mouseenter', startPreview);
+            c.addEventListener('mouseleave', stopPreview);
+
+            // 移动端长按预览
+            var pressTimer2;
+            c.addEventListener('touchstart', function(e) {
+                if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
+                pressTimer2 = setTimeout(function() {
+                    c.classList.add('vid-press');
+                    startPreview();
+                }, 400);
+            }, {passive: true});
+            c.addEventListener('touchend', function() {
+                clearTimeout(pressTimer2);
+                c.classList.remove('vid-press');
+                stopPreview();
+            });
+            c.addEventListener('touchmove', function() {
+                clearTimeout(pressTimer2);
+                c.classList.remove('vid-press');
+                stopPreview();
+            });
+        }
+
         // 点击: 内联展开播放器 (紧挨卡片下方)
         c.addEventListener('click', function(e) {
             if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav') || e.target.closest('.vid-author')) return;
+            addToHistory(v.video_id);
             showInlinePlayer(v, c);
         });
-        // 移动端长按显示播放图标
+        // 移动端长按显示播放图标 (无 MP4 预览时)
         var pressTimer;
-        c.addEventListener('touchstart', function(e) {
-            if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
-            pressTimer = setTimeout(function() { c.classList.add('vid-press'); }, 300);
-        }, {passive: true});
-        c.addEventListener('touchend', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
-        c.addEventListener('touchmove', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
+        if (!previewMp4) {
+            c.addEventListener('touchstart', function(e) {
+                if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav')) return;
+                pressTimer = setTimeout(function() { c.classList.add('vid-press'); }, 300);
+            }, {passive: true});
+            c.addEventListener('touchend', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
+            c.addEventListener('touchmove', function() { clearTimeout(pressTimer); c.classList.remove('vid-press'); });
+        }
         return c;
     }
 
@@ -2106,7 +2245,8 @@
                 r.data = r.data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
             }
             total=r.count;
-            if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
+            if(activeSection === 'history') $stat.innerHTML='🕐 <b>观看历史</b> — 共 '+total.toLocaleString()+' 个视频 <button onclick="clearHistory()" style="margin-left:8px;padding:2px 8px;border-radius:4px;border:1px solid #f87171;background:transparent;color:#f87171;cursor:pointer;font-size:10px;">清空历史</button>';
+            else if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
             else {
                 var playableCount = r.data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
                 var unplayableCount = r.data.length - playableCount;
@@ -2121,6 +2261,17 @@
             if (pi) pi.textContent = '第 ' + page + '/' + (maxPage||1) + ' 页';
             if (pb) pb.style.display = page > 1 ? '' : 'none';
             if (nb) nb.style.display = page < maxPage ? '' : 'none';
+            // 观看历史: 按观看顺序排列 (最近观看在前)
+            if(activeSection === 'history' && r.data.length) {
+                var histOrder = getHistory();
+                var orderMap = {};
+                for (var oi = 0; oi < histOrder.length; oi++) orderMap[histOrder[oi]] = oi;
+                r.data.sort(function(a, b) {
+                    var oa = orderMap[a.video_id] !== undefined ? orderMap[a.video_id] : 999999;
+                    var ob = orderMap[b.video_id] !== undefined ? orderMap[b.video_id] : 999999;
+                    return oa - ob;
+                });
+            }
             hideSkeletons();
             render(r.data,page>1);
             if(reset) fetchLastScrape();
@@ -2145,12 +2296,24 @@
                 r.data = r.data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
             }
             total=r.count;
-            if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
+            if(activeSection === 'history') $stat.innerHTML='🕐 <b>观看历史</b> — 共 '+total.toLocaleString()+' 个视频 <button onclick="clearHistory()" style="margin-left:8px;padding:2px 8px;border-radius:4px;border:1px solid #f87171;background:transparent;color:#f87171;cursor:pointer;font-size:10px;">清空历史</button>';
+            else if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
             else {
                 var pc2 = r.data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
                 var uc2 = r.data.length - pc2;
                 var fl2 = playableFilter==='all' ? '' : (playableFilter==='playable' ? ' [仅可播]' : ' [仅失效]');
                 $stat.innerHTML = '共 ' + total.toLocaleString() + ' 个视频' + fl2 + ' | <span style="color:#4ade80;">✅'+pc2+'</span> <span style="color:#f87171;">⚠️'+uc2+'</span>';
+            }
+            // 观看历史: 按观看顺序排列
+            if(activeSection === 'history' && r.data.length) {
+                var histOrder2 = getHistory();
+                var orderMap2 = {};
+                for (var oi2 = 0; oi2 < histOrder2.length; oi2++) orderMap2[histOrder2[oi2]] = oi2;
+                r.data.sort(function(a, b) {
+                    var oa2 = orderMap2[a.video_id] !== undefined ? orderMap2[a.video_id] : 999999;
+                    var ob2 = orderMap2[b.video_id] !== undefined ? orderMap2[b.video_id] : 999999;
+                    return oa2 - ob2;
+                });
             }
             render(r.data,true);
         }catch(e){toast('加载失败: '+e.message);page--;}
@@ -2492,6 +2655,7 @@
     // ============ 启动 ============
     initGame();
     updateFavsBadge();
+    updateHistBadge();
 
     // iOS 独立模式检测
     if (window.navigator.standalone) {
