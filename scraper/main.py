@@ -348,22 +348,25 @@ async def resolve_all_mp4(videos: list[dict]) -> dict[str, str]:
 # ========== Supabase 操作 ==========
 
 def supabase_save(videos: list[dict]) -> int:
-    """批量 upsert 到 Supabase, 自动兼容新旧表结构"""
+    """通过 RPC upsert_videos 批量 upsert (ON CONFLICT video_id)
+    回退方案: 如果 RPC 不可用, 用旧 merge-duplicates
+    """
     if not videos:
         return 0
+    import httpx as hx
     now = datetime.now(timezone.utc).isoformat()
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": "Bearer " + SUPABASE_KEY,
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
     }
 
     records = []
     for v in videos:
         mp4 = v.get("duration", "") or ""
         has_mp4 = bool(mp4 and mp4.startswith("http") and "video.twimg.com" in mp4)
-        rec = {
+
+        records.append({
             "video_id": v["video_id"],
             "title": (v["title"][:500] if v.get("title") else ""),
             "thumbnail_url": (v["thumbnail"][:1000] if v.get("thumbnail") else ""),
@@ -375,42 +378,71 @@ def supabase_save(videos: list[dict]) -> int:
             "source_page": (v.get("source_page") or "")[:500],
             "source_section": (v.get("source_section") or "")[:50],
             "scraped_at": now,
-            "updated_at": now,
             "has_mp4": has_mp4,
             "needs_rescrape": not has_mp4,
             "mp4_checked_at": now,
-        }
-        records.append(rec)
+        })
 
     saved = 0
-    client = httpx.Client(timeout=30)
-    _new_cols_ok = True
+    client = hx.Client(timeout=60)
 
-    def _strip(rec):
-        for k in ("has_mp4", "needs_rescrape", "mp4_checked_at", "playable"):
-            rec.pop(k, None)
-        return rec
+    def _save_via_rpc(batch):
+        """通过 upsert_videos RPC 函数保存"""
+        resp = client.post(
+            SUPABASE_URL + "/rest/v1/rpc/upsert_videos",
+            headers=headers,
+            json={"videos": batch}
+        )
+        return resp.status_code in (200, 201, 204)
 
-    try:
-        for i in range(0, len(records), BATCH_SIZE):
-            batch = records[i:i + BATCH_SIZE]
+    def _save_via_rest(batch):
+        """回退: 用旧 merge-duplicates (有问题但作为备选)"""
+        rest_headers = {**headers, "Prefer": "resolution=merge-duplicates"}
+        resp = client.post(
+            SUPABASE_URL + "/rest/v1/videos",
+            headers=rest_headers,
+            json=batch
+        )
+        return resp.status_code in (200, 201)
+
+    # 分批处理
+    use_rpc = True
+    for i in range(0, len(records), BATCH_SIZE):
+        batch = records[i:i + BATCH_SIZE]
+        ok = False
+
+        if use_rpc:
             try:
-                resp = client.post(SUPABASE_URL + "/rest/v1/videos", headers=headers, json=batch)
-                if resp.status_code in (200, 201, 409):
-                    saved += len(batch)
-                elif resp.status_code == 400 and _new_cols_ok and "column" in resp.text.lower():
-                    log("  数据库无新列, 自动兼容旧表...", "DEBUG")
-                    _new_cols_ok = False
-                    batch = [_strip(r) for r in batch]
-                    resp2 = client.post(SUPABASE_URL + "/rest/v1/videos", headers=headers, json=batch)
-                    if resp2.status_code in (200, 201, 409):
-                        saved += len(batch)
-                else:
-                    log(f"  Supabase {resp.status_code}: {resp.text[:80]}", "WARN")
+                ok = _save_via_rpc(batch)
+                if not ok:
+                    # RPC 可能不存在, 回退
+                    log("  RPC 不可用, 回退到 REST upsert...", "DEBUG")
+                    use_rpc = False
+            except Exception:
+                use_rpc = False
+
+        if not use_rpc:
+            try:
+                ok = _save_via_rest(batch)
             except Exception as e:
-                log(f"  Supabase 异常: {e}", "WARN")
-    finally:
-        client.close()
+                log(f"  Supabase 保存异常: {e}", "WARN")
+
+        if ok:
+            saved += len(batch)
+        else:
+            # 逐条重试
+            for rec in batch:
+                try:
+                    if use_rpc:
+                        ok2 = _save_via_rpc([rec])
+                    else:
+                        ok2 = _save_via_rest([rec])
+                    if ok2:
+                        saved += 1
+                except Exception:
+                    pass
+
+    client.close()
     return saved
 
 
