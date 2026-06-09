@@ -1,5 +1,5 @@
 """
-monsnode 爬虫 v6 — 真实浏览器导航方案
+monsnode 爬虫 v7 — 全自动闭环
   - Playwright 真实导航访问列表页面 (像真人浏览)
   - MP4 解析: 多 tab 并发真实导航到 twjn.php 页面 (不是 JS fetch)
   - 所有请求都是真实页面导航, Cloudflare 不会拦截
@@ -94,6 +94,69 @@ EXTRACT_CARDS_JS = """
 
 
 # ========== Supabase ==========
+
+def supabase_fetch_failed(limit: int = 100) -> list[dict]:
+    """查询 needs_rescrape=true 且有 monsnode_video_id 的视频"""
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+    }
+    client = httpx.Client(timeout=30)
+    try:
+        url = (
+            SUPABASE_URL + "/rest/v1/videos"
+            "?select=video_id,monsnode_video_id"
+            "&needs_rescrape=is.true"
+            "&monsnode_video_id=not.is.null"
+            "&order=created_at.desc"
+            "&limit=" + str(limit)
+        )
+        resp = client.get(url, headers=headers)
+        if resp.status_code == 200:
+            return resp.json()
+        return []
+    except Exception as e:
+        log(f"查询失败视频异常: {e}", "WARN")
+        return []
+    finally:
+        client.close()
+
+
+def supabase_update_mp4(updates: dict[str, str | None]) -> int:
+    """批量更新视频 MP4: {monsnode_video_id: mp4_url_or_None}"""
+    if not updates:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json",
+    }
+    saved = 0
+    client = httpx.Client(timeout=30)
+    for mid, mp4 in updates.items():
+        video_id = "v" + mid
+        has_mp4 = bool(mp4 and "video.twimg.com" in mp4)
+        patch = {
+            "mp4_checked_at": now,
+            "needs_rescrape": not has_mp4,
+        }
+        if has_mp4:
+            patch["duration"] = mp4[:500]
+            patch["has_mp4"] = True
+        try:
+            resp = client.patch(
+                SUPABASE_URL + "/rest/v1/videos?video_id=eq." + video_id,
+                headers=headers,
+                json=patch,
+            )
+            if resp.status_code in (200, 204):
+                saved += 1
+        except Exception:
+            pass
+    client.close()
+    return saved
+
 
 def supabase_save(videos: list[dict]) -> int:
     if not videos:
@@ -201,6 +264,9 @@ async def scrape_all():
         "videos_found": 0,
         "videos_saved": 0,
         "mp4_resolved": 0,
+        "rescrape_candidates": 0,
+        "rescrape_resolved": 0,
+        "rescrape_updated": 0,
         "errors": [],
     }
 
@@ -326,6 +392,39 @@ async def scrape_all():
         stats["videos_saved"] = saved
         log(f"保存 {saved} ({time.time()-t2:.0f}s)")
 
+        # 阶段 4: 自动回爬 — 修复旧视频中未解析到 MP4 的
+        log("\n[阶段4] 查询数据库中未解析 MP4 的旧视频...")
+        failed = supabase_fetch_failed(limit=100)
+        stats["rescrape_candidates"] = len(failed)
+        if failed:
+            # 排除本轮刚解析过的 mid
+            already_resolved = set(all_targets.keys()) & {v["monsnode_video_id"] for v in failed}
+            to_rescrape = {v["monsnode_video_id"]: v for v in failed if v["monsnode_video_id"] not in already_resolved}
+            log(f"  候选: {len(failed)}, 本轮已解析: {len(already_resolved)}, 需回爬: {len(to_rescrape)}")
+
+            if to_rescrape:
+                mids = list(to_rescrape.keys())
+                t3 = time.time()
+                all_rescraped_mp4 = {}
+                for batch_start in range(0, len(mids), MP4_TAB_CONCURRENCY * 5):
+                    batch = mids[batch_start:batch_start + MP4_TAB_CONCURRENCY * 5]
+                    batch_results = await resolve_mp4_batch(context, batch)
+                    all_rescraped_mp4.update(batch_results)
+                    done = min(batch_start + MP4_TAB_CONCURRENCY * 5, len(mids))
+                    log(f"  回爬 {done}/{len(mids)} → {len(all_rescraped_mp4)} MP4 ({time.time()-t3:.0f}s)")
+
+                # 标记失败的 (无 MP4 的也更新, 避免下轮重复查询)
+                all_updates = {}
+                for mid in mids:
+                    all_updates[mid] = all_rescraped_mp4.get(mid)
+
+                updated = supabase_update_mp4(all_updates)
+                stats["rescrape_resolved"] = len(all_rescraped_mp4)
+                stats["rescrape_updated"] = updated
+                log(f"  回爬完成: 更新 {updated} 条, 其中 {len(all_rescraped_mp4)} 个解析成功 ({time.time()-t3:.0f}s)")
+        else:
+            log("  无待回爬视频")
+
     finally:
         await context.close()
         await browser.close()
@@ -352,6 +451,11 @@ def main():
     print(f"  板块: {stats['sections_crawled']}  页面: {stats['pages_crawled']}")
     print(f"  发现: {stats['videos_found']}  MP4: {stats['mp4_resolved']} ({mp4_rate:.0f}%)")
     print(f"  保存: {stats['videos_saved']}")
+    rc = stats.get('rescrape_candidates', 0)
+    if rc:
+        rr = stats.get('rescrape_resolved', 0)
+        ru = stats.get('rescrape_updated', 0)
+        print(f"  回爬: 候选 {rc} → 修复 {rr} → 更新 {ru}")
     if stats["errors"]:
         print(f"  错误 ({len(stats['errors'])}):")
         for e in stats["errors"][:5]:
