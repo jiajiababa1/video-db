@@ -27,6 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_videos_needs_rescrape ON videos(needs_rescrape);
 --    解决 merge-duplicates 只认主键 id 的问题
 --    这个函数用 video_id 的 UNIQUE 约束做冲突检测
 -- ═══════════════════════════════════════════
+DROP FUNCTION IF EXISTS upsert_videos(jsonb);
 CREATE OR REPLACE FUNCTION upsert_videos(videos jsonb) RETURNS void AS $$
 DECLARE
   v jsonb;
@@ -82,6 +83,7 @@ GRANT EXECUTE ON FUNCTION upsert_videos(jsonb) TO service_role;
 -- ═══════════════════════════════════════════
 -- 5. 批量标记重爬函数
 -- ═══════════════════════════════════════════
+DROP FUNCTION IF EXISTS mark_rescrape(TEXT[]);
 CREATE OR REPLACE FUNCTION mark_rescrape(video_ids TEXT[]) RETURNS void AS $$
 BEGIN
   UPDATE videos SET needs_rescrape = true, updated_at = NOW()
