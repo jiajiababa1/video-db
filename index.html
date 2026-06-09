@@ -1212,7 +1212,7 @@
     function showAuthOverlay() {
         authOverlay.classList.remove('hidden');
         allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
-        authHintEl.innerHTML = '在 iOS 快捷指令中查看当前密码';
+        authHintEl.innerHTML = '<a href="totp.html" target="_blank" style="color:var(--vprimary);text-decoration:none;">🔗 打开密码生成器</a>';
         authD1.focus();
     }
 
@@ -1561,15 +1561,40 @@
         video.setAttribute('disablePictureInPicture', 'true');
         video.onerror = function() {
             var parent = video.parentElement;
-            if (parent) {
-                parent.innerHTML = '<div style="width:100%;padding:60px 20px;text-align:center;color:#c08080;font-size:14px;">视频加载失败<br><span style="font-size:11px;color:#6b6760;">可能已被删除或设为私密</span><br><button onclick="var v=currentInlineVideo;if(v)markForRescrape(v.video_id,this)" style="margin-top:8px;padding:4px 12px;border-radius:4px;border:1px solid #c08080;background:transparent;color:#c08080;cursor:pointer;font-size:11px;">🔄 标记重爬</button></div>';
-            }
+            if (parent) renderVideoError(parent, '视频加载失败', '可能已被删除或设为私密');
         };
         video.play().catch(function() {
             video.muted = true;
             video.play().catch(function() {});
         });
         return video;
+    }
+
+    function renderVideoError(wrap, title, detail) {
+        var v = currentInlineVideo;
+        // 自动标记为需要重爬
+        if (v && v.video_id) {
+            try {
+                fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
+                    method: 'PATCH', headers: _h(),
+                    body: JSON.stringify({ needs_rescrape: true, updated_at: new Date().toISOString() })
+                }).catch(function(){});
+            } catch(e) {}
+        }
+        var monsnodeId = (v && v.monsnode_video_id) ? v.monsnode_video_id : '';
+        var monsnodeUrl = monsnodeId ? 'https://monsnode.com/twjn.php?v=' + monsnodeId : '';
+        var html = '<div style="width:100%;padding:48px 24px;text-align:center;border:1px solid #1c1a16;border-radius:2px;background:#0a0a0e;">';
+        html += '<div style="font-size:32px;margin-bottom:12px;">⚠️</div>';
+        html += '<div style="font-size:14px;color:#c08080;font-weight:600;margin-bottom:4px;font-family:var(--font-sans);">' + esc(title) + '</div>';
+        html += '<div style="font-size:11px;color:#6b6760;margin-bottom:20px;">' + esc(detail) + '</div>';
+        html += '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">';
+        html += '<button onclick="event.stopPropagation();showInlinePlayer(currentInlineVideo,currentInlineCard)" style="padding:7px 16px;border-radius:2px;border:1px solid var(--vprimary);background:var(--vprimary);color:#1a1808;cursor:pointer;font-size:11px;font-family:var(--font-mono);">🔄 重试</button>';
+        if (monsnodeUrl) {
+            html += '<button onclick="event.stopPropagation();window.open(\'' + esc(monsnodeUrl) + '\',\'_blank\')" style="padding:7px 16px;border-radius:2px;border:1px solid #1c1a16;background:transparent;color:#6b6760;cursor:pointer;font-size:11px;font-family:var(--font-mono);">↗ 原站查看</button>';
+        }
+        html += '<button onclick="event.stopPropagation();var v_=currentInlineVideo;if(v_){markForRescrape(v_.video_id,this);var b=this;b.textContent=\'✓ 已标记\';b.style.color=\'var(--vprimary)\';setTimeout(function(){b.textContent=\'🔄 标记重爬\';b.style.color=\'#6b6760\';},2000);}" style="padding:7px 16px;border-radius:2px;border:1px solid #1c1a16;background:transparent;color:#6b6760;cursor:pointer;font-size:11px;font-family:var(--font-mono);">🔄 标记重爬</button>';
+        html += '</div></div>';
+        wrap.innerHTML = html;
     }
 
     // ============ 内联视频播放器 (卡片展开, 紧挨卡片) ============
@@ -1626,7 +1651,7 @@
                 currentInlineMp4 = result.mp4Url;
                 updateInlineBtns(player, result.mp4Url, v);
             } else {
-                wrap.innerHTML = '<div style="padding:40px;text-align:center;color:#6b6760;">⚠️ 暂无可用视频源<br><small style="color:#6b6760;">点击原站链接在 monsnode 查看</small></div>';
+                renderVideoError(wrap, '暂无可用视频源', '点击原站链接在 monsnode 查看');
             }
             if (result.mp4Url && v.video_id) {
                 try {
@@ -1646,7 +1671,7 @@
                 } catch(e) {}
             }
         }).catch(function() {
-            wrap.innerHTML = '<div style="padding:40px;text-align:center;color:#c08080;">网络错误<br><small style="color:#6b6760;">请检查网络后重试</small><br><button onclick="showInlinePlayer(currentInlineVideo,currentInlineCard)" style="margin-top:8px;padding:6px 16px;border-radius:6px;border:1px solid var(--vprimary);background:var(--vprimary);color:#1a1808;cursor:pointer;font-size:12px;">🔄 重试</button></div>';
+            renderVideoError(wrap, '网络错误', '请检查网络后重试');
         });
     }
 
@@ -1658,7 +1683,7 @@
         video.setAttribute('playsinline', '');
         video.setAttribute('webkit-playsinline', '');
         video.setAttribute('x5-video-player-type', 'h5');
-        video.style.cssText = 'width:100%;max-height:50vh;max-height:50dvh;background:#000;border-radius:8px;display:block;';
+        video.style.cssText = 'width:100%;max-height:50vh;max-height:50dvh;background:#000;border-radius:2px;display:block;';
         wrap.innerHTML = '';
         wrap.appendChild(video);
         video.play().catch(function() { video.muted = true; video.play().catch(function(){}); });

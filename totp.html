@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#08080a">
+    <title>动态密码</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background:#08080a; color:#e4e0d8;
+            font-family:Georgia,'Times New Roman','Noto Serif SC',serif;
+            display:flex; align-items:center; justify-content:center;
+            min-height:100vh; text-align:center; padding:24px;
+            -webkit-tap-highlight-color:transparent;
+        }
+        .wrap { max-width:340px; width:100%; }
+        .icon { font-size:48px; margin-bottom:20px; }
+        h1 { font-size:14px; font-weight:400; color:#6b6760; margin-bottom:8px; letter-spacing:2px; text-transform:uppercase; font-family:'SF Mono','Fira Code',monospace; }
+        .sub { font-size:11px; color:#6b6760; margin-bottom:32px; opacity:0.7; }
+        .code {
+            font-size:80px; font-weight:700; letter-spacing:18px;
+            color:#c8a45c; font-family:'SF Mono','Fira Code',monospace;
+            margin-bottom:16px; text-indent:18px; line-height:1;
+        }
+        .timer { font-size:11px; color:#6b6760; margin-bottom:28px; font-family:'SF Mono','Fira Code',monospace; }
+        .timer .bar {
+            display:inline-block; width:200px; height:2px; background:#1c1a16;
+            border-radius:1px; overflow:hidden; vertical-align:middle; margin-left:10px;
+        }
+        .timer .bar .fill {
+            height:100%; background:#c8a45c; border-radius:1px;
+            transition:width 1s linear;
+        }
+        .btn {
+            display:block; width:100%; padding:14px; border-radius:2px;
+            border:1px solid #c8a45c; font-size:14px; font-weight:600; cursor:pointer;
+            transition:all 0.25s; margin-bottom:10px;
+            font-family:'SF Mono','Fira Code',monospace; letter-spacing:0.5px;
+        }
+        .btn.copy {
+            background:#c8a45c; color:#1a1808;
+        }
+        .btn.copy:hover { background:#d4b46e; }
+        .btn.copy:active { transform:scale(0.97); }
+        .btn.copy.copied { background:#5a7a5a; border-color:#5a7a5a; color:#e4e0d8; }
+        .btn.back {
+            background:transparent; color:#6b6760; border-color:#1c1a16;
+        }
+        .btn.back:hover { color:#e4e0d8; border-color:#c8a45c; }
+        .hint { font-size:11px; color:#6b6760; margin-top:14px; line-height:1.6; opacity:0.7; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="icon">🔐</div>
+    <h1>当前动态密码</h1>
+    <p class="sub">5 分钟自动更换</p>
+    <div class="code" id="code">----</div>
+    <div class="timer">
+        剩余 <span id="remaining">--</span>
+        <span class="bar"><span class="fill" id="barFill" style="width:100%"></span></span>
+    </div>
+    <button class="btn copy" id="copyBtn" onclick="doCopy()">📋 点此复制密码</button>
+    <button class="btn back" onclick="window.close();">← 返回</button>
+    <p class="hint">复制后切换到视频库页面<br>在密码框中粘贴即可</p>
+</div>
+<script>
+// 与 index.html 完全一致的 TOTP 算法
+var S1 = 1046;      // "MONS2026NODEKEY" ASCII 和
+var P1 = 7919;      // 大质数1
+var P2 = 6271;      // 大质数2
+var M  = 6559466;   // S1 * P2
+var STEP = 300;     // 5 分钟
+
+function generateTOTP() {
+    var timeWindow = Math.floor(Date.now() / 1000 / STEP);
+    var code = ((timeWindow + S1) * P1 + timeWindow * M) % 10000;
+    return code;
+}
+
+var currentCode = '';
+
+function updateTimer() {
+    var now = Math.floor(Date.now() / 1000);
+    var remaining = STEP - (now % STEP);
+    var pct = (remaining / STEP * 100).toFixed(1);
+    document.getElementById('remaining').textContent =
+        Math.floor(remaining / 60) + '分' + String(remaining % 60).padStart(2,'0') + '秒';
+    document.getElementById('barFill').style.width = pct + '%';
+}
+
+function refresh() {
+    var code = generateTOTP();
+    var codeStr = String(code).padStart(4, '0');
+    if (codeStr !== currentCode) {
+        currentCode = codeStr;
+        document.getElementById('code').textContent = currentCode;
+        var btn = document.getElementById('copyBtn');
+        btn.textContent = '📋 点此复制密码';
+        btn.classList.remove('copied');
+    }
+    updateTimer();
+}
+
+function doCopy() {
+    if (!currentCode || currentCode === '----') return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(currentCode).then(function() {
+            var btn = document.getElementById('copyBtn');
+            btn.textContent = '✓ 已复制: ' + currentCode;
+            btn.classList.add('copied');
+        }).catch(fallbackCopy);
+    } else {
+        fallbackCopy();
+    }
+}
+
+function fallbackCopy() {
+    var ta = document.createElement('textarea');
+    ta.value = currentCode;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try {
+        document.execCommand('copy');
+        var btn = document.getElementById('copyBtn');
+        btn.textContent = '✓ 已复制: ' + currentCode;
+        btn.classList.add('copied');
+    } catch(e) {}
+    document.body.removeChild(ta);
+}
+
+refresh();
+setInterval(refresh, 5000);
+setInterval(updateTimer, 1000);
+</script>
+</body>
+</html>
