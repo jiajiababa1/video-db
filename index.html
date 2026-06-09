@@ -2,13 +2,14 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
     <meta name="referrer" content="no-referrer">
     <meta name="theme-color" content="#faf8ef" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0a0a0e" media="(prefers-color-scheme: dark)">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="VideoDB">
+    <meta name="format-detection" content="telephone=no">
     <link rel="apple-touch-icon" sizes="180x180" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect fill='%23faf8ef' width='180' height='180' rx='36'/><text x='90' y='120' text-anchor='middle' font-family='Arial' font-size='76' font-weight='bold' fill='%23f65e3b'>2048</text></svg>">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect fill='%23f65e3b' width='32' height='32' rx='6'/><text x='16' y='23' text-anchor='middle' font-family='Arial' font-size='14' font-weight='bold' fill='white'>2</text></svg>">
     <title>2048 在线小游戏</title>
@@ -24,15 +25,21 @@
         body {
             font-family: "Clear Sans","Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
             background: var(--bg); color: var(--text); min-height: 100vh;
+            min-height: 100dvh;
             -webkit-tap-highlight-color: transparent; user-select: none;
             overflow-x: hidden; transition: background 0.4s, color 0.4s;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            overscroll-behavior: none;
+            -webkit-overflow-scrolling: touch;
+            padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
         }
 
         /* ============ 页面切换 ============ */
         .view-game, .view-video { transition: opacity 0.4s, transform 0.4s, visibility 0s 0.4s; }
         body.dark-mode .view-game { opacity:0; pointer-events:none; transform:scale(0.95); visibility:hidden; }
         body.dark-mode .view-video { opacity:1; pointer-events:auto; transform:scale(1); visibility:visible; }
-        .view-video { opacity:0; pointer-events:none; transform:scale(0.95); visibility:hidden; position:fixed; inset:0; overflow-y:auto; }
+        .view-video { opacity:0; pointer-events:none; transform:scale(0.95); visibility:hidden; position:fixed; inset:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain; }
         .view-game { opacity:1; transform:scale(1); visibility:visible; }
 
         /* ============ 游戏视图 ============ */
@@ -83,6 +90,8 @@
             padding:12px; display:grid; grid-template-columns:repeat(4,1fr);
             gap:12px; aspect-ratio:1; box-shadow:0 8px 0 #9b8b7b,0 10px 24px rgba(0,0,0,0.15);
             touch-action:none;
+            -webkit-user-select:none; user-select:none;
+            -webkit-touch-callout:none;
         }
         .cell {
             background:var(--cell-empty); border-radius:4px; display:flex;
@@ -146,7 +155,8 @@
         .vid-header {
             position:sticky; top:0; z-index:50; background:var(--vheader);
             backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-            border-bottom:1px solid #1e1e24; padding:10px 16px;
+            border-bottom:1px solid #1e1e24;
+            padding:calc(10px + env(safe-area-inset-top, 0px)) 16px 10px 16px;
         }
         .vid-header-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .vid-logo { font-size:16px; font-weight:700; color:#e4e4e7; white-space:nowrap; flex-shrink:0; cursor:pointer; }
@@ -210,6 +220,7 @@
             background:var(--vcard); border-radius:10px; overflow:hidden;
             border:1px solid var(--vborder); cursor:pointer; display:flex; flex-direction:column;
             transition:all 0.25s; position:relative;
+            -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
         }
         .vid-card:hover { transform:translateY(-4px); border-color:var(--vprimary); box-shadow:0 8px 24px rgba(99,102,241,0.12); }
         .vid-card:active { transform:scale(0.98); }
@@ -304,22 +315,24 @@
 
         /* ============ 回到顶部按钮 ============ */
         .scroll-top {
-            position:fixed; bottom:24px; right:24px; z-index:100;
+            position:fixed; bottom:calc(24px + env(safe-area-inset-bottom, 0px)); right:24px; z-index:100;
             width:40px; height:40px; border-radius:50%; background:#1e1e24;
             border:1px solid #2a2a32; color:#a1a1aa; cursor:pointer;
             display:flex; align-items:center; justify-content:center;
             font-size:18px; transition:all 0.25s; opacity:0; transform:translateY(10px);
             pointer-events:none; box-shadow:0 4px 12px rgba(0,0,0,0.4);
+            -webkit-tap-highlight-color:transparent;
         }
         .scroll-top.visible { opacity:1; transform:translateY(0); pointer-events:auto; }
         .scroll-top:hover { background:#2a2a32; color:#fff; border-color:#444; }
 
         /* ============ Toast ============ */
         .toast {
-            position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+            position:fixed; bottom:calc(24px + env(safe-area-inset-bottom, 0px)); left:50%; transform:translateX(-50%);
             background:#1e1e24; color:#d4d4d8; padding:10px 20px; border-radius:10px;
             font-size:12px; z-index:999; opacity:0; transition:opacity 0.3s;
             border:1px solid #2a2a32; pointer-events:none; white-space:nowrap;
+            max-width:90vw; overflow:hidden; text-overflow:ellipsis;
         }
         .toast.on { opacity:1; }
 
@@ -341,6 +354,7 @@
             display:flex; align-items:center; justify-content:center;
             opacity:0; pointer-events:none; transition:opacity 0.35s;
             backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+            -webkit-tap-highlight-color:transparent;
         }
         .vid-modal-overlay.on { opacity:1; pointer-events:auto; }
         .vid-modal {
@@ -401,6 +415,8 @@
             text-align:center; outline:none; font-family:"SF Mono","Fira Code",monospace;
             transition:border-color 0.2s,box-shadow 0.2s; caret-color:transparent;
             -webkit-appearance:none; -moz-appearance:textfield;
+            -webkit-user-select:text; user-select:text;
+            ime-mode:disabled;
         }
         .auth-digit:focus { border-color:var(--vprimary); box-shadow:0 0 0 3px rgba(99,102,241,0.2); }
         .auth-digit.error { border-color:#f87171; animation:shake 0.4s; }
@@ -439,6 +455,9 @@
             border-right:1px solid #1a1a22; transform:translateX(-100%);
             transition:transform 0.3s cubic-bezier(0.4,0,0.2,1);
             display:flex; flex-direction:column; overflow-y:auto;
+            padding-top:env(safe-area-inset-top, 0px);
+            padding-bottom:env(safe-area-inset-bottom, 0px);
+            -webkit-overflow-scrolling:touch;
         }
         .sidebar.on { transform:translateX(0); }
         .sidebar-head {
@@ -549,14 +568,22 @@
             background:transparent; color:#a1a1aa; cursor:pointer; font-size:12px;
         }
 
+        /* iOS 独立模式 (添加到主屏幕) */
+        html.ios-standalone .vid-header { padding-top:calc(16px + env(safe-area-inset-top, 0px)); }
+        html.ios-standalone .vid-back { display:none; }
+        html.ios-standalone .vid-logo { font-size:18px; }
+
+        /* iOS 独立模式 — 游戏视图适配 */
+        html.ios-standalone .game-wrapper { padding-top:calc(32px + env(safe-area-inset-top, 0px)); }
+
         @media (max-width:640px) {
             .game-logo { font-size:48px; }
             .board { max-width:320px; gap:8px; padding:8px; }
             .cell { font-size:24px; }
             .cell-128,.cell-256,.cell-512 { font-size:20px; }
             .cell-1024,.cell-2048,.cell-super { font-size:14px; }
-            .game-wrapper { padding:16px 10px; }
-            .vid-header { padding:8px 10px; }
+            .game-wrapper { padding:16px 10px; padding-top:calc(16px + env(safe-area-inset-top, 0px)); padding-bottom:calc(16px + env(safe-area-inset-bottom, 0px)); }
+            .vid-header { padding:calc(8px + env(safe-area-inset-top, 0px)) 10px 8px 10px; }
             .vid-header-top { gap:6px; }
             .vid-grid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
             .vid-grid.compact { grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:8px; }
@@ -564,14 +591,16 @@
             .vid-title { font-size:11px; }
             .vid-tabs { padding:8px 10px 0; }
             .vid-tab { padding:5px 12px; font-size:11px; }
-            .scroll-top { bottom:16px; right:16px; width:36px; height:36px; font-size:16px; }
-            .vid-modal { width:96vw; max-height:85vh; border-radius:10px; }
+            .vid-main { padding-bottom:calc(40px + env(safe-area-inset-bottom, 0px)); }
+            .scroll-top { bottom:calc(16px + env(safe-area-inset-bottom, 0px)); right:16px; width:36px; height:36px; font-size:16px; }
+            .vid-modal { width:96vw; max-height:85vh; max-height:85dvh; border-radius:10px; }
             .vid-modal-header { padding:10px 12px; }
             .vid-modal-title { font-size:12px; }
-            .vid-modal-preview img { max-height:40vh; }
+            .vid-modal-preview img { max-height:40vh; max-height:40dvh; }
             .vid-play-overlay .play-icon { width:40px; height:40px; }
             .vid-play-overlay .play-icon::after { border-width:7px 0 7px 13px; }
             .auth-digit { width:46px; height:54px; font-size:24px; }
+            .cheat-panel { bottom:calc(8px + env(safe-area-inset-bottom, 0px)); }
         }
     </style>
 </head>
@@ -713,7 +742,7 @@
                 <button class="vid-back" onclick="goBackToGame()">← 游戏</button>
                 <div class="vid-search">
                     <span class="s-icon">🔍</span>
-                    <input type="text" id="searchInput" placeholder="搜索标题/作者..." autocomplete="off">
+                    <input type="search" id="searchInput" placeholder="搜索标题/作者..." autocomplete="off" enterkeyhint="search">
                     <button class="s-clear" id="searchClear" onclick="clearSearch()">✕</button>
                 </div>
                 <div class="vid-actions">
@@ -746,7 +775,7 @@
             <div id="sentinel"></div>
         </div>
         <div class="toast" id="toast"></div>
-        <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+        <button class="scroll-top" id="scrollTop" onclick="document.getElementById('videoView').scrollTo({top:0,behavior:'smooth'})">↑</button>
         <!-- 视频预览模态框 -->
         <div class="vid-modal-overlay" id="vidModalOverlay" onclick="closeVideoModal(event)">
             <div class="vid-modal" onclick="event.stopPropagation()">
@@ -1184,22 +1213,32 @@
         } catch(e) { return null; }
     }
 
-    // 创建 <video> 元素 (自动播放, 绝不跳转)
+    // 创建 <video> 元素 (自动播放, 绝不跳转, iOS 优化)
     function createVideoPlayer(mp4Url) {
         var video = document.createElement('video');
         video.src = mp4Url;
         video.controls = true;
         video.autoplay = true;
-        video.style.cssText = 'width:100%;max-height:60vh;background:#000;display:block;';
+        video.muted = false;
+        video.preload = 'auto';
+        video.style.cssText = 'width:100%;max-height:60vh;max-height:60dvh;background:#000;display:block;outline:none;';
         video.setAttribute('playsinline', 'true');
         video.setAttribute('webkit-playsinline', 'true');
         video.setAttribute('x5-video-player-type', 'h5');
+        video.setAttribute('x5-video-player-fullscreen', 'true');
+        video.setAttribute('x5-video-orientation', 'portraint');
+        video.setAttribute('disablePictureInPicture', 'true');
         video.onerror = function() {
             var parent = video.parentElement;
             if (parent) {
                 parent.innerHTML = '<div style="width:100%;padding:60px 20px;text-align:center;color:#f87171;font-size:14px;">视频加载失败<br><span style="font-size:11px;color:#52525b;">可能已被删除或设为私密</span></div>';
             }
         };
+        // iOS 需要用户手势才能自动播放, 尝试静音播放
+        video.play().catch(function() {
+            video.muted = true;
+            video.play().catch(function() {});
+        });
         return video;
     }
 
@@ -1284,13 +1323,16 @@
                         statusEl.textContent = '✅ MP4 直接播放';
                         statusEl.style.color = '#4ade80';
                     } else {
-                        // fxtwitter iframe 兜底
+                        // fxtwitter iframe 兜底 (iOS 兼容)
                         preview.innerHTML = '';
                         var iframe = document.createElement('iframe');
                         iframe.src = 'https://fxtwitter.com/_/status/' + info.tweetId;
-                        iframe.style.cssText = 'width:100%;height:60vh;max-height:500px;border:none;background:#000;';
-                        iframe.allow = 'autoplay; encrypted-media';
+                        iframe.style.cssText = 'width:100%;height:60vh;max-height:60dvh;border:none;background:#000;';
+                        iframe.allow = 'autoplay; encrypted-media; fullscreen';
                         iframe.setAttribute('allowfullscreen', 'true');
+                        iframe.setAttribute('webkitallowfullscreen', 'true');
+                        iframe.setAttribute('playsinline', 'true');
+                        iframe.setAttribute('scrolling', 'no');
                         preview.appendChild(iframe);
                         currentVideoUrl = 'https://x.com/i/status/' + info.tweetId;
                         playBtn.textContent = '▶ 新窗口打开';
@@ -1641,7 +1683,7 @@
 
         var pu = v.thumbnail_url || '';
         var imgHtml = pu
-            ? '<img src="' + esc(pu) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.parentElement.querySelector(\'.vid-noimg\').style.display=\'flex\';">'
+            ? '<img src="' + esc(pu) + '" alt="" loading="lazy" decoding="async" onerror="var p=this.parentElement;this.style.display=\'none\';var n=p&&p.querySelector(\'.vid-noimg\');if(n)n.style.display=\'flex\';">'
             : '';
         var noImgDisplay = pu ? 'display:none;' : '';
         var sectionLabel = v.source_section ? '<span style="color:#3f3f46;font-size:10px;">#' + esc(v.source_section) + '</span>' : '';
@@ -1795,10 +1837,11 @@
     });
 
     // ============ 回到顶部按钮 ============
-    document.getElementById('videoView').addEventListener('scroll',function(){
+    var _vidViewEl = document.getElementById('videoView');
+    _vidViewEl.addEventListener('scroll',function(){
         if(this.scrollTop>400)$scrollTop.classList.add('visible');
         else $scrollTop.classList.remove('visible');
-    });
+    }, {passive: true});
 
     // ============ 事件绑定 ============
     $refresh.addEventListener('click',function(){triggerScraper();loadVids(true);});
@@ -2036,8 +2079,11 @@
     // ============ 启动 ============
     initGame();
     updateFavsBadge();
+
+    // iOS 独立模式检测
+    if (window.navigator.standalone) {
+        document.documentElement.classList.add('ios-standalone');
+    }
     </script>
-</body>
-</html>
 </body>
 </html>
