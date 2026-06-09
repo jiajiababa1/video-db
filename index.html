@@ -1592,7 +1592,7 @@
         if (monsnodeUrl) {
             html += '<button onclick="event.stopPropagation();window.open(\'' + esc(monsnodeUrl) + '\',\'_blank\')" style="padding:7px 16px;border-radius:2px;border:1px solid #1c1a16;background:transparent;color:#6b6760;cursor:pointer;font-size:11px;font-family:var(--font-mono);">↗ 原站查看</button>';
         }
-        html += '<button onclick="event.stopPropagation();var v_=currentInlineVideo;if(v_){markForRescrape(v_.video_id,this);var b=this;b.textContent=\'✓ 已标记\';b.style.color=\'var(--vprimary)\';setTimeout(function(){b.textContent=\'🔄 标记重爬\';b.style.color=\'#6b6760\';},2000);}" style="padding:7px 16px;border-radius:2px;border:1px solid #1c1a16;background:transparent;color:#6b6760;cursor:pointer;font-size:11px;font-family:var(--font-mono);">🔄 标记重爬</button>';
+        html += '<button onclick="event.stopPropagation();var v_=currentInlineVideo;if(v_){markForRescrape(v_.video_id,this,v_.monsnode_video_id||\'\');var b=this;b.textContent=\'✓ 已标记\';b.style.color=\'var(--vprimary)\';setTimeout(function(){b.textContent=\'🔄 标记重爬\';b.style.color=\'#6b6760\';},2000);}" style="padding:7px 16px;border-radius:2px;border:1px solid #1c1a16;background:transparent;color:#6b6760;cursor:pointer;font-size:11px;font-family:var(--font-mono);">🔄 标记重爬</button>';
         html += '</div></div>';
         wrap.innerHTML = html;
     }
@@ -2163,7 +2163,7 @@
             '<div class="vid-foot">' + (v.rank ? '<span style="color:#c8a45c;font-weight:700;font-size:12px;">#' + esc(v.rank) + '</span>' : '<span class="vid-badge">' + esc(v.video_id) + '</span>') +
             (v.author ? '<span class="vid-author" data-author="' + esc(v.author) + '" onclick="event.stopPropagation();event.preventDefault();showAuthorPage(this.getAttribute(\'data-author\'))">@' + esc(v.author) + '</span>' : '') +
             viewsHtml + sectionLabel + statusLabel +
-            '<button class="vid-copy" onclick="event.stopPropagation();markForRescrape(\'' + esc(v.video_id) + '\',this)" title="标记重爬">🔄</button>' +
+            '<button class="vid-copy" onclick="event.stopPropagation();markForRescrape(\'' + esc(v.video_id) + '\',this,\'' + esc(v.monsnode_video_id || '') + '\')" title="标记重爬">🔄</button>' +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
 
         // === 悬停预览 (桌面端: 鼠标悬停播放前3秒) ===
@@ -2250,23 +2250,47 @@
         return getRescrapeList().indexOf(videoId) >= 0;
     }
 
-    async function markForRescrape(videoId, btn) {
+    async function markForRescrape(videoId, btn, monsnodeId) {
         if (!videoId) return;
-        // 1. localStorage 存储 (立即生效)
+        var card = btn ? btn.closest('.vid-card') : null;
+
+        // 如果有 monsnode_id, 立即尝试解析 MP4 (不等待爬虫)
+        if (monsnodeId) {
+            if (btn) { btn.textContent = '⏳'; btn.style.color = '#c8a45c'; }
+            toast('正在解析 ' + videoId + '...');
+
+            var mp4 = await resolveViaTwjn(monsnodeId);
+            if (mp4) {
+                // 解析成功 → 更新 Supabase + 修复卡片 UI
+                try {
+                    await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(videoId), {
+                        method: 'PATCH', headers: _h(),
+                        body: JSON.stringify({ duration: mp4, has_mp4: true, needs_rescrape: false, updated_at: new Date().toISOString() })
+                    });
+                } catch(e) {}
+                // 从本地重爬列表中移除
+                var rl = getRescrapeList().filter(function(id) { return id !== videoId; });
+                localStorage.setItem('vid_rescrape', JSON.stringify(rl));
+                if (btn) { btn.textContent = '✅'; btn.style.color = '#7a9a7a'; }
+                if (card) { card.classList.remove('needs-rescrape', 'unplayable'); }
+                toast('解析成功: ' + videoId);
+                return;
+            }
+            // 解析失败, 继续标记流程
+            if (btn) { btn.textContent = '✗'; }
+        }
+
+        // 本地 + Supabase 标记
         addToRescrapeList(videoId);
-        if (btn) { btn.textContent = '✓'; btn.style.color = '#c8a45c'; }
-        toast('已标记重爬: ' + videoId);
-        // 更新卡片样式
-        var card = btn.closest('.vid-card');
+        if (btn) { btn.style.color = '#c8a45c'; if (btn.textContent === '✗' || btn.textContent === '⏳') btn.textContent = '✓'; }
+        toast((monsnodeId ? '解析失败已标记: ' : '已标记重爬: ') + videoId);
         if (card) { card.classList.add('needs-rescrape'); card.classList.add('unplayable'); }
-        // 2. 尝试同步到 Supabase (如果 needs_rescrape 列存在)
         try {
-            var hds = _h();
             await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(videoId), {
-                method: 'PATCH', headers: hds,
+                method: 'PATCH', headers: _h(),
                 body: JSON.stringify({ needs_rescrape: true, updated_at: new Date().toISOString() })
             });
-        } catch(e) { /* 列不存在时静默失败 */ }
+        } catch(e) {}
     }
 
     function copyLink(url,btn){
