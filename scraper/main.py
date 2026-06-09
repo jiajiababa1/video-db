@@ -11,17 +11,17 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://monsnode.com"
 
 TARGET_SECTIONS = [
-    ("/?t=24h", "24h", 3),
-    ("/?t=3d", "3d", 3),
-    ("/?t=7d", "7d", 3),
-    ("/trending", "trending", 3),
-    ("/", "home", 3),
-    ("/latest", "latest", 3),
-    ("/?ranking=1", "ranking", 2),
+    ("/?t=24h", "24h", 4),
+    ("/?t=3d", "3d", 4),
+    ("/?t=7d", "7d", 4),
+    ("/trending", "trending", 4),
+    ("/", "home", 4),
+    ("/latest", "latest", 4),
+    ("/?ranking=1", "ranking", 3),
 ]
 
-MAX_RETRIES = 2
-MAX_VIDEOS_PER_SECTION = 200
+MAX_RETRIES = 3
+MAX_VIDEOS_PER_SECTION = 300
 BATCH_SIZE = 50
 TWJN_CONCURRENCY = 8  # twjn.php 请求并发数
 

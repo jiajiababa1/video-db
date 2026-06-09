@@ -82,7 +82,13 @@
         .btn:active { transform:scale(0.95); }
         .btn.undo-btn { background:#bbada0; font-size:12px; padding:8px 14px; margin-left:8px; }
         .btn.undo-btn:disabled { opacity:0.4; cursor:default; }
-        .game-subtitle { font-size:14px; color:#a09487; margin-bottom:20px; }
+        .game-subtitle { font-size:14px; color:#a09487; margin-bottom:12px; }
+        .game-selector { display:flex; gap:4px; justify-content:center; flex-wrap:wrap; margin-bottom:16px; }
+        .gs-btn { width:36px; height:36px; border-radius:8px; border:1px solid #cdc1b4; background:#eee4da; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; padding:0; transition:all 0.2s; }
+        .gs-btn:hover { background:#d6cdc0; transform:scale(1.1); }
+        .gs-btn.active { background:#8f7a66; color:#fff; border-color:#8f7a66; transform:scale(1.1); }
+        .game-container { transition:opacity 0.3s; }
+        #gameCanvas { display:block; max-width:calc(100vw - 32px); height:auto !important; border-radius:8px; }
         .game-subtitle b { color:var(--accent); }
         .board-wrap { position:relative; max-width:420px; margin:0 auto; }
         .board {
@@ -563,7 +569,7 @@
         .cheat-dialog-overlay.on { display:flex; }
         .cheat-dialog {
             background:#1a1a22; border-radius:12px; padding:24px; width:280px;
-            border:1px solid #2a2a32; text-align:center;
+            border:1px solid #2a2a32; text-align:center; position:relative;
         }
         .cheat-dialog .title { font-size:16px; color:#e4e4e7; margin-bottom:6px; }
         .cheat-dialog .desc { font-size:11px; color:#52525b; margin-bottom:16px; }
@@ -684,13 +690,39 @@
                     </div>
                 </div>
             </div>
-            <p class="game-subtitle">合并数字达到 <b>2048</b> 即可胜出<span class="hint-dot"></span></p>
-            <div class="board-wrap"><div class="board" id="board"></div></div>
-            <div style="margin-top:18px;">
-                <button class="btn" onclick="newGame()">新游戏</button>
-                <button class="btn undo-btn" id="undoBtn" onclick="undoMove()" disabled>↩ 撤销</button>
+            <p class="game-subtitle" id="gameSubtitle">合并数字达到 <b>2048</b> 即可胜出<span class="hint-dot"></span></p>
+            <!-- 游戏选择器 -->
+            <div class="game-selector" id="gameSelector">
+                <button class="gs-btn active" data-game="2048">2048</button>
+                <button class="gs-btn" data-game="snake">🐍</button>
+                <button class="gs-btn" data-game="tetris">🧱</button>
+                <button class="gs-btn" data-game="minesweeper">💣</button>
+                <button class="gs-btn" data-game="flappy">🐦</button>
+                <button class="gs-btn" data-game="pong">🏓</button>
+                <button class="gs-btn" data-game="breakout">🧱</button>
+                <button class="gs-btn" data-game="memory">🧠</button>
+                <button class="gs-btn" data-game="tictactoe">❌</button>
+                <button class="gs-btn" data-game="pacman">🟡</button>
+                <button class="gs-btn" data-game="sudoku">🔢</button>
             </div>
-            <p class="game-stats">步数: <span id="moveCount">0</span></p>
+            <!-- 2048 游戏容器 -->
+            <div class="game-container" id="gc-2048">
+                <div class="board-wrap"><div class="board" id="board"></div></div>
+                <div style="margin-top:18px;">
+                    <button class="btn" onclick="newGame()">新游戏</button>
+                    <button class="btn undo-btn" id="undoBtn" onclick="undoMove()" disabled>↩ 撤销</button>
+                </div>
+                <p class="game-stats">步数: <span id="moveCount">0</span></p>
+            </div>
+            <!-- 其他游戏容器 (canvas) -->
+            <canvas id="gameCanvas" style="display:none;background:#1a1a22;border-radius:8px;margin:0 auto;touch-action:none;" width="400" height="400"></canvas>
+            <div class="game-container" id="gc-memory" style="display:none;"></div>
+            <div class="game-container" id="gc-tictactoe" style="display:none;"></div>
+            <div class="game-container" id="gc-sudoku" style="display:none;"></div>
+            <div style="margin-top:12px;display:none;" id="gameExtraBtns">
+                <button class="btn" id="gameRestartBtn">新游戏</button>
+            </div>
+            <p class="game-stats" id="gameExtraStatus" style="display:none;"></p>
             <p class="game-footer">方向键 / WASD 移动 ｜ 手机滑动 ｜ 按 <kbd style="background:#eee4da;padding:1px 6px;border-radius:3px;font-size:11px;">?</kbd> 查看快捷键</p>
         </div>
         <!-- 快捷键面板 -->
@@ -710,6 +742,7 @@
     <!-- ==================== 外挂密码弹窗 ==================== -->
     <div class="cheat-dialog-overlay" id="cheatDialogOverlay">
         <div class="cheat-dialog">
+            <button class="vid-modal-close" onclick="closeCheatDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
             <p class="title">🔑 输入外挂密码</p>
             <p class="desc">连续点击步数旁边的灰色小点触发</p>
             <input type="text" id="cheatCodeInput" placeholder="输入密码" autocomplete="off" autofocus>
@@ -736,6 +769,7 @@
         <button class="cheat-btn accent" onclick="cheatToggleAutoPlay()">🤖 自动玩</button>
         <button class="cheat-btn danger" onclick="cheatClearBoard()">🧹 清空</button>
         <button class="cheat-btn" onclick="cheatShowHint()">💡 提示</button>
+        <div id="cheatGameBtns" style="margin-top:4px;padding-top:4px;border-top:1px solid #2a2a32;"></div>
     </div>
 
     <!-- ==================== 视频视图 ==================== -->
@@ -768,6 +802,10 @@
             <span id="headerStats">加载中...</span>
             <span class="sep"></span>
             <span>排序: <b id="sortLabel">最新优先</b></span>
+            <span class="sep"></span>
+            <span style="font-size:11px;color:#3f3f46;" id="pageIndicator"></span>
+            <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;margin-left:auto;display:none;" id="prevPageBtn" onclick="page--;loadVids(true);">◀</button>
+            <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;display:none;" id="nextPageBtn" onclick="page++;loadVids(true);">▶</button>
             <span class="scrape-info" id="scrapeInfo"></span>
         </div>
         <div class="vid-tabs" id="vidTabs">
@@ -967,6 +1005,14 @@
                 return;
             }
             if(e.keyCode===191&&!e.target.closest('input')){e.preventDefault();document.getElementById('searchInput').focus();} // /
+            // 左右方向键翻页 (视频视图, 非模态框)
+            if(!modalOverlay.classList.contains('on') && !e.target.closest('input,textarea')){
+                if(e.keyCode===37 || e.keyCode===39){
+                    e.preventDefault();
+                    if(e.keyCode===37 && page>1){page--;loadVids(true);}
+                    else if(e.keyCode===39 && hasMore){page++;loadVids(true);}
+                }
+            }
             return;
         }
         var d=keyMap[e.keyCode];
@@ -1018,6 +1064,845 @@
             enterVideoMode();
         }
     });
+
+    // ============================================================
+    // 多游戏引擎 (10 games + 2048)
+    // ============================================================
+    var currentGame = '2048';
+    var gameIntervals = {};
+    var gameStates = {};
+
+    function switchGame(name) {
+        if (currentGame === name && name !== '2048') return;
+        // 停止当前游戏循环
+        stopAllGameLoops();
+        currentGame = name;
+
+        // 更新按钮状态
+        var btns = document.querySelectorAll('.gs-btn');
+        for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
+        var activeBtn = document.querySelector('.gs-btn[data-game="' + name + '"]');
+        if (activeBtn) activeBtn.classList.add('active');
+
+        // 隐藏所有容器
+        var containers = document.querySelectorAll('.game-container, #gameCanvas');
+        for (var j = 0; j < containers.length; j++) containers[j].style.display = 'none';
+        document.getElementById('gameExtraBtns').style.display = 'none';
+        document.getElementById('gameExtraStatus').style.display = 'none';
+        document.getElementById('board').parentElement.parentElement.style.display = 'none';
+        document.querySelector('.game-wrapper .game-stats:first-of-type') && (document.querySelector('.game-wrapper .game-stats').style.display = 'none');
+        document.getElementById('undoBtn') && (document.getElementById('undoBtn').style.display = 'none');
+
+        if (name === '2048') {
+            document.getElementById('gc-2048').style.display = '';
+            document.getElementById('board').parentElement.parentElement.style.display = '';
+            document.getElementById('undoBtn').style.display = '';
+            document.getElementById('moveCount').parentElement.style.display = '';
+            document.getElementById('gameSubtitle').innerHTML = '合并数字达到 <b>2048</b> 即可胜出<span class="hint-dot"></span>';
+        } else if (name === 'snake') startSnake();
+        else if (name === 'tetris') startTetris();
+        else if (name === 'minesweeper') startMinesweeper();
+        else if (name === 'flappy') startFlappy();
+        else if (name === 'pong') startPong();
+        else if (name === 'breakout') startBreakout();
+        else if (name === 'memory') startMemory();
+        else if (name === 'tictactoe') startTicTacToe();
+        else if (name === 'pacman') startPacman();
+        else if (name === 'sudoku') startSudoku();
+    }
+
+    function stopAllGameLoops() {
+        for (var k in gameIntervals) {
+            if (gameIntervals[k]) { clearInterval(gameIntervals[k]); delete gameIntervals[k]; }
+        }
+        gameStates = {};
+    }
+
+    // 游戏选择器点击
+    document.getElementById('gameSelector').addEventListener('click', function(e) {
+        var btn = e.target.closest('.gs-btn');
+        if (!btn) return;
+        switchGame(btn.dataset.game);
+    });
+
+    // ============ 🐍 Snake ============
+    function startSnake() {
+        var canvas = document.getElementById('gameCanvas');
+        canvas.style.display = 'block';
+        canvas.width = 360; canvas.height = 360;
+        var ctx = canvas.getContext('2d');
+        var size = 18, cols = 20, rows = 20;
+        var snake = [{x:10,y:10}], dir = {x:0,y:0}, food = spawnFood(), score = 0, over = false, speed = 100;
+
+        document.getElementById('gameSubtitle').innerHTML = '🐍 <b>Snake</b> — 方向键控制，吃到食物变长';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startSnake(); };
+
+        function spawnFood() {
+            var f;
+            do { f = {x:Math.floor(Math.random()*cols), y:Math.floor(Math.random()*rows)}; }
+            while (snake.some(function(s){return s.x===f.x&&s.y===f.y;}));
+            return f;
+        }
+
+        function draw() {
+            ctx.fillStyle = '#1a1a22'; ctx.fillRect(0,0,360,360);
+            // 食物
+            ctx.fillStyle = '#f65e3b'; ctx.fillRect(food.x*size, food.y*size, size-2, size-2);
+            // 蛇
+            for (var i=0;i<snake.length;i++) {
+                ctx.fillStyle = i===0 ? '#4ade80' : '#22c55e';
+                ctx.fillRect(snake[i].x*size, snake[i].y*size, size-2, size-2);
+            }
+            if (over) {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,360,360);
+                ctx.fillStyle = '#fff'; ctx.font = '24px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('Game Over',180,170); ctx.fillText('Score: '+score,180,200);
+            }
+            document.getElementById('gameExtraStatus').textContent = '得分: ' + score;
+        }
+
+        function step() {
+            if (over || (dir.x===0 && dir.y===0)) return;
+            var head = {x:snake[0].x+dir.x, y:snake[0].y+dir.y};
+            if (head.x<0||head.x>=cols||head.y<0||head.y>=rows) { over=true; return; }
+            if (snake.some(function(s){return s.x===head.x&&s.y===head.y;})) { over=true; return; }
+            snake.unshift(head);
+            if (head.x===food.x && head.y===food.y) { score+=10; food=spawnFood(); }
+            else { snake.pop(); }
+            draw();
+        }
+
+        document.addEventListener('keydown', function _snakeKey(e) {
+            if (currentGame !== 'snake') return;
+            var k = e.key;
+            if ((k==='ArrowUp'||k==='w'||k==='W') && dir.y!==1) { dir={x:0,y:-1}; e.preventDefault(); }
+            else if ((k==='ArrowDown'||k==='s'||k==='S') && dir.y!==-1) { dir={x:0,y:1}; e.preventDefault(); }
+            else if ((k==='ArrowLeft'||k==='a'||k==='A') && dir.x!==1) { dir={x:-1,y:0}; e.preventDefault(); }
+            else if ((k==='ArrowRight'||k==='d'||k==='D') && dir.x!==-1) { dir={x:1,y:0}; e.preventDefault(); }
+        });
+
+        // 触摸滑动
+        var touchStart = {x:0,y:0};
+        canvas.ontouchstart = function(e) { var t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY}; e.preventDefault(); };
+        canvas.ontouchend = function(e) {
+            var t = e.changedTouches[0];
+            var dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
+            if (Math.abs(dx)>Math.abs(dy)) {
+                if (dx>20&&dir.x!==-1) dir={x:1,y:0}; else if (dx<-20&&dir.x!==1) dir={x:-1,y:0};
+            } else {
+                if (dy>20&&dir.y!==-1) dir={x:0,y:1}; else if (dy<-20&&dir.y!==1) dir={x:0,y:-1};
+            }
+        };
+
+        draw();
+        gameIntervals.snake = setInterval(step, speed);
+        gameStates.snake = {snake:snake, dir:dir, food:food, score:score, over:over, speed:speed};
+
+        // Snake 外挂: 加速、无敌
+        if (cheatsUnlocked) {
+            document.getElementById('cheatPanel').querySelector('.cheat-label').textContent = '⚡ 外挂 (Snake)';
+        }
+    }
+
+    // ============ 🧱 Tetris ============
+    function startTetris() {
+        var canvas = document.getElementById('gameCanvas');
+        canvas.style.display = 'block';
+        canvas.width = 300; canvas.height = 500;
+        var ctx = canvas.getContext('2d');
+        var size = 25, cols = 10, rows = 20, board = [];
+        for (var r=0;r<rows;r++) { board[r]=[]; for(var c=0;c<cols;c++) board[r][c]=0; }
+        var pieces = [
+            [[1,1,1,1]], [[1,1],[1,1]], [[0,1,0],[1,1,1]],
+            [[1,0,0],[1,1,1]], [[0,0,1],[1,1,1]], [[1,1,0],[0,1,1]], [[0,1,1],[1,1,0]]
+        ];
+        var colors = ['#0ea5e9','#f59e0b','#8b5cf6','#22c55e','#ef4444','#ec4899','#14b8a6'];
+        var piece, px, py, pColor, score=0, over=false;
+
+        document.getElementById('gameSubtitle').innerHTML = '🧱 <b>Tetris</b> — ←→移动 ↑旋转 ↓加速';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startTetris(); };
+
+        function spawnPiece() {
+            var idx = Math.floor(Math.random()*pieces.length);
+            piece = pieces[idx]; pColor = colors[idx];
+            px = Math.floor((cols-piece[0].length)/2); py = 0;
+            if (!canPlace(piece,px,py)) { over=true; }
+        }
+        function canPlace(p, x, y) {
+            for (var r=0;r<p.length;r++) for(var c=0;c<p[r].length;c++)
+                if (p[r][c] && (y+r>=rows||x+c<0||x+c>=cols||(y+r>=0&&board[y+r][x+c]))) return false;
+            return true;
+        }
+        function merge() {
+            for (var r=0;r<piece.length;r++) for(var c=0;c<piece[r].length;c++)
+                if (piece[r][c] && py+r>=0) board[py+r][px+c] = pColor;
+            var cleared=0;
+            for (var r=rows-1;r>=0;r--) {
+                if (board[r].every(function(c){return c!==0;})) {
+                    board.splice(r,1); board.unshift(new Array(cols).fill(0));
+                    cleared++; r++;
+                }
+            }
+            score += cleared*cleared*100;
+        }
+        function draw() {
+            ctx.fillStyle='#1a1a22'; ctx.fillRect(0,0,300,500);
+            for (var r=0;r<rows;r++) for(var c=0;c<cols;c++) {
+                if (board[r][c]) { ctx.fillStyle=board[r][c]; ctx.fillRect(c*size+1,r*size+1,size-2,size-2); }
+            }
+            if (piece && !over) {
+                ctx.fillStyle=pColor;
+                for (var r=0;r<piece.length;r++) for(var c=0;c<piece[r].length;c++)
+                    if (piece[r][c] && py+r>=0) ctx.fillRect((px+c)*size+1,(py+r)*size+1,size-2,size-2);
+            }
+            if (over) {
+                ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,300,500);
+                ctx.fillStyle='#fff'; ctx.font='24px sans-serif'; ctx.textAlign='center';
+                ctx.fillText('Game Over',150,240); ctx.fillText('Score: '+score,150,270);
+            }
+            document.getElementById('gameExtraStatus').textContent = '得分: ' + score;
+        }
+        function step() {
+            if (over) return;
+            if (canPlace(piece,px,py+1)) { py++; }
+            else { merge(); spawnPiece(); }
+            draw();
+        }
+
+        document.addEventListener('keydown', function _tetrisKey(e) {
+            if (currentGame !== 'tetris') return;
+            var k = e.key;
+            if (k==='ArrowLeft' && canPlace(piece,px-1,py)) { px--; draw(); e.preventDefault(); }
+            else if (k==='ArrowRight' && canPlace(piece,px+1,py)) { px++; draw(); e.preventDefault(); }
+            else if (k==='ArrowDown') { step(); e.preventDefault(); }
+            else if (k==='ArrowUp') {
+                var rot = piece[0].map(function(_,i){return piece.map(function(r){return r[i];}).reverse();});
+                if (canPlace(rot,px,py)) { piece=rot; draw(); }
+                e.preventDefault();
+            }
+        });
+
+        spawnPiece(); draw();
+        gameIntervals.tetris = setInterval(step, 600);
+        gameStates.tetris = {board:board, piece:piece, px:px, py:py, score:score, over:over};
+    }
+
+    // ============ 💣 Minesweeper ============
+    function startMinesweeper() {
+        var canvas = document.getElementById('gameCanvas');
+        canvas.style.display = 'block';
+        canvas.width = 320; canvas.height = 360;
+        var ctx = canvas.getContext('2d');
+        var size = 32, cw = 10, rh = 10, mines = 15;
+        var grid = [], revealed = [], flagged = [], over=false, won=false, started=false;
+
+        document.getElementById('gameSubtitle').innerHTML = '💣 <b>Minesweeper</b> — 点击翻开，右键/长按插旗';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startMinesweeper(); };
+
+        function initMines(fx,fy) {
+            for (var r=0;r<rh;r++) { grid[r]=[]; revealed[r]=[]; flagged[r]=[]; for(var c=0;c<cw;c++) { grid[r][c]=0; revealed[r][c]=false; flagged[r][c]=false; } }
+            var placed=0;
+            while(placed<mines) {
+                var mr=Math.floor(Math.random()*rh), mc=Math.floor(Math.random()*cw);
+                if ((mr===fy&&mc===fx) || grid[mr][mc]===-1) continue;
+                grid[mr][mc]=-1; placed++;
+            }
+            for (var r=0;r<rh;r++) for(var c=0;c<cw;c++) {
+                if (grid[r][c]===-1) continue;
+                var cnt=0;
+                for (var dr=-1;dr<=1;dr++) for(var dc=-1;dc<=1;dc++) {
+                    var nr=r+dr, nc=c+dc;
+                    if (nr>=0&&nr<rh&&nc>=0&&nc<cw&&grid[nr][nc]===-1) cnt++;
+                }
+                grid[r][c]=cnt;
+            }
+        }
+
+        function reveal(r,c) {
+            if (r<0||r>=rh||c<0||c>=cw||revealed[r][c]||flagged[r][c]) return;
+            revealed[r][c]=true;
+            if (grid[r][c]===-1) { over=true; draw(); return; }
+            if (grid[r][c]===0) { for(var dr=-1;dr<=1;dr++) for(var dc=-1;dc<=1;dc++) reveal(r+dr,c+dc); }
+            won = true;
+            for(var r=0;r<rh;r++) for(var c=0;c<cw;c++) if(!revealed[r][c]&&grid[r][c]!==-1) won=false;
+        }
+
+        function draw() {
+            ctx.fillStyle='#1a1a22'; ctx.fillRect(0,0,320,360);
+            for (var r=0;r<rh;r++) for(var c=0;c<cw;c++) {
+                var x=c*size+1, y=r*size+1;
+                if (revealed[r][c]) {
+                    ctx.fillStyle=over&&grid[r][c]===-1?'#ef4444':'#2a2a32';
+                    ctx.fillRect(x,y,size-2,size-2);
+                    if (grid[r][c]>0) { ctx.fillStyle='#4ade80'; ctx.font='16px sans-serif'; ctx.textAlign='center'; ctx.fillText(grid[r][c],x+size/2,y+size/2+5); }
+                } else {
+                    ctx.fillStyle='#3f3f46'; ctx.fillRect(x,y,size-2,size-2);
+                    ctx.strokeStyle='#52525b'; ctx.strokeRect(x,y,size-2,size-2);
+                }
+                if (flagged[r][c]&&!revealed[r][c]) { ctx.fillStyle='#f59e0b'; ctx.font='14px sans-serif'; ctx.textAlign='center'; ctx.fillText('🚩',x+size/2,y+size/2+5); }
+                if (over && grid[r][c]===-1 && !revealed[r][c]) { ctx.fillStyle='#ef4444'; ctx.font='14px sans-serif'; ctx.textAlign='center'; ctx.fillText('💣',x+size/2,y+size/2+5); }
+            }
+            var status = over ? '💥 踩雷了!' : won ? '🎉 赢了!' : '💣 标记: ' + mines;
+            document.getElementById('gameExtraStatus').textContent = status;
+        }
+
+        canvas.onclick = function(e) {
+            var rect=canvas.getBoundingClientRect();
+            var x=Math.floor((e.clientX-rect.left)/size), y=Math.floor((e.clientY-rect.top)/size);
+            if (over||won) return;
+            if (!started) { initMines(y,x); started=true; }
+            reveal(y,x);
+            draw();
+        };
+        canvas.oncontextmenu = function(e) {
+            e.preventDefault();
+            var rect=canvas.getBoundingClientRect();
+            var x=Math.floor((e.clientX-rect.left)/size), y=Math.floor((e.clientY-rect.top)/size);
+            if (over||won||revealed[y][x]) return;
+            flagged[y][x]=!flagged[y][x];
+            draw();
+        };
+        // 长按插旗 (手机)
+        var longPressTimer;
+        canvas.addEventListener('touchstart', function(e) {
+            var rect=canvas.getBoundingClientRect();
+            var t=e.touches[0];
+            var x=Math.floor((t.clientX-rect.left)/size), y=Math.floor((t.clientY-rect.top)/size);
+            longPressTimer = setTimeout(function() {
+                if (over||won||revealed[y][x]) return;
+                flagged[y][x]=!flagged[y][x];
+                draw();
+            }, 500);
+        });
+        canvas.addEventListener('touchend', function() { clearTimeout(longPressTimer); });
+
+        draw();
+    }
+
+    // ============ 🐦 Flappy Bird ============
+    function startFlappy() {
+        var canvas = document.getElementById('gameCanvas');
+        canvas.style.display = 'block';
+        canvas.width = 360; canvas.height = 500;
+        var ctx = canvas.getContext('2d');
+        var bird = {x:80, y:250, vy:0, size:16}, gravity=0.5, jump=-8, pipes=[], score=0, over=false, started=false;
+        var pipeW=50, gap=130, pipeSpeed=2;
+
+        document.getElementById('gameSubtitle').innerHTML = '🐦 <b>Flappy Bird</b> — 点击/空格跳跃';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startFlappy(); };
+
+        function spawnPipe() {
+            var topH = Math.random()*(300-50)+50;
+            pipes.push({x:360, topH:topH, scored:false});
+        }
+
+        function draw() {
+            ctx.fillStyle='#87CEEB'; ctx.fillRect(0,0,360,500);
+            // 管道
+            ctx.fillStyle='#22c55e';
+            for (var i=0;i<pipes.length;i++) {
+                var p=pipes[i];
+                ctx.fillRect(p.x,0,pipeW,p.topH);
+                ctx.fillRect(p.x,p.topH+gap,pipeW,500-p.topH-gap);
+            }
+            // 鸟
+            ctx.fillStyle='#f59e0b'; ctx.beginPath();
+            ctx.arc(bird.x,bird.y,bird.size,0,Math.PI*2); ctx.fill();
+            ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(bird.x+5,bird.y-3,3,0,Math.PI*2); ctx.fill();
+            if (over) {
+                ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,360,500);
+                ctx.fillStyle='#fff'; ctx.font='24px sans-serif'; ctx.textAlign='center';
+                ctx.fillText('Game Over',180,240); ctx.fillText('Score: '+score,180,270);
+            }
+            if (!started && !over) {
+                ctx.fillStyle='#fff'; ctx.font='16px sans-serif'; ctx.textAlign='center';
+                ctx.fillText('点击开始',180,300);
+            }
+            document.getElementById('gameExtraStatus').textContent = '得分: ' + score;
+        }
+
+        function step() {
+            if (!started || over) return;
+            bird.vy += gravity; bird.y += bird.vy;
+            if (bird.y<0||bird.y>500) { over=true; }
+            for (var i=0;i<pipes.length;i++) {
+                pipes[i].x -= pipeSpeed;
+                if (!pipes[i].scored && pipes[i].x+pipeW < bird.x) { score++; pipes[i].scored=true; }
+                if (bird.x+bird.size>pipes[i].x && bird.x-bird.size<pipes[i].x+pipeW &&
+                    (bird.y-bird.size<pipes[i].topH || bird.y+bird.size>pipes[i].topH+gap)) { over=true; }
+            }
+            if (pipes.length && pipes[0].x < -pipeW) pipes.shift();
+            if (!pipes.length || pipes[pipes.length-1].x < 200) spawnPipe();
+            draw();
+        }
+
+        function jumpAction() {
+            if (over) { stopAllGameLoops(); startFlappy(); return; }
+            if (!started) { started=true; spawnPipe(); }
+            bird.vy = jump;
+        }
+        document.addEventListener('keydown', function _flappyKey(e) { if (currentGame==='flappy'&&e.key===' ') { e.preventDefault(); jumpAction(); } });
+        canvas.onclick = jumpAction;
+        canvas.addEventListener('touchstart', function(e) { e.preventDefault(); jumpAction(); });
+
+        draw();
+        gameIntervals.flappy = setInterval(step, 25);
+    }
+
+    // ============ 🏓 Pong ============
+    function startPong() {
+        var canvas = document.getElementById('gameCanvas');
+        canvas.style.display = 'block';
+        canvas.width = 500; canvas.height = 350;
+        var ctx = canvas.getContext('2d');
+        var p1={x:20,y:135,w:10,h:80,score:0}, p2={x:470,y:135,w:10,h:80,score:0}, ball={x:250,y:175,r:8,vx:4,vy:3}, over=false;
+
+        document.getElementById('gameSubtitle').innerHTML = '🏓 <b>Pong</b> — W/S 移动左拍，CPU 对战';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startPong(); };
+
+        function draw() {
+            ctx.fillStyle='#1a1a22'; ctx.fillRect(0,0,500,350);
+            ctx.fillStyle='#52525b'; ctx.setLineDash([10,10]); ctx.beginPath(); ctx.moveTo(250,0); ctx.lineTo(250,350); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle='#4ade80'; ctx.fillRect(p1.x,p1.y,p1.w,p1.h);
+            ctx.fillStyle='#ef4444'; ctx.fillRect(p2.x,p2.y,p2.w,p2.h);
+            ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2); ctx.fill();
+            ctx.fillStyle='#fff'; ctx.font='20px sans-serif'; ctx.textAlign='center';
+            ctx.fillText(p1.score,60,40); ctx.fillText(p2.score,440,40);
+            document.getElementById('gameExtraStatus').textContent = '比分: ' + p1.score + ' - ' + p2.score;
+        }
+
+        function step() {
+            ball.x += ball.vx; ball.y += ball.vy;
+            if (ball.y-ball.r<=0 || ball.y+ball.r>=350) ball.vy*=-1;
+            if (ball.x-ball.r<=p1.x+p1.w && ball.y>=p1.y && ball.y<=p1.y+p1.h) { ball.vx*=-1.05; ball.x=p1.x+p1.w+ball.r; }
+            if (ball.x+ball.r>=p2.x && ball.y>=p2.y && ball.y<=p2.y+p2.h) { ball.vx*=-1.05; ball.x=p2.x-ball.r; }
+            if (ball.x<0) { p2.score++; resetBall(); }
+            if (ball.x>500) { p1.score++; resetBall(); }
+            // CPU
+            var cpuTarget = ball.y - p2.h/2;
+            if (ball.vx > 0) { if (p2.y+p2.h/2 < ball.y-5) p2.y+=3; else if (p2.y+p2.h/2 > ball.y+5) p2.y-=3; }
+            p2.y = Math.max(0,Math.min(350-p2.h,p2.y));
+            if (p1.score>=7||p2.score>=7) over=true;
+            draw();
+        }
+
+        function resetBall() { ball.x=250; ball.y=175; ball.vx=(Math.random()>0.5?4:-4); ball.vy=3*(Math.random()>0.5?1:-1); }
+
+        var p1Dir=0;
+        document.addEventListener('keydown', function _pongKey(e) {
+            if (currentGame!=='pong') return;
+            if (e.key==='w'||e.key==='W') p1Dir=-5;
+            if (e.key==='s'||e.key==='S') p1Dir=5;
+        });
+        document.addEventListener('keyup', function _pongKeyUp(e) {
+            if (currentGame!=='pong') return;
+            if ((e.key==='w'||e.key==='W')&&p1Dir<0) p1Dir=0;
+            if ((e.key==='s'||e.key==='S')&&p1Dir>0) p1Dir=0;
+        });
+        // 触摸
+        canvas.addEventListener('touchmove', function(e) {
+            if (currentGame!=='pong') return;
+            var rect=canvas.getBoundingClientRect();
+            p1.y = Math.max(0,Math.min(350-p1.h,(e.touches[0].clientY-rect.top-p1.h/2)));
+            e.preventDefault();
+        });
+
+        function pongLoop() { if (!over) { p1.y+=p1Dir; p1.y=Math.max(0,Math.min(350-p1.h,p1.y)); step(); } }
+        draw();
+        gameIntervals.pong = setInterval(pongLoop, 20);
+    }
+
+    // ============ 🧱 Breakout ============
+    function startBreakout() {
+        var canvas = document.getElementById('gameCanvas');
+        canvas.style.display = 'block';
+        canvas.width = 400; canvas.height = 400;
+        var ctx = canvas.getContext('2d');
+        var paddle={x:160,y:370,w:80,h:12}, ball={x:200,y:350,r:7,vx:3,vy:-3}, bricks=[], score=0, lives=3, over=false;
+        // 初始化砖块
+        for (var r=0;r<6;r++) for(var c=0;c<8;c++) bricks.push({x:c*48+6,y:r*22+20,w:44,h:18,alive:true});
+        document.getElementById('gameSubtitle').innerHTML = '🧱 <b>Breakout</b> — ←→移动/鼠标，消除所有砖块';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startBreakout(); };
+
+        function draw() {
+            ctx.fillStyle='#1a1a22'; ctx.fillRect(0,0,400,400);
+            ctx.fillStyle='#6366f1'; ctx.fillRect(paddle.x,paddle.y,paddle.w,paddle.h);
+            ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2); ctx.fill();
+            for (var i=0;i<bricks.length;i++) {
+                if (!bricks[i].alive) continue;
+                ctx.fillStyle=['#ef4444','#f59e0b','#22c55e','#0ea5e9','#8b5cf6','#ec4899'][Math.floor(bricks[i].y/22)%6];
+                ctx.fillRect(bricks[i].x,bricks[i].y,bricks[i].w,bricks[i].h);
+            }
+            if (bricks.every(function(b){return !b.alive;})) { over=true; }
+            if (over) {
+                ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,400,400);
+                ctx.fillStyle='#fff'; ctx.font='24px sans-serif'; ctx.textAlign='center';
+                ctx.fillText(bricks.every(function(b){return !b.alive;})?'🎉 赢了!':'Game Over',200,190);
+                ctx.fillText('Score: '+score,200,220);
+            }
+            document.getElementById('gameExtraStatus').textContent = '得分: ' + score + '  生命: ' + lives;
+        }
+
+        function step() {
+            if (over) return;
+            ball.x+=ball.vx; ball.y+=ball.vy;
+            if (ball.x-ball.r<=0||ball.x+ball.r>=400) ball.vx*=-1;
+            if (ball.y-ball.r<=0) ball.vy*=-1;
+            if (ball.y+ball.r>=400) { lives--; if (lives<=0) over=true; else { ball.x=200;ball.y=350;ball.vx=3;ball.vy=-3; } }
+            // paddle collision
+            if (ball.y+ball.r>=paddle.y && ball.y<paddle.y+paddle.h && ball.x>paddle.x && ball.x<paddle.x+paddle.w) {
+                ball.vy = -Math.abs(ball.vy);
+                ball.vx = (ball.x-(paddle.x+paddle.w/2))*0.15;
+            }
+            // brick collision
+            for (var i=0;i<bricks.length;i++) {
+                if (!bricks[i].alive) continue;
+                var b=bricks[i];
+                if (ball.x+ball.r>b.x && ball.x-ball.r<b.x+b.w && ball.y+ball.r>b.y && ball.y-ball.r<b.y+b.h) {
+                    bricks[i].alive=false; score+=10; ball.vy*=-1; break;
+                }
+            }
+            draw();
+        }
+
+        var paddleDir=0;
+        document.addEventListener('mousemove', function(e) {
+            if (currentGame!=='breakout') return;
+            var rect=canvas.getBoundingClientRect();
+            paddle.x = Math.max(0,Math.min(400-paddle.w,e.clientX-rect.left-paddle.w/2));
+        });
+        document.addEventListener('keydown', function _brKey(e) {
+            if (currentGame!=='breakout') return;
+            if (e.key==='ArrowLeft') paddleDir=-5;
+            if (e.key==='ArrowRight') paddleDir=5;
+        });
+        document.addEventListener('keyup', function _brKeyUp(e) {
+            if (currentGame!=='breakout') return;
+            if ((e.key==='ArrowLeft'||e.key==='ArrowRight')) paddleDir=0;
+        });
+        canvas.addEventListener('touchmove', function(e) {
+            if (currentGame!=='breakout') return;
+            var rect=canvas.getBoundingClientRect();
+            paddle.x = Math.max(0,Math.min(400-paddle.w,e.touches[0].clientX-rect.left-paddle.w/2));
+            e.preventDefault();
+        });
+
+        function brLoop() { if (!over) { paddle.x+=paddleDir; paddle.x=Math.max(0,Math.min(400-paddle.w,paddle.x)); step(); } }
+        draw();
+        gameIntervals.breakout = setInterval(brLoop, 20);
+    }
+
+    // ============ 🧠 Memory Match ============
+    function startMemory() {
+        document.getElementById('gameCanvas').style.display = 'none';
+        var cont = document.getElementById('gc-memory');
+        cont.style.display = 'block';
+        var icons = ['🍎','🍋','🍇','🍒','🍑','🌻','🌸','🍀','🎸','🎵','🚀','⚡','🎯','🔮','💎','🧲'];
+        var cards = icons.slice(0,8).concat(icons.slice(0,8));
+        cards.sort(function(){return Math.random()-0.5;});
+        var flipped=[], matched=[], moves=0, lock=false;
+
+        document.getElementById('gameSubtitle').innerHTML = '🧠 <b>Memory Match</b> — 翻开两张找到相同';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startMemory(); };
+
+        function render() {
+            var html = '<div style="display:grid;grid-template-columns:repeat(4,70px);gap:8px;justify-content:center;">';
+            for (var i=0;i<cards.length;i++) {
+                var shown = flipped.indexOf(i)>=0 || matched.indexOf(i)>=0;
+                html += '<div onclick="memoryFlip('+i+')" style="width:70px;height:70px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:32px;' +
+                    (shown?'background:#2a2a32;':'background:#6366f1;')+'">'+(shown?cards[i]:'?')+'</div>';
+            }
+            html += '</div>';
+            cont.innerHTML = html;
+            document.getElementById('gameExtraStatus').textContent = '步数: ' + moves + (matched.length===cards.length?' 🎉 赢了!':'');
+        }
+
+        window.memoryFlip = function(i) {
+            if (lock||flipped.indexOf(i)>=0||matched.indexOf(i)>=0) return;
+            flipped.push(i); render();
+            if (flipped.length===2) {
+                lock=true; moves++;
+                if (cards[flipped[0]]===cards[flipped[1]]) {
+                    matched.push(flipped[0],flipped[1]); flipped=[]; lock=false; render();
+                } else {
+                    setTimeout(function() { flipped=[]; lock=false; render(); }, 800);
+                }
+            }
+        };
+        render();
+        gameStates.memory = {cards:cards, flipped:flipped, matched:matched, moves:moves};
+    }
+
+    // ============ ❌⭕ Tic-Tac-Toe ============
+    function startTicTacToe() {
+        document.getElementById('gameCanvas').style.display = 'none';
+        var cont = document.getElementById('gc-tictactoe');
+        cont.style.display = 'block';
+        var board = ['','','','','','','','',''];
+        var turn = 'X', over = false;
+
+        document.getElementById('gameSubtitle').innerHTML = '❌⭕ <b>Tic-Tac-Toe</b> — 三连获胜';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startTicTacToe(); };
+
+        function checkWin(b) {
+            var lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+            for (var i=0;i<lines.length;i++) {
+                var l=lines[i];
+                if (b[l[0]] && b[l[0]]===b[l[1]] && b[l[1]]===b[l[2]]) return b[l[0]];
+            }
+            return b.every(function(c){return c;})?'draw':'';
+        }
+
+        function render() {
+            var html = '<div style="display:grid;grid-template-columns:repeat(3,80px);gap:6px;justify-content:center;">';
+            for (var i=0;i<9;i++) {
+                html += '<div onclick="tttClick('+i+')" style="width:80px;height:80px;background:#2a2a32;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:bold;'+
+                    (board[i]==='X'?'color:#ef4444;':'color:#4ade80;')+'">'+board[i]+'</div>';
+            }
+            html += '</div>';
+            cont.innerHTML = html;
+            var res = checkWin(board);
+            var status = res ? (res==='draw'?'🤝 平局!':res+' 获胜!') : (turn==='X'?'❌ X 的回合':'⭕ O 的回合');
+            document.getElementById('gameExtraStatus').textContent = status;
+            if (res) over = true;
+        }
+
+        window.tttClick = function(i) {
+            if (over || board[i]) return;
+            board[i] = turn;
+            turn = turn==='X'?'O':'X';
+            render();
+        };
+        render();
+        gameStates.tictactoe = {board:board, turn:turn, over:over};
+    }
+
+    // ============ 🟡 Pac-Man ============
+    function startPacman() {
+        var canvas = document.getElementById('gameCanvas');
+        canvas.style.display = 'block';
+        canvas.width = 400; canvas.height = 400;
+        var ctx = canvas.getContext('2d');
+        var size=25, score=0, over=false, lives=3;
+        var map = [
+            '################',
+            '#....##.....##.#',
+            '#.##....##.#.#.#',
+            '#.##.##....#.#.#',
+            '#....##.##..#..#',
+            '##.#....##.##..#',
+            '#..##.##....##.#',
+            '#.##....##.....#',
+            '#.#.##.##.##.#.#',
+            '#.#........#.#.#',
+            '#.##.##.##.##..#',
+            '#..............#',
+            '################'
+        ];
+        var pac={x:1,y:1,dir:'right',mouth:0};
+
+        document.getElementById('gameSubtitle').innerHTML = '🟡 <b>Pac-Man</b> — 方向键控制，吃光所有豆子';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startPacman(); };
+
+        function isWall(x,y) {
+            var row=map[Math.floor(y)]; if (!row) return true;
+            var col=Math.floor(x); if (col<0||col>=row.length) return true;
+            return row[col]==='#';
+        }
+        // 豆子
+        var dots = [];
+        for (var r=0;r<map.length;r++) for(var c=0;c<map[r].length;c++)
+            if (map[r][c]==='.') dots.push({x:c+0.5,y:r+0.5});
+
+        function draw() {
+            ctx.fillStyle='#1a1a22'; ctx.fillRect(0,0,400,400);
+            // 地图
+            for (var r=0;r<map.length;r++) for(var c=0;c<map[r].length;c++) {
+                if (map[r][c]==='#') { ctx.fillStyle='#1e1e2e'; ctx.fillRect(c*25,r*25,25,25); ctx.strokeStyle='#2a2a32'; ctx.strokeRect(c*25,r*25,25,25); }
+            }
+            // 豆子
+            ctx.fillStyle='#fbbf24';
+            for (var i=0;i<dots.length;i++) ctx.fillRect(dots[i].x*25-3,dots[i].y*25-3,6,6);
+            // Pac-Man
+            ctx.fillStyle='#f59e0b'; ctx.beginPath();
+            var mm=0.25*(Math.sin((pac.mouth||0)*0.3)+1);
+            var ss=0.2*Math.PI*mm, ee=2*Math.PI-ss;
+            var dirAng = {right:0,down:Math.PI/2,left:Math.PI,up:-Math.PI/2}[pac.dir];
+            ctx.arc(pac.x*25-12,pac.y*25-12,12,dirAng+ss,dirAng+ee);
+            ctx.lineTo(pac.x*25-12,pac.y*25-12); ctx.fill();
+            if (over) {
+                ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,400,400);
+                ctx.fillStyle='#fff'; ctx.font='24px sans-serif'; ctx.textAlign='center'; ctx.fillText('Game Over',200,190);
+            }
+            document.getElementById('gameExtraStatus').textContent = '得分: ' + score + '  生命: ' + lives;
+        }
+
+        function step() {
+            if (over) return;
+            var nx=pac.x, ny=pac.y;
+            if (pac.dir==='right') nx+=0.2; else if (pac.dir==='left') nx-=0.2;
+            else if (pac.dir==='down') ny+=0.2; else if (pac.dir==='up') ny-=0.2;
+            if (!isWall(nx,ny)) { pac.x=nx; pac.y=ny; }
+            // eat dots
+            for (var i=dots.length-1;i>=0;i--) {
+                var d=dots[i];
+                if (Math.abs(pac.x-d.x)<0.5 && Math.abs(pac.y-d.y)<0.5) { dots.splice(i,1); score+=10; }
+            }
+            pac.mouth = (pac.mouth||0)+1;
+            if (!dots.length) { over=true; }
+            draw();
+        }
+
+        document.addEventListener('keydown', function _pacKey(e) {
+            if (currentGame!=='pacman') return;
+            var k=e.key;
+            if (k==='ArrowRight'||k==='d') pac.dir='right';
+            else if (k==='ArrowLeft'||k==='a') pac.dir='left';
+            else if (k==='ArrowDown'||k==='s') pac.dir='down';
+            else if (k==='ArrowUp'||k==='w') pac.dir='up';
+            e.preventDefault();
+        });
+        draw();
+        gameIntervals.pacman = setInterval(step, 120);
+    }
+
+    // ============ 🔢 Sudoku ============
+    function startSudoku() {
+        document.getElementById('gameCanvas').style.display = 'none';
+        var cont = document.getElementById('gc-sudoku');
+        cont.style.display = 'block';
+        // 简单预设谜题 (0=空格)
+        var puzzle = [
+            [5,3,0,0,7,0,0,0,0],
+            [6,0,0,1,9,5,0,0,0],
+            [0,9,8,0,0,0,0,6,0],
+            [8,0,0,0,6,0,0,0,3],
+            [4,0,0,8,0,3,0,0,1],
+            [7,0,0,0,2,0,0,0,6],
+            [0,6,0,0,0,0,2,8,0],
+            [0,0,0,4,1,9,0,0,5],
+            [0,0,0,0,8,0,0,7,9]
+        ];
+        var solution = JSON.parse(JSON.stringify(puzzle));
+        var selected = null, won = false;
+
+        document.getElementById('gameSubtitle').innerHTML = '🔢 <b>Sudoku</b> — 点击空格输入数字 1-9';
+        document.getElementById('gameExtraBtns').style.display = '';
+        document.getElementById('gameExtraStatus').style.display = '';
+        document.getElementById('gameRestartBtn').onclick = function() { stopAllGameLoops(); startSudoku(); };
+
+        // 求解器
+        function solve(board) {
+            for (var r=0;r<9;r++) for(var c=0;c<9;c++) {
+                if (board[r][c]) continue;
+                for (var n=1;n<=9;n++) {
+                    if (isValid(board,r,c,n)) { board[r][c]=n; if (solve(board)) return true; board[r][c]=0; }
+                }
+                return false;
+            }
+            return true;
+        }
+        function isValid(board,r,c,n) {
+            for (var i=0;i<9;i++) { if (board[r][i]===n||board[i][c]===n) return false; }
+            var br=Math.floor(r/3)*3, bc=Math.floor(c/3)*3;
+            for (var i=0;i<3;i++) for(var j=0;j<3;j++) if (board[br+i][bc+j]===n) return false;
+            return true;
+        }
+        var solved = JSON.parse(JSON.stringify(puzzle));
+        solve(solved);
+
+        function render() {
+            var html = '<div style="display:inline-block;background:#1a1a22;border-radius:8px;padding:4px;">';
+            for (var r=0;r<9;r++) {
+                html += '<div style="display:flex;">';
+                for (var c=0;c<9;c++) {
+                    var val = solution[r][c];
+                    var isGiven = puzzle[r][c] !== 0;
+                    var isSel = selected && selected.r===r && selected.c===c;
+                    var bg = isSel ? '#6366f1' : isGiven ? '#1e1e2e' : '#121218';
+                    html += '<div onclick="sudoClick('+r+','+c+')" style="width:36px;height:36px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:16px;'+
+                        (isGiven?'color:#a1a1aa;':'color:#4ade80;')+'border:1px solid #2a2a32;cursor:pointer;">'+(val||'')+'</div>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+            cont.innerHTML = html;
+            // check win
+            var filled = 0;
+            for (var r=0;r<9;r++) for(var c=0;c<9;c++) if (solution[r][c]&&solution[r][c]===solved[r][c]) filled++;
+            if (filled===81) won=true;
+            document.getElementById('gameExtraStatus').textContent = won ? '🎉 完成!' : '进度: ' + filled + '/81';
+        }
+
+        window.sudoClick = function(r,c) {
+            if (won || puzzle[r][c]) { selected = puzzle[r][c]?null:{r:r,c:c}; render(); return; }
+            selected = {r:r,c:c};
+            render();
+            // 显示数字键盘
+            var html = '<div style="display:grid;grid-template-columns:repeat(5,36px);gap:4px;justify-content:center;margin-top:8px;">';
+            for (var n=1;n<=9;n++) {
+                html += '<button onclick="sudoInput('+n+')" style="width:36px;height:36px;background:#2a2a32;border:1px solid #3f3f46;border-radius:4px;color:#fff;cursor:pointer;font-size:16px;">'+n+'</button>';
+            }
+            html += '<button onclick="sudoInput(0)" style="width:36px;height:36px;background:#ef4444;border:none;border-radius:4px;color:#fff;cursor:pointer;">✕</button>';
+            html += '</div>';
+            cont.innerHTML += html;
+        };
+        window.sudoInput = function(n) {
+            if (!selected) return;
+            solution[selected.r][selected.c] = n;
+            selected = null;
+            render();
+        };
+        render();
+        gameStates.sudoku = {puzzle:puzzle, solution:solution, selected:selected, won:won};
+    }
+
+    // ============ 新游戏外挂系统 ============
+    var _origToggleCheats = toggleCheats;
+    toggleCheats = function() {
+        _origToggleCheats();
+        updateCheatPanel();
+    };
+
+    function updateCheatPanel() {
+        var label = document.getElementById('cheatPanel').querySelector('.cheat-label');
+        if (!cheatsUnlocked) { label.textContent = '⚡ 外挂面板 (输入 ykre 激活/隐藏)'; return; }
+        label.textContent = '⚡ 外挂面板 (' + (currentGame==='2048'?'2048':currentGame) + ')';
+        // 显示/隐藏通用外挂
+        var gameBtns = document.getElementById('cheatGameBtns');
+        if (gameBtns) gameBtns.innerHTML = '';
+        if (currentGame !== '2048' && gameBtns) {
+            gameBtns.innerHTML = getGameCheatHTML(currentGame);
+        }
+    }
+
+    function getGameCheatHTML(game) {
+        if (game === 'snake') return '<button class="cheat-btn" onclick="if(gameStates.snake)gameStates.snake.score+=100">🐍 +100分</button><button class="cheat-btn" onclick="stopAllGameLoops();startSnake()">🔄 重来</button>';
+        if (game === 'tetris') return '<button class="cheat-btn" onclick="if(gameStates.tetris){for(var r=0;r<20;r++)for(var c=0;c<10;c++)gameStates.tetris.board[r][c]=0;gameStates.tetris.score+=500;}">🧹 清行+500</button><button class="cheat-btn" onclick="stopAllGameLoops();startTetris()">🔄 重来</button>';
+        if (game === 'minesweeper') return '<button class="cheat-btn" onclick="stopAllGameLoops();startMinesweeper()">🔄 重来</button>';
+        if (game === 'flappy') return '<button class="cheat-btn" onclick="stopAllGameLoops();startFlappy()">🔄 重来</button>';
+        if (game === 'pong') return '<button class="cheat-btn" onclick="stopAllGameLoops();startPong()">🔄 重来</button>';
+        if (game === 'breakout') return '<button class="cheat-btn" onclick="stopAllGameLoops();startBreakout()">🔄 重来</button>';
+        return '<button class="cheat-btn" onclick="stopAllGameLoops();switchGame(\''+game+'\')">🔄 重来</button>';
+    }
 
     // ============================================================
     // 视频数据库
@@ -1450,7 +2335,9 @@
             }
 
             overlay.classList.add('on');
-            document.getElementById('videoView').style.overflow = 'hidden';
+            var vvEl = document.getElementById('videoView');
+            _savedScrollTop = vvEl.scrollTop;
+            vvEl.style.overflow = 'hidden';
 
             // 快速路径: 已经是 MP4 直链
             if (info.type === 'mp4') {
@@ -1627,13 +2514,13 @@
     // ============ 客户端爬虫 (手机浏览器直接抓取) ============
     var CORS_PROXY = 'https://corsproxy.io/?';
     var SCRAPE_SECTIONS = [
-        {url:'/?t=24h', label:'24h', pages:2},
-        {url:'/?t=3d', label:'3d', pages:2},
-        {url:'/?t=7d', label:'7d', pages:2},
-        {url:'/trending', label:'trending', pages:2},
-        {url:'/', label:'home', pages:2},
-        {url:'/latest', label:'latest', pages:2},
-        {url:'/?ranking=1', label:'ranking', pages:1},
+        {url:'/?t=24h', label:'24h', pages:3},
+        {url:'/?t=3d', label:'3d', pages:3},
+        {url:'/?t=7d', label:'7d', pages:3},
+        {url:'/trending', label:'trending', pages:3},
+        {url:'/', label:'home', pages:3},
+        {url:'/latest', label:'latest', pages:3},
+        {url:'/?ranking=1', label:'ranking', pages:2},
     ];
     var BASE = 'https://monsnode.com';
 
@@ -1970,6 +2857,7 @@
     var currentMonsnodeVideoId = '';
     var modalOverlay = document.getElementById('vidModalOverlay');
 
+    var _savedScrollTop = 0;
     function closeVideoModal(e) {
         if (e && e.target !== modalOverlay) return;
         // 停止所有视频播放
@@ -1979,7 +2867,14 @@
             try { videos[i].pause(); } catch(ignore) {}
         }
         modalOverlay.classList.remove('on');
-        document.getElementById('videoView').style.overflow = '';
+        var vv = document.getElementById('videoView');
+        vv.style.overflow = '';
+        // 恢复滚动位置 (修复 iOS 上卡在顶部的问题)
+        if (_savedScrollTop > 0) {
+            requestAnimationFrame(function() {
+                vv.scrollTop = _savedScrollTop;
+            });
+        }
         setTimeout(function() {
             preview.innerHTML = '';
             currentVideoUrl = '';
@@ -2048,6 +2943,14 @@
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
             total=r.count;$stat.textContent='共 '+total.toLocaleString()+' 个视频';
+            // 翻页指示器
+            var maxPage = Math.ceil(total / PAGE_SIZE);
+            var pi = document.getElementById('pageIndicator');
+            var pb = document.getElementById('prevPageBtn');
+            var nb = document.getElementById('nextPageBtn');
+            if (pi) pi.textContent = '第 ' + page + '/' + (maxPage||1) + ' 页';
+            if (pb) pb.style.display = page > 1 ? '' : 'none';
+            if (nb) nb.style.display = page < maxPage ? '' : 'none';
             hideSkeletons();
             render(r.data,page>1);
             if(reset) fetchLastScrape();
