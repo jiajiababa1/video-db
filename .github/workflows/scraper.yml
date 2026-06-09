@@ -20,11 +20,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: 安装依赖
+      - name: 安装 Python 依赖
+        run: pip install curl_cffi httpx beautifulsoup4 lxml playwright
+
+      - name: 安装 Playwright 浏览器
         run: |
-          pip install curl_cffi httpx beautifulsoup4 lxml playwright
           playwright install chromium
-          playwright install-deps chromium
+          sudo playwright install-deps chromium 2>/dev/null || true
 
       - name: 运行爬虫
         env:
