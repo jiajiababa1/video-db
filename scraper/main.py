@@ -81,11 +81,20 @@ def fetch_page_cffi(url: str, retries: int = 2) -> str | None:
 
 async def fetch_page_playwright(context, url: str) -> str | None:
     """Playwright 回退, 用于 Cloudflare 重点保护页面"""
-    from playwright_stealth import stealth_async
     page = None
     try:
         page = await context.new_page()
-        await stealth_async(page)
+        # stealth 注入 (优先用 playwright_stealth, 失败则手动注入)
+        try:
+            from playwright_stealth import stealth_async
+            await stealth_async(page)
+        except ImportError:
+            await page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP','ja','en-US','en']});
+                window.chrome = {runtime: {}};
+            """)
         await page.set_extra_http_headers({
             "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
