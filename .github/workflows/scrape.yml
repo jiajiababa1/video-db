@@ -1,18 +1,19 @@
-# monsnode 视频爬虫 - 每日定时任务
-# 每天 UTC 0:00 (北京时间 8:00) 自动运行
+# monsnode 爬虫 — GitHub Actions 每 30 分钟自动运行
+# 无需本地电脑, 完全免费 (公开仓库)
 
-name: Daily Video Scraper
+name: Monsnode Scraper (30min)
 
 on:
   schedule:
-    # 每天 UTC 0:00 运行 (北京时间 8:00)
-    - cron: "0 0 * * *"
-  # 允许手动触发
+    # 每 30 分钟运行一次
+    - cron: "*/30 * * * *"
+  # 支持手动触发
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: 检出代码
@@ -23,20 +24,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 安装依赖
+      - name: 安装 Playwright + 依赖
         run: |
-          pip install -r scraper/requirements.txt
+          pip install playwright beautifulsoup4 lxml httpx
+          playwright install --with-deps chromium
 
       - name: 运行爬虫
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: |
-          python scraper/main.py
-
-      - name: 上传日志 (失败时)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scraper-error-log
-          path: debug_page.html
+        run: python scraper/main.py
