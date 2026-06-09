@@ -98,6 +98,13 @@ async def fetch_page(context, url: str, retries: int = MAX_RETRIES) -> str | Non
             html = await page.content()
             if "listn" in html:
                 return html
+            # Cloudflare 挑战页, 多等一会儿
+            if 'challenges.cloudflare.com' in html or 'お待ちください' in html:
+                log(f"检测到 Cloudflare 挑战页, 等待 15 秒...", "DEBUG")
+                await asyncio.sleep(15)
+                html = await page.content()
+                if "listn" in html:
+                    return html
             # 调试: 失败时保存截图 + HTML 片段
             if attempt == retries:
                 try:
@@ -221,8 +228,7 @@ def parse_video_cards(html: str, page_url: str, section: str) -> list[dict]:
 
 async def resolve_via_twjn(context, videos: list[dict]) -> dict[str, str]:
     """通过 twjn.php 直接获取 MP4 直链
-    twjn.php 页面中有一段 `var u = atob('base64编码的MP4直链')`
-    只需解码即可拿到 video.twimg.com 的直链
+    twjn.php 也有 Cloudflare 保护, 需要 stealth + 等待 JS 执行
     """
     mp4_urls = {}
     sem = asyncio.Semaphore(TWJN_CONCURRENCY)
@@ -234,37 +240,55 @@ async def resolve_via_twjn(context, videos: list[dict]) -> dict[str, str]:
             return vid, None
 
         async with sem:
-            page = None
-            try:
-                page = await context.new_page()
-                await page.goto(
-                    f"https://monsnode.com/twjn.php?v={monsnode_id}",
-                    wait_until="domcontentloaded", timeout=15000
-                )
-                # twjn.php 页面很轻量, 不需要等 JS 执行完
-                # 但需要等一小会确保 base64 字符串在 DOM 中
-                await page.wait_for_timeout(600)
-                html = await page.content()
+            for attempt in range(1, 3):
+                page = None
+                try:
+                    page = await context.new_page()
+                    # 注入反检测
+                    from playwright_stealth import stealth_async
+                    await stealth_async(page)
+                    await page.goto(
+                        f"https://monsnode.com/twjn.php?v={monsnode_id}",
+                        wait_until="domcontentloaded", timeout=20000
+                    )
+                    # twjn.php 也可能被 Cloudflare 保护, 等 JS 执行完
+                    await page.wait_for_timeout(3000)
+                    html = await page.content()
 
-                # 提取 base64: atob('xxx')
-                m = re.search(r"atob\('([^']+)'\)", html)
-                if m:
-                    mp4_url = base64.b64decode(m.group(1)).decode('utf-8')
-                    if 'video.twimg.com' in mp4_url:
-                        return vid, mp4_url
+                    # 检查是否被 Cloudflare 拦截
+                    if 'challenges.cloudflare.com' in html or 'お待ちください' in html:
+                        await page.wait_for_timeout(5000)
+                        html = await page.content()
 
-            except Exception:
-                pass
-            finally:
-                if page:
-                    try:
-                        await page.close()
-                    except Exception:
-                        pass
-        return vid, None
+                    # 提取 base64: var u = atob('xxx')
+                    m = re.search(r"var\s+u\s*=\s*atob\('([^']+)'\)", html)
+                    if m:
+                        mp4_url = base64.b64decode(m.group(1)).decode('utf-8')
+                        if 'video.twimg.com' in mp4_url:
+                            return vid, mp4_url
+                    # 降级匹配
+                    m2 = re.search(r"atob\('([^']+\.mp4[^']*)'\)", html)
+                    if m2:
+                        mp4_url = m2.group(1)
+                        if 'video.twimg.com' in mp4_url:
+                            return vid, mp4_url
+
+                    if attempt < 2:
+                        await asyncio.sleep(5)
+
+                except Exception:
+                    pass
+                finally:
+                    if page:
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
+            return vid, None
 
     to_resolve = [v for v in videos if v.get("monsnode_video_id")]
     if not to_resolve:
+        log("  没有 monsnode_video_id, 跳过 twjn.php 解析")
         return {}
 
     total = len(to_resolve)
@@ -442,7 +466,7 @@ async def scrape_all():
                     if len(all_videos) >= MAX_VIDEOS_PER_SECTION:
                         break
 
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(5)
 
                 stats["sections_crawled"] += 1
                 stats["videos_found"] += len(all_videos)
@@ -480,12 +504,17 @@ async def scrape_all():
 
 
 def main():
+    print("=" * 55)
+    log("monsnode 爬虫 v2 (twjn.php 直链 MP4)")
+    log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌ 未设置'}")
+    log(f"SUPABASE_KEY={'已设置' if SUPABASE_KEY else '❌ 未设置'}")
     if not SUPABASE_URL or not SUPABASE_KEY:
         log("请设置 SUPABASE_URL 和 SUPABASE_KEY 环境变量", "ERROR")
         sys.exit(1)
-
-    print("=" * 55)
-    log("monsnode 爬虫 v2 (twjn.php 直链 MP4)")
+    if not SUPABASE_URL.startswith("http"):
+        log(f"SUPABASE_URL 缺少协议头: {SUPABASE_URL}", "ERROR")
+        log("请在 GitHub Secrets 中填写完整 URL, 例如: https://xxx.supabase.co", "ERROR")
+        sys.exit(1)
     print("=" * 55)
 
     stats = asyncio.run(scrape_all())
