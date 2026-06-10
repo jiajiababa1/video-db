@@ -424,27 +424,10 @@ DROP POLICY IF EXISTS "anon 可读写账号" ON public.user_accounts;
 CREATE POLICY "anon 可读写账号" ON public.user_accounts FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE INDEX IF NOT EXISTS idx_accounts_username ON public.user_accounts(username);
 
--- 预置管理员: admin / admin2026 (SHA256)
-INSERT INTO public.user_accounts (username, password_hash, vip_level, is_admin)
-VALUES ('admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'ultimate', true)
-ON CONFLICT (username) DO NOTHING;
+-- ⚠️ 无预置账号! 请执行下方 CREATE ACCOUNT 语句创建你唯一的账号
+-- ⚠️ 无注册入口! 前端不提供注册功能, 账号只能由管理员在数据库手动创建
 
--- RPC: 注册
-DROP FUNCTION IF EXISTS public.register_account(TEXT, TEXT, TEXT);
-CREATE OR REPLACE FUNCTION public.register_account(p_username TEXT, p_password_hash TEXT, p_device_id TEXT)
-RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT, is_admin BOOLEAN) AS $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM public.user_accounts WHERE username = p_username) THEN
-        RETURN QUERY SELECT false, '用户名已存在', ''::TEXT, false; RETURN;
-    END IF;
-    INSERT INTO public.user_accounts (username, password_hash, device_id, vip_level, is_admin)
-    VALUES (p_username, p_password_hash, p_device_id, 'free', false);
-    RETURN QUERY SELECT true, '注册成功', 'free'::TEXT, false;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-GRANT EXECUTE ON FUNCTION public.register_account(TEXT, TEXT, TEXT) TO anon;
-
--- RPC: 登录
+-- RPC: 登录 (仅验证已存在的账号, 不提供注册)
 DROP FUNCTION IF EXISTS public.login_account(TEXT, TEXT, TEXT);
 CREATE OR REPLACE FUNCTION public.login_account(p_username TEXT, p_password_hash TEXT, p_device_id TEXT)
 RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT, is_admin BOOLEAN) AS $$
@@ -485,3 +468,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.admin_upgrade(TEXT, TEXT, TEXT) TO anon;
+
+-- ═══════════════════════════════════════════
+-- ⚡ 创建你的唯一管理员账号 (只需执行一次!)
+-- ═══════════════════════════════════════════
+-- 1. 选好你的用户名和密码, 比如: 用户名=kuo 密码=MyP@ss2026
+-- 2. 打开浏览器控制台(F12), 计算密码hash:
+--    sha256('kuo:MyP@ss2026').then(h => console.log(h))
+-- 3. 复制输出的hash, 替换下面的 '在此粘贴hash'
+-- 4. 执行这条SQL:
+
+-- INSERT INTO public.user_accounts (username, password_hash, vip_level, is_admin)
+-- VALUES ('kuo', '在此粘贴hash', 'ultimate', true);
+
+-- 5. 刷新网站, 用你的用户名和密码登录
+-- ═══════════════════════════════════════════

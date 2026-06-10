@@ -838,20 +838,18 @@
 </head>
 <body>
 
-    <!-- ==================== 登录/注册对话框 ==================== -->
+    <!-- ==================== 登录对话框 ==================== -->
     <div class="cheat-dialog-overlay" id="loginDialogOverlay">
-        <div class="cheat-dialog" style="width:340px;">
+        <div class="cheat-dialog" style="width:320px;">
             <button class="vid-modal-close" onclick="closeLoginDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
-            <p class="title" id="loginTitle">🔐 登录</p>
+            <p class="title">🔐 账号登录</p>
             <div style="margin-bottom:12px;">
                 <input type="text" id="loginUsername" placeholder="用户名" autocomplete="username" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
                 <input type="password" id="loginPassword" placeholder="密码" autocomplete="current-password" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);">
-                <input type="password" id="loginPassword2" placeholder="确认密码(仅注册)" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);display:none;margin-top:8px;">
             </div>
-            <div class="actions" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+            <div class="actions">
                 <button class="btn-cancel" onclick="closeLoginDialog()">取消</button>
-                <button class="cheat-btn accent" id="loginBtn" onclick="doLogin()">登录</button>
-                <button class="cheat-btn" id="registerBtn" onclick="switchToRegister()" style="font-size:10px;">注册新账号</button>
+                <button class="cheat-btn accent" onclick="doLogin()">登录</button>
             </div>
             <p style="font-size:10px;color:var(--vmuted);margin-top:12px;" id="loginResult"></p>
         </div>
@@ -3754,62 +3752,11 @@
         }
     }
 
-    async function doRegister() {
-        var user = document.getElementById('loginUsername').value.trim();
-        var pass = document.getElementById('loginPassword').value.trim();
-        var pass2 = document.getElementById('loginPassword2').value.trim();
-        if (!user || !pass) { document.getElementById('loginResult').textContent = '请填写用户名和密码'; return; }
-        if (pass !== pass2) { document.getElementById('loginResult').textContent = '两次密码不一致'; document.getElementById('loginResult').style.color = '#c08080'; return; }
-        if (user.length < 2) { document.getElementById('loginResult').textContent = '用户名至少2个字符'; document.getElementById('loginResult').style.color = '#c08080'; return; }
-        if (pass.length < 4) { document.getElementById('loginResult').textContent = '密码至少4个字符'; document.getElementById('loginResult').style.color = '#c08080'; return; }
-        document.getElementById('loginResult').textContent = '注册中...';
-        try {
-            var hash = await sha256(user + ':' + pass);
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/register_account', {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_username: user, p_password_hash: hash, p_device_id: getDeviceId()})
-            });
-            var data = await resp.json();
-            if (data && data.success) {
-                document.getElementById('loginResult').textContent = '✅ 注册成功! 请登录';
-                document.getElementById('loginResult').style.color = 'var(--green)';
-                switchToLogin();
-            } else {
-                document.getElementById('loginResult').textContent = '❌ ' + (data ? data.message : '注册失败');
-                document.getElementById('loginResult').style.color = '#c08080';
-            }
-        } catch(e) {
-            document.getElementById('loginResult').textContent = '❌ 网络错误';
-            document.getElementById('loginResult').style.color = '#c08080';
-        }
-    }
-
-    function switchToRegister() {
-        document.getElementById('loginTitle').textContent = '📝 注册新账号';
-        document.getElementById('loginPassword2').style.display = 'block';
-        document.getElementById('loginBtn').textContent = '注册';
-        document.getElementById('loginBtn').onclick = doRegister;
-        document.getElementById('registerBtn').textContent = '已有账号? 登录';
-        document.getElementById('registerBtn').onclick = switchToLogin;
-        document.getElementById('loginResult').textContent = '';
-    }
-
-    function switchToLogin() {
-        document.getElementById('loginTitle').textContent = '🔐 登录';
-        document.getElementById('loginPassword2').style.display = 'none';
-        document.getElementById('loginBtn').textContent = '登录';
-        document.getElementById('loginBtn').onclick = doLogin;
-        document.getElementById('registerBtn').textContent = '注册新账号';
-        document.getElementById('registerBtn').onclick = switchToRegister;
-        document.getElementById('loginResult').textContent = '';
-    }
 
     function showLoginDialog() {
-        switchToLogin();
         document.getElementById('loginDialogOverlay').classList.add('on');
         document.getElementById('loginUsername').value = '';
         document.getElementById('loginPassword').value = '';
-        document.getElementById('loginPassword2').value = '';
         document.getElementById('loginResult').textContent = '';
         setTimeout(function(){ document.getElementById('loginUsername').focus(); }, 300);
     }
@@ -3893,37 +3840,9 @@
     }
 
     // 管理员激活入口 (手机友好): 在侧边栏会员中心连续点5次升级按钮
-    var _adminTapCount = 0, _adminTapTimer = null;
-    function onVipUpgradeTap() {
-        _adminTapCount++;
-        clearTimeout(_adminTapTimer);
-        _adminTapTimer = setTimeout(function(){_adminTapCount=0;}, 2000);
-        if (_adminTapCount >= 5) {
-            _adminTapCount = 0;
-            showAdminSetupDialog();
-        } else {
-            showVipDialog();
-        }
-    }
+    function onVipUpgradeTap() { showVipDialog(); }
 
-    function showAdminSetupDialog() {
-        document.getElementById('vipDialogOverlay').classList.add('on');
-        document.getElementById('vipCodeInput').value = '';
-        document.getElementById('vipResult').textContent = '';
-        document.getElementById('vipDialogDesc').textContent = '👑 管理员激活 — 输入主密钥';
-        document.getElementById('vipCodeInput').placeholder = '输入管理员主密钥';
-        // 临时把确认按钮改为管理员激活
-        var btn = document.querySelector('#vipDialogOverlay .cheat-btn.accent');
-        if (btn) { btn.textContent = '激活管理员'; btn.onclick = redeemAdminSetup; }
-        setTimeout(function() { document.getElementById('vipCodeInput').focus(); }, 300);
-    }
 
-    function redeemAdminSetup() {
-        var masterKey = document.getElementById('vipCodeInput').value.trim();
-        if (!masterKey) return;
-        adminSetup(masterKey);
-        closeVipDialog();
-    }
 
     function restoreVipDialog() {
         var btn = document.querySelector('#vipDialogOverlay .cheat-btn.accent');
