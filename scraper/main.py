@@ -13,15 +13,15 @@ import httpx
 BASE_URL = "https://monsnode.com"
 
 TARGET_SECTIONS = [
-    # 排名页 (带 period 参数) — 翻页用 page=N
-    ("/?ranking=1&period=24h", "24h", 2, "ranking"),
-    ("/?ranking=1&period=3d", "3d", 2, "ranking"),
-    ("/?ranking=1&period=7d", "7d", 2, "ranking"),
-    ("/?ranking=1", "ranking", 2, "ranking"),              # 总排行 (无 period)
+    # 排名页 (带 period 参数) — 翻页用 page=N (每栏目1页, 提速)
+    ("/?ranking=1&period=24h", "24h", 1, "ranking"),
+    ("/?ranking=1&period=3d", "3d", 1, "ranking"),
+    ("/?ranking=1&period=7d", "7d", 1, "ranking"),
+    ("/?ranking=1", "ranking", 1, "ranking"),
     # 普通板块 — 翻页用 p=N
-    ("/trending", "trending", 2, "normal"),
-    ("/", "home", 2, "normal"),
-    ("/latest", "latest", 2, "normal"),
+    ("/trending", "trending", 1, "normal"),
+    ("/", "home", 1, "normal"),
+    ("/latest", "latest", 1, "normal"),
 ]
 
 MAX_VIDEOS_PER_SECTION = 150
@@ -383,17 +383,17 @@ async def scrape_all():
                     url = build_page_url(section_url, page_num, mode)
                     page_ok = False
                     try:
-                        # Cloudflare 重试循环 (最多 3 次)
+                        # Cloudflare 重试循环 (最多 2 次)
                         cards = []
-                        for cf_retry in range(3):
+                        for cf_retry in range(2):
                             try:
-                                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
                                 try:
-                                    await page.wait_for_selector("div.listn", timeout=15000)
+                                    await page.wait_for_selector("div.listn", timeout=8000)
                                 except Exception:
                                     content = await page.content()
                                     if "challenges.cloudflare.com" in content or "お待ちください" in content:
-                                        wait_sec = 8 + cf_retry * 5
+                                        wait_sec = 3 + cf_retry * 3
                                         log(f"  Cloudflare 挑战 (第{cf_retry+1}次), 等待 {wait_sec}s...")
                                         await asyncio.sleep(wait_sec)
                                         continue  # 重试页面加载
@@ -404,11 +404,11 @@ async def scrape_all():
                                 page_ok = True
                                 break  # 成功获取, 退出重试循环
                             except Exception as e:
-                                if cf_retry < 2:
-                                    log(f"  加载异常 (第{cf_retry+1}次): {str(e)[:60]}, 重试...", "WARN")
-                                    await asyncio.sleep(3)
+                                if cf_retry < 1:
+                                    log(f"  加载异常, 重试...", "WARN")
+                                    await asyncio.sleep(1)
                                 else:
-                                    log(f"  加载失败(已重试3次): {str(e)[:80]}", "ERROR")
+                                    log(f"  加载失败(已重试2次): {str(e)[:80]}", "ERROR")
                                     # 不 raise, 让外层 catch 处理
                                     page_ok = False
 
