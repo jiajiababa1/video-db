@@ -106,6 +106,133 @@ ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS mp4_url TEXT DEFAULT '';
 -- 回填: 从 duration 字段迁移 MP4 URL 到 mp4_url
 UPDATE public.videos SET mp4_url = duration WHERE duration LIKE '%video.twimg.com%' AND (mp4_url IS NULL OR mp4_url = '');
 
+-- ═══════════════════════════════════════════
+-- VIP 会员系统
+-- ═══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS public.user_vips (
+    id            SERIAL PRIMARY KEY,
+    device_id     TEXT UNIQUE NOT NULL,
+    vip_level     TEXT NOT NULL DEFAULT 'free',  -- free | vip | vvip | svip | ultimate
+    is_admin      BOOLEAN DEFAULT false,
+    activated_at  TIMESTAMPTZ DEFAULT NOW(),
+    expires_at    TIMESTAMPTZ,                   -- NULL = 永久
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.activation_codes (
+    id            SERIAL PRIMARY KEY,
+    code          TEXT UNIQUE NOT NULL,
+    vip_level     TEXT NOT NULL,                 -- vip | vvip | svip
+    max_uses      INTEGER DEFAULT 1,             -- 可用次数, 0=无限
+    used_count    INTEGER DEFAULT 0,
+    created_by    TEXT DEFAULT '',               -- 谁创建的
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    expires_at    TIMESTAMPTZ                    -- NULL = 永久有效
+);
+
+-- RLS
+ALTER TABLE public.user_vips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.activation_codes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "anon 可读取自己的 VIP" ON public.user_vips FOR SELECT TO anon USING (true);
+CREATE POLICY "anon 可注册 VIP" ON public.user_vips FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon 可更新自己的 VIP" ON public.user_vips FOR UPDATE TO anon USING (true) WITH CHECK (true);
+
+CREATE POLICY "anon 可读取激活码" ON public.activation_codes FOR SELECT TO anon USING (true);
+CREATE POLICY "anon 可消耗激活码" ON public.activation_codes FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "管理员可创建激活码" ON public.activation_codes FOR INSERT TO anon WITH CHECK (true);
+
+-- 索引
+CREATE INDEX IF NOT EXISTS idx_user_vips_device ON public.user_vips(device_id);
+CREATE INDEX IF NOT EXISTS idx_user_vips_level ON public.user_vips(vip_level);
+CREATE INDEX IF NOT EXISTS idx_activation_codes_code ON public.activation_codes(code);
+
+-- 默认激活码 (一次性使用, 用户自行修改)
+INSERT INTO public.activation_codes (code, vip_level, max_uses)
+VALUES ('VIP2026', 'vip', 100),
+       ('VVIP2026', 'vvip', 50),
+       ('SVIP2026', 'svip', 20)
+ON CONFLICT (code) DO NOTHING;
+
+-- RPC: 兑换激活码
+DROP FUNCTION IF EXISTS public.redeem_code(TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.redeem_code(p_device_id TEXT, p_code TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT) AS $$
+DECLARE
+    v_code RECORD;
+    v_existing RECORD;
+BEGIN
+    -- 查找激活码
+    SELECT * INTO v_code FROM public.activation_codes
+    WHERE code = p_code
+      AND (expires_at IS NULL OR expires_at > NOW())
+      AND (max_uses = 0 OR used_count < max_uses);
+
+    IF v_code IS NULL THEN
+        RETURN QUERY SELECT false, '激活码无效或已用完', ''::TEXT;
+        RETURN;
+    END IF;
+
+    -- 检查用户是否已有更高等级
+    SELECT * INTO v_existing FROM public.user_vips WHERE device_id = p_device_id;
+    IF FOUND THEN
+        IF v_existing.vip_level = 'ultimate' THEN
+            RETURN QUERY SELECT false, '已是终极VIP, 无需升级', v_existing.vip_level;
+            RETURN;
+        END IF;
+        -- 不允许降级
+        IF v_existing.vip_level = 'svip' AND v_code.vip_level IN ('vip', 'vvip') THEN
+            RETURN QUERY SELECT false, '当前 SVIP 等级更高, 无需降级', v_existing.vip_level;
+            RETURN;
+        END IF;
+        IF v_existing.vip_level = 'vvip' AND v_code.vip_level = 'vip' THEN
+            RETURN QUERY SELECT false, '当前 VVIP 等级更高, 无需降级', v_existing.vip_level;
+            RETURN;
+        END IF;
+    END IF;
+
+    -- 消耗激活码
+    UPDATE public.activation_codes SET used_count = used_count + 1 WHERE id = v_code.id;
+
+    -- 更新或插入用户VIP
+    INSERT INTO public.user_vips (device_id, vip_level, activated_at)
+    VALUES (p_device_id, v_code.vip_level, NOW())
+    ON CONFLICT (device_id) DO UPDATE SET
+        vip_level = EXCLUDED.vip_level,
+        activated_at = NOW(),
+        expires_at = NULL;
+
+    RETURN QUERY SELECT true, '升级成功! ' || v_code.vip_level, v_code.vip_level;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.redeem_code(TEXT, TEXT) TO anon;
+
+-- RPC: 管理员设置终极VIP (仅限管理员调用, code='ADMIN_MASTER_KEY' 校验)
+DROP FUNCTION IF EXISTS public.admin_activate(TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.admin_activate(p_device_id TEXT, p_master_key TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT) AS $$
+BEGIN
+    -- 主密钥 (纯文本, 用户自行修改为自己独有的密码)
+    -- 默认: 'admin2026ultimate' (部署后立即改掉!)
+    IF p_master_key != 'admin2026ultimate' THEN
+        RETURN QUERY SELECT false, '管理员密钥错误';
+        RETURN;
+    END IF;
+
+    INSERT INTO public.user_vips (device_id, vip_level, is_admin, activated_at)
+    VALUES (p_device_id, 'ultimate', true, NOW())
+    ON CONFLICT (device_id) DO UPDATE SET
+        vip_level = 'ultimate',
+        is_admin = true,
+        activated_at = NOW();
+
+    RETURN QUERY SELECT true, '终极VIP管理员已激活';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.admin_activate(TEXT, TEXT) TO anon;
+
 -- 安全递增 retry_count (RPC, 避免 PATCH 覆盖)
 DROP FUNCTION IF EXISTS public.increment_retry(TEXT);
 CREATE OR REPLACE FUNCTION public.increment_retry(vid TEXT) RETURNS void AS $$

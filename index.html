@@ -838,6 +838,44 @@
 </head>
 <body>
 
+    <!-- ==================== VIP 激活对话框 ==================== -->
+    <div class="cheat-dialog-overlay" id="vipDialogOverlay">
+        <div class="cheat-dialog">
+            <button class="vid-modal-close" onclick="closeVipDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
+            <p class="title">💎 会员升级</p>
+            <p class="desc" id="vipDialogDesc">输入激活码升级会员等级</p>
+            <input type="text" id="vipCodeInput" placeholder="输入激活码" autocomplete="off">
+            <div class="actions">
+                <button class="btn-cancel" onclick="closeVipDialog()">取消</button>
+                <button class="cheat-btn accent" onclick="redeemVipCode()">确认激活</button>
+            </div>
+            <p style="font-size:10px;color:var(--vmuted);margin-top:12px;" id="vipResult"></p>
+        </div>
+    </div>
+
+    <!-- ==================== 管理员面板 ==================== -->
+    <div class="cheat-dialog-overlay" id="adminPanelOverlay">
+        <div class="cheat-dialog" style="width:380px;max-width:95vw;">
+            <button class="vid-modal-close" onclick="closeAdminPanel()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
+            <p class="title">👑 管理员面板</p>
+            <div style="text-align:left;font-size:11px;color:var(--vmuted);margin-bottom:12px;">
+                <p>等级: <b style="color:var(--vprimary);" id="adminVipLevel">-</b></p>
+                <p>设备: <span style="font-size:9px;word-break:break-all;" id="adminDeviceId">-</span></p>
+            </div>
+            <p class="desc" style="margin-bottom:8px;">生成新激活码</p>
+            <div style="display:flex;gap:6px;margin-bottom:8px;">
+                <select id="genCodeLevel" style="flex:1;padding:6px;border-radius:2px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);font-size:11px;">
+                    <option value="vip">VIP</option>
+                    <option value="vvip">VVIP</option>
+                    <option value="svip">SVIP</option>
+                </select>
+                <input type="number" id="genCodeUses" value="1" min="1" max="999" style="width:50px;padding:6px;border-radius:2px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);font-size:11px;text-align:center;">
+            </div>
+            <button class="cheat-btn accent" onclick="generateCode()" style="width:100%;margin-bottom:8px;">生成激活码</button>
+            <div id="genCodeResult" style="font-size:11px;color:var(--green);word-break:break-all;min-height:16px;"></div>
+        </div>
+    </div>
+
     <!-- ==================== 身份验证遮罩 ==================== -->
     <div class="auth-overlay hidden" id="authOverlay">
         <div class="auth-box">
@@ -998,6 +1036,8 @@
             <span id="headerStats">加载中...</span>
             <span class="sep"></span>
             <span>排序: <b id="sortLabel">最新优先</b></span>
+            <span class="sep"></span>
+            <span id="vipBadge" style="cursor:pointer;font-weight:600;" onclick="showVipDialog()" title="点击升级会员">🆓 免费</span>
             <span class="sep"></span>
             <span style="font-size:11px;color:#6b6760;" id="pageIndicator"></span>
             <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;margin-left:auto;" id="prevPageBtn" onclick="page--;loadVids(true);window.scrollTo({top:0,behavior:'smooth'});" disabled>◀</button>
@@ -3612,9 +3652,229 @@
         sidebar.appendChild(div);
     }
 
-    // ============ 启动 ============
+    // ============================================================
+    // VIP 会员系统
+    // ============================================================
+    var VIP_LEVELS = { free: 0, vip: 1, vvip: 2, svip: 3, ultimate: 4 };
+    var VIP_LABELS = { free: '🆓 免费', vip: '💎 VIP', vvip: '💎💎 VVIP', svip: '👑 SVIP', ultimate: '⚡ 终极VIP' };
+    var VIP_COLORS = { free: 'var(--vmuted)', vip: '#7a9a7a', vvip: '#4a9adf', svip: '#c8a45c', ultimate: '#e04040' };
+    var _deviceId = '';
+    var _vipLevel = 'free';
+    var _isAdmin = false;
+
+    function getDeviceId() {
+        if (_deviceId) return _deviceId;
+        var stored = localStorage.getItem('device_uid');
+        if (!stored) {
+            stored = 'dev_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 8);
+            localStorage.setItem('device_uid', stored);
+        }
+        _deviceId = stored;
+        return stored;
+    }
+
+    async function checkVipStatus() {
+        var did = getDeviceId();
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/user_vips?device_id=eq.' + encodeURIComponent(did) + '&limit=1', {headers:hds});
+            if (resp.ok) {
+                var data = await resp.json();
+                if (data.length) {
+                    _vipLevel = data[0].vip_level || 'free';
+                    _isAdmin = data[0].is_admin === true;
+                }
+            }
+        } catch(e) {}
+        updateVipBadge();
+    }
+
+    function updateVipBadge() {
+        var badge = document.getElementById('vipBadge');
+        if (!badge) return;
+        badge.textContent = VIP_LABELS[_vipLevel] || VIP_LABELS.free;
+        badge.style.color = VIP_COLORS[_vipLevel] || VIP_COLORS.free;
+        if (_isAdmin) {
+            badge.textContent += ' 👑';
+            badge.title = '管理员 — 点击管理';
+            badge.onclick = function(e) { e.stopPropagation(); showAdminPanel(); };
+        } else {
+            badge.title = '点击升级会员';
+            badge.onclick = function(e) { e.stopPropagation(); showVipDialog(); };
+        }
+    }
+
+    function showVipDialog() {
+        if (_isAdmin) { showAdminPanel(); return; }
+        document.getElementById('vipDialogOverlay').classList.add('on');
+        document.getElementById('vipCodeInput').value = '';
+        document.getElementById('vipResult').textContent = '';
+        document.getElementById('vipDialogDesc').textContent = '当前: ' + VIP_LABELS[_vipLevel] + ' | 输入激活码升级';
+        setTimeout(function() { document.getElementById('vipCodeInput').focus(); }, 300);
+    }
+
+    function closeVipDialog() {
+        document.getElementById('vipDialogOverlay').classList.remove('on');
+    }
+
+    async function redeemVipCode() {
+        var code = document.getElementById('vipCodeInput').value.trim().toUpperCase();
+        if (!code) return;
+        var resultEl = document.getElementById('vipResult');
+        resultEl.textContent = '验证中...';
+        resultEl.style.color = 'var(--vmuted)';
+
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/redeem_code', {
+                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_device_id: getDeviceId(), p_code: code})
+            });
+            if (resp.ok) {
+                var data = await resp.json();
+                if (data && data.success) {
+                    _vipLevel = data.vip_level;
+                    updateVipBadge();
+                    resultEl.textContent = '✅ ' + data.message;
+                    resultEl.style.color = 'var(--green)';
+                    updateSidebarForVip();
+                } else {
+                    resultEl.textContent = '❌ ' + (data ? data.message : '激活失败');
+                    resultEl.style.color = '#c08080';
+                }
+            } else {
+                resultEl.textContent = '❌ 网络错误';
+                resultEl.style.color = '#c08080';
+            }
+        } catch(e) {
+            resultEl.textContent = '❌ ' + (e.message || '网络错误');
+            resultEl.style.color = '#c08080';
+        }
+    }
+
+    // ============ 管理员功能 ============
+    var ADMIN_MASTER_KEY = 'admin2026ultimate'; // ← 改成你自己的管理员密码
+
+    function showAdminPanel() {
+        if (!_isAdmin) { showVipDialog(); return; }
+        document.getElementById('adminPanelOverlay').classList.add('on');
+        document.getElementById('adminVipLevel').textContent = VIP_LABELS[_vipLevel];
+        document.getElementById('adminDeviceId').textContent = getDeviceId();
+        document.getElementById('genCodeResult').textContent = '';
+    }
+
+    function closeAdminPanel() {
+        document.getElementById('adminPanelOverlay').classList.remove('on');
+    }
+
+    async function generateCode() {
+        var level = document.getElementById('genCodeLevel').value;
+        var uses = parseInt(document.getElementById('genCodeUses').value) || 1;
+        var code = level.toUpperCase() + '_' + Date.now().toString(36).toUpperCase() + randomStr(4);
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/activation_codes', {
+                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json', 'Prefer':'return=representation'}),
+                body: JSON.stringify({code: code, vip_level: level, max_uses: uses, created_by: getDeviceId()})
+            });
+            if (resp.ok) {
+                document.getElementById('genCodeResult').textContent = '✅ ' + code + ' (' + uses + '次)';
+                try { navigator.clipboard.writeText(code); } catch(e) {}
+            } else {
+                document.getElementById('genCodeResult').textContent = '❌ 生成失败';
+                document.getElementById('genCodeResult').style.color = '#c08080';
+            }
+        } catch(e) {
+            document.getElementById('genCodeResult').textContent = '❌ 网络错误';
+            document.getElementById('genCodeResult').style.color = '#c08080';
+        }
+    }
+
+    function randomStr(len) {
+        var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        var s = '';
+        for (var i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+        return s;
+    }
+
+    // 管理员激活 (仅第一次使用, 输入 master key)
+    async function adminSetup(masterKey) {
+        if (!masterKey) {
+            masterKey = prompt('输入管理员主密钥激活终极VIP:');
+            if (!masterKey) return;
+        }
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/admin_activate', {
+                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_device_id: getDeviceId(), p_master_key: masterKey})
+            });
+            if (resp.ok) {
+                var data = await resp.json();
+                if (data && data.success) {
+                    _vipLevel = 'ultimate';
+                    _isAdmin = true;
+                    updateVipBadge();
+                    updateSidebarForVip();
+                    toast('⚡ 终极VIP管理员已激活!');
+                } else {
+                    toast('❌ ' + (data ? data.message : '激活失败'));
+                }
+            }
+        } catch(e) { toast('❌ 网络错误'); }
+    }
+
+    // ============ VIP 专属功能 ============
+    function isVipOrHigher(minLevel) {
+        return (VIP_LEVELS[_vipLevel] || 0) >= (VIP_LEVELS[minLevel] || 0);
+    }
+
+    function updateSidebarForVip() {
+        updateVipBadge();
+        var adminBtn = document.getElementById('sidebarAdmin');
+        if (adminBtn) adminBtn.style.display = _isAdmin ? '' : 'none';
+    }
+
+    // Hook enterVideoMode 检查 VIP
+    var _origEnter2 = enterVideoMode;
+    enterVideoMode = function() {
+        _origEnter2();
+        checkVipStatus();
+    };
+
+    // VIP 门控: 下载全部需要 VIP
+    var _origDownloadSelected = downloadSelected;
+    downloadSelected = function() {
+        if (!isVipOrHigher('vip')) {
+            toast('💎 此功能需要 VIP 会员，点击顶部会员标识升级');
+            return;
+        }
+        _origDownloadSelected();
+    };
+
+    // ============ VIP 初始化 + 启动 ============
     addExtraSidebarItems();
     initGame();
+    updateFavsBadge();
+    updateHistBadge();
+    applyPrefsUI();
+    checkVipStatus();
+    // 给 sidebar 打补丁添加 VIP 入口
+    (function() {
+        var sidebar = document.getElementById('sidebar');
+        if (!sidebar || document.getElementById('vipSidebar')) return;
+        var div = document.createElement('div');
+        div.id = 'vipSidebar';
+        div.innerHTML =
+            '<div class="sidebar-divider" style="height:1px;background:var(--vborder);margin:8px 0;"></div>' +
+            '<div class="sidebar-section">' +
+            '<div class="sidebar-label">💎 会员中心</div>' +
+            '<button class="sidebar-item" onclick="showVipDialog()"><span class="ico">💎</span>升级会员</button>' +
+            '<button class="sidebar-item" id="sidebarAdmin" style="display:none;" onclick="showAdminPanel()"><span class="ico">👑</span>管理面板</button>' +
+            '</div>';
+        sidebar.appendChild(div);
+        updateSidebarForVip();
+    })();
     updateFavsBadge();
     updateHistBadge();
     applyPrefsUI();
