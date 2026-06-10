@@ -3699,13 +3699,54 @@
             badge.title = '管理员 — 点击管理';
             badge.onclick = function(e) { e.stopPropagation(); showAdminPanel(); };
         } else {
-            badge.title = '点击升级会员';
-            badge.onclick = function(e) { e.stopPropagation(); showVipDialog(); };
+            badge.title = '点击升级会员 | 连续点5次→管理员激活';
+            badge.onclick = function(e) { e.stopPropagation(); onVipUpgradeTap(); };
         }
+    }
+
+    // 管理员激活入口 (手机友好): 在侧边栏会员中心连续点5次升级按钮
+    var _adminTapCount = 0, _adminTapTimer = null;
+    function onVipUpgradeTap() {
+        _adminTapCount++;
+        clearTimeout(_adminTapTimer);
+        _adminTapTimer = setTimeout(function(){_adminTapCount=0;}, 2000);
+        if (_adminTapCount >= 5) {
+            _adminTapCount = 0;
+            showAdminSetupDialog();
+        } else {
+            showVipDialog();
+        }
+    }
+
+    function showAdminSetupDialog() {
+        document.getElementById('vipDialogOverlay').classList.add('on');
+        document.getElementById('vipCodeInput').value = '';
+        document.getElementById('vipResult').textContent = '';
+        document.getElementById('vipDialogDesc').textContent = '👑 管理员激活 — 输入主密钥';
+        document.getElementById('vipCodeInput').placeholder = '输入管理员主密钥';
+        // 临时把确认按钮改为管理员激活
+        var btn = document.querySelector('#vipDialogOverlay .cheat-btn.accent');
+        if (btn) { btn.textContent = '激活管理员'; btn.onclick = redeemAdminSetup; }
+        setTimeout(function() { document.getElementById('vipCodeInput').focus(); }, 300);
+    }
+
+    function redeemAdminSetup() {
+        var masterKey = document.getElementById('vipCodeInput').value.trim();
+        if (!masterKey) return;
+        adminSetup(masterKey);
+        closeVipDialog();
+    }
+
+    function restoreVipDialog() {
+        var btn = document.querySelector('#vipDialogOverlay .cheat-btn.accent');
+        if (btn) { btn.textContent = '确认激活'; btn.onclick = redeemVipCode; }
+        document.getElementById('vipDialogDesc').textContent = '输入激活码升级会员等级';
+        document.getElementById('vipCodeInput').placeholder = '输入激活码';
     }
 
     function showVipDialog() {
         if (_isAdmin) { showAdminPanel(); return; }
+        restoreVipDialog();
         document.getElementById('vipDialogOverlay').classList.add('on');
         document.getElementById('vipCodeInput').value = '';
         document.getElementById('vipResult').textContent = '';
@@ -3715,6 +3756,7 @@
 
     function closeVipDialog() {
         document.getElementById('vipDialogOverlay').classList.remove('on');
+        restoreVipDialog();
     }
 
     async function redeemVipCode() {
@@ -3869,7 +3911,7 @@
             '<div class="sidebar-divider" style="height:1px;background:var(--vborder);margin:8px 0;"></div>' +
             '<div class="sidebar-section">' +
             '<div class="sidebar-label">💎 会员中心</div>' +
-            '<button class="sidebar-item" onclick="showVipDialog()"><span class="ico">💎</span>升级会员</button>' +
+            '<button class="sidebar-item" onclick="onVipUpgradeTap()"><span class="ico">💎</span>升级会员</button>' +
             '<button class="sidebar-item" id="sidebarAdmin" style="display:none;" onclick="showAdminPanel()"><span class="ico">👑</span>管理面板</button>' +
             '</div>';
         sidebar.appendChild(div);
