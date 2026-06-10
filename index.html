@@ -4166,11 +4166,12 @@
             });
             if (resp.ok) {
                 r.textContent = '✅ 公告已发布'; r.style.color = 'var(--green)';
-                // 刷新页面公告
                 loadAnnouncements();
-            } else {
-                r.textContent = '❌ 发布失败 HTTP ' + resp.status + ' — 确认已执行migrate.sql';
+            } else if (resp.status === 401 || resp.status === 403) {
+                r.textContent = '❌ 权限不足 — 请在管理面板点「🔑 设置管理员密钥」输入 service_role 密钥';
                 r.style.color = '#c08080';
+            } else {
+                r.textContent = '❌ HTTP ' + resp.status; r.style.color = '#c08080';
             }
         } catch(e) { r.textContent = '❌ 网络错误: ' + (e.message || ''); r.style.color = '#c08080'; }
     }

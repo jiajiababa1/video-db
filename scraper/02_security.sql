@@ -17,12 +17,14 @@ CREATE POLICY "anon_update_self" ON public.user_accounts FOR UPDATE TO anon
     banned = (SELECT banned FROM public.user_accounts u WHERE u.username = username)
   );
 
--- activation_codes: 只读
+-- activation_codes: 允许读+写入
 DROP POLICY IF EXISTS "管理员可创建激活码" ON public.activation_codes;
 DROP POLICY IF EXISTS "anon 可读取激活码" ON public.activation_codes;
 DROP POLICY IF EXISTS "anon 可消耗激活码" ON public.activation_codes;
 DROP POLICY IF EXISTS "anon_select_codes" ON public.activation_codes;
 CREATE POLICY "anon_select_codes" ON public.activation_codes FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_codes" ON public.activation_codes FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_codes" ON public.activation_codes FOR UPDATE TO anon USING (true) WITH CHECK (true);
 
 -- videos: anon只读, service_role全权
 DROP POLICY IF EXISTS "允许 service_role 写入视频" ON public.videos;
@@ -34,10 +36,11 @@ DROP POLICY IF EXISTS "service_write_videos" ON public.videos;
 CREATE POLICY "anon_select_videos" ON public.videos FOR SELECT TO anon USING (true);
 CREATE POLICY "service_write_videos" ON public.videos FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- admin_log: 只读
+-- admin_log: 允许读+插入
 DROP POLICY IF EXISTS "anon 管理日志" ON public.admin_log;
 DROP POLICY IF EXISTS "anon_select_logs" ON public.admin_log;
 CREATE POLICY "anon_select_logs" ON public.admin_log FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_logs" ON public.admin_log FOR INSERT TO anon WITH CHECK (true);
 
 -- messages: 允许读写
 DROP POLICY IF EXISTS "anon 管理私信" ON public.messages;
@@ -59,21 +62,27 @@ CREATE POLICY "anon_insert_friends" ON public.friends FOR INSERT TO anon WITH CH
 CREATE POLICY "anon_update_friends" ON public.friends FOR UPDATE TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "anon_delete_friends" ON public.friends FOR DELETE TO anon USING (true);
 
--- announcements: 只读
+-- announcements: 允许读+发布
 DROP POLICY IF EXISTS "anon 管理公告" ON public.announcements;
 DROP POLICY IF EXISTS "anon 读取公告" ON public.announcements;
 DROP POLICY IF EXISTS "anon_select_ann" ON public.announcements;
 CREATE POLICY "anon_select_ann" ON public.announcements FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_ann" ON public.announcements FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_ann" ON public.announcements FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_delete_ann" ON public.announcements FOR DELETE TO anon USING (true);
 
--- system_config: 只读
+-- system_config: 可读写
 DROP POLICY IF EXISTS "anon 管理配置" ON public.system_config;
 DROP POLICY IF EXISTS "anon_select_cfg" ON public.system_config;
 CREATE POLICY "anon_select_cfg" ON public.system_config FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_cfg" ON public.system_config FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_cfg" ON public.system_config FOR UPDATE TO anon USING (true) WITH CHECK (true);
 
--- bans: 只读
+-- bans: 可读写(封禁记录)
 DROP POLICY IF EXISTS "anon 管理封禁" ON public.bans;
 DROP POLICY IF EXISTS "anon_select_bans" ON public.bans;
 CREATE POLICY "anon_select_bans" ON public.bans FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_bans" ON public.bans FOR INSERT TO anon WITH CHECK (true);
 
 -- cloud_favorites: 允许读写
 DROP POLICY IF EXISTS "anon 管理自己的云收藏" ON public.cloud_favorites;
