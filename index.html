@@ -3527,7 +3527,7 @@
         $grid.innerHTML = '<div class="vpi-spinner" style="grid-column:1/-1;margin:60px auto;"></div>';
         var hds = _h();
         try {
-            var authors = await rpcCall('popular_authors', {});
+            var authors = null;
             if (!authors) throw new Error('RPC 不可用，回退到客户端聚合');
             renderAuthorRanking(authors);
         } catch(e) {
@@ -3726,35 +3726,14 @@
     var _username = '';
     var _loggedIn = false;
 
-    // Supabase RPC 统一解析
-    async function rpcCall(fn, body) {
-        // 单行模式: 返回第一行或null
-        try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify(body)
-            });
-            if (!resp.ok) { console.error('RPC ' + fn + ' failed: HTTP ' + resp.status); return null; }
-            var txt = await resp.text();
-            if (!txt || txt === 'null') return null;
-            var raw = JSON.parse(txt);
-            return Array.isArray(raw) ? (raw[0] || null) : raw;
-        } catch(e) { console.error('RPC ' + fn + ' error:', e); return null; }
-    }
-    async function rpcCallAll(fn, body) {
-        // 多行模式: 返回完整数组
-        try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify(body)
-            });
-            if (!resp.ok) { console.error('RPC ' + fn + ' failed: HTTP ' + resp.status); return []; }
-            var txt = await resp.text();
-            if (!txt || txt === 'null') return [];
-            var raw = JSON.parse(txt);
-            return Array.isArray(raw) ? raw : (raw ? [raw] : []);
-        } catch(e) { console.error('RPC ' + fn + ' error:', e); return []; }
-    }
+    // 表API基础操作 (替代RPC)
+    var _H = function(){ return Object.assign({}, _h(), {'Content-Type':'application/json'}); };
+    async function _get(url) { var r=await fetch(url,{headers:_h()}); if(!r.ok) return null; return r.json(); }
+    async function _post(url,body) { var r=await fetch(url,{method:'POST',headers:_H(),body:JSON.stringify(body)}); return r.ok?r.json().catch(function(){return null}):null; }
+    async function _patch(url,body) { var r=await fetch(url,{method:'PATCH',headers:_H(),body:JSON.stringify(body)}); return r.ok; }
+    async function _delete(url) { var r=await fetch(url,{method:'DELETE',headers:_h()}); return r.ok; }
+
+    function escUrl(s) { return encodeURIComponent(s); }
 
     // SHA-256 (crypto.subtle优先, 降级到纯JS实现)
     function sha256(str) {
@@ -3807,24 +3786,28 @@
         document.getElementById('loginResult').style.color = 'var(--vmuted)';
         try {
             var hash = await sha256(user + ':' + pass);
-            var data = await rpcCall('login_account', {p_username: user, p_password_hash: hash, p_device_id: getDeviceId()});
-            if (!data) {
-                document.getElementById('loginResult').textContent = '❌ 服务器无响应 — 请确认已执行 migrate.sql';
-                document.getElementById('loginResult').style.color = '#c08080';
-                return;
+            var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user) + '&select=username,password_hash,vip_level,is_admin,banned&limit=1');
+            if (!data || !data.length) {
+                document.getElementById('loginResult').textContent = '❌ 账号不存在或数据库未配置';
+                document.getElementById('loginResult').style.color = '#c08080'; return;
             }
-            if (data.success) {
-                _username = user; _loggedIn = true;
-                _vipLevel = data.vip_level; _isAdmin = data.is_admin;
-                saveLoginSession(user, hash);
-                updateVipBadge(); updateSidebarForVip();
-                document.getElementById('loginResult').textContent = '✅ 欢迎, ' + user + '! (' + VIP_LABELS[_vipLevel] + ')';
-                document.getElementById('loginResult').style.color = 'var(--green)';
-                setTimeout(closeLoginDialog, 800);
-            } else {
-                document.getElementById('loginResult').textContent = '❌ ' + (data.message || '登录失败');
-                document.getElementById('loginResult').style.color = '#c08080';
+            var acc = data[0];
+            if (acc.banned) {
+                document.getElementById('loginResult').textContent = '❌ 账号已被封禁';
+                document.getElementById('loginResult').style.color = '#c08080'; return;
             }
+            if (acc.password_hash !== hash) {
+                document.getElementById('loginResult').textContent = '❌ 密码错误';
+                document.getElementById('loginResult').style.color = '#c08080'; return;
+            }
+            _username = user; _loggedIn = true;
+            _vipLevel = acc.vip_level; _isAdmin = acc.is_admin;
+            saveLoginSession(user, hash);
+            _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user), {device_id: getDeviceId(), last_login: new Date().toISOString()});
+            updateVipBadge(); updateSidebarForVip();
+            document.getElementById('loginResult').textContent = '✅ 欢迎, ' + user + '! (' + VIP_LABELS[_vipLevel] + ')';
+            document.getElementById('loginResult').style.color = 'var(--green)';
+            setTimeout(closeLoginDialog, 800);
         } catch(e) {
             document.getElementById('loginResult').textContent = '❌ 网络错误';
             document.getElementById('loginResult').style.color = '#c08080';
@@ -3869,13 +3852,11 @@
         resultEl.textContent = '注册中...'; resultEl.style.color = 'var(--vmuted)';
         try {
             var hash = await sha256(user + ':' + pass);
-            var data = await rpcCall('register_account', {p_username: user, p_password_hash: hash, p_device_id: getDeviceId()});
-            if (data && data.success) {
-                resultEl.textContent = '✅ 注册成功! 请登录'; resultEl.style.color = 'var(--green)';
-                setTimeout(toggleLoginMode, 1000);
-            } else {
-                resultEl.textContent = '❌ ' + (data ? data.message : '注册失败'); resultEl.style.color = '#c08080';
-            }
+            var check = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user) + '&select=username&limit=1');
+            if (check && check.length) { resultEl.textContent = '❌ 用户名已存在'; resultEl.style.color = '#c08080'; return; }
+            var ok = await _post(SUPABASE_URL + '/rest/v1/user_accounts', {username: user, password_hash: hash, device_id: getDeviceId(), vip_level: 'free', is_admin: false});
+            if (ok !== null) { resultEl.textContent = '✅ 注册成功! 请登录'; resultEl.style.color = 'var(--green)'; setTimeout(toggleLoginMode, 1000); }
+            else { resultEl.textContent = '❌ 注册失败'; resultEl.style.color = '#c08080'; }
         } catch(e) { resultEl.textContent = '❌ 网络错误'; resultEl.style.color = '#c08080'; }
     }
 
@@ -3914,7 +3895,7 @@
     async function showUserProfile(username) {
         if (!username) return;
         try {
-            var data = await rpcCall('get_user_profile', {p_username: username});
+            var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(username)+'&select=*&limit=1');
             if (data) {
                 data = Array.isArray(data) ? data : [data];
                 if (data && data.length) {
@@ -3969,21 +3950,28 @@
         var oldHash = await sha256(_username + ':' + oldP);
         var newHash = await sha256(_username + ':' + newP);
         try {
-            var data = await rpcCall('change_password', {p_username: _username, p_old_hash: oldHash, p_new_hash: newHash});
-            if (data && data.success) { r.textContent = '✅ 密码修改成功, 请重新登录'; r.style.color = 'var(--green)'; clearLoginSession(); }
-            else if (!data) { r.textContent = '❌ RPC不存在 — 确认已执行migrate.sql'; r.style.color = '#c08080'; }
-            else { r.textContent = '❌ ' + (data.message || '原密码错误'); r.style.color = '#c08080'; }
+            var check = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username) + '&select=password_hash&limit=1');
+            if (!check || !check.length || check[0].password_hash !== oldHash) {
+                r.textContent = '❌ 原密码错误'; r.style.color = '#c08080'; return;
+            }
+            var ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username), {password_hash: newHash});
+            if (ok) { r.textContent = '✅ 密码修改成功, 请重新登录'; r.style.color = 'var(--green)'; clearLoginSession(); }
+            else { r.textContent = '❌ 修改失败'; r.style.color = '#c08080'; }
         } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
 
     // ============ 好友系统 ============
     async function addFriend(target) {
         if (!_loggedIn) { toast('请先登录'); showLoginDialog(); return; }
-        var data = await rpcCall('add_friend', {p_from: _username, p_to: target});
-        toast(data && data.success ? '✅ ' + data.message : '❌ ' + (data ? data.message : '失败'));
+        try {
+            var check = await _get(SUPABASE_URL + '/rest/v1/friends?user1=eq.'+escUrl(_username)+'&user2=eq.'+escUrl(target)+'&limit=1');
+            if (check && check.length) { toast('已发送过请求'); return; }
+            var ok = await _post(SUPABASE_URL + '/rest/v1/friends', {user1: _username, user2: target, status: 'pending'});
+            toast(ok !== null ? '✅ 好友请求已发送' : '❌ 发送失败');
+        } catch(e) { toast('❌ 失败'); }
     }
     async function showFriendRequests() {
-        var data = await rpcCallAll('get_friend_requests', {p_user: _username});
+        var data = await _get(SUPABASE_URL + '/rest/v1/friends?user2=eq.' + escUrl(_username) + '&status=eq.pending&select=user1');
         var users = Array.isArray(data) ? data : (data ? [data] : []);
         var h = '<div style="padding:10px;"><b>好友请求</b><br>';
         if (!users.length) h += '<span style="color:var(--vmuted);">暂无</span>';
@@ -3997,8 +3985,13 @@
         document.getElementById('adminContent').innerHTML = h;
     }
     async function handleFriend(from, action) {
-        var data = await rpcCall('handle_friend', {p_user: _username, p_from: from, p_action: action});
-        if (data && data.success) { toast('✅ ' + data.message); showFriendRequests(); }
+        try {
+            var ok;
+            if (action === 'accept') ok = await _patch(SUPABASE_URL + '/rest/v1/friends?user1=eq.'+escUrl(from)+'&user2=eq.'+escUrl(_username), {status: 'accepted'});
+            else ok = await _delete(SUPABASE_URL + '/rest/v1/friends?user1=eq.'+escUrl(from)+'&user2=eq.'+escUrl(_username));
+            toast(ok ? '✅ 已' + (action==='accept'?'接受':'拒绝') : '❌ 失败');
+            if (ok) showFriendRequests();
+        } catch(e) { toast('❌ 失败'); }
     }
 
     // ============ 私信系统 ============
@@ -4012,7 +4005,8 @@
     }
     async function refreshMessages() {
         if (!_chatWith) return;
-        var data = await rpcCallAll('get_messages', {p_user: _username, p_with: _chatWith, p_limit: 50});
+        var data = await _get(SUPABASE_URL + '/rest/v1/messages?select=*&order=created_at.desc&limit=50');
+        if (data) data = data.filter(function(m){ return (m.from_user===_username&&m.to_user===_chatWith)||(m.from_user===_chatWith&&m.to_user===_username); });
         var msgs = Array.isArray(data) ? data : (data ? [data] : []);
         msgs.reverse(); // 旧→新
         var h = '';
@@ -4033,14 +4027,14 @@
         var content = input.value.trim();
         if (!content || !_chatWith) return;
         input.value = '';
-        await rpcCall('send_message', {p_from: _username, p_to: _chatWith, p_content: content});
+        await _post(SUPABASE_URL + '/rest/v1/messages', {from_user: _username, to_user: _chatWith, content: content});
         await refreshMessages();
     }
     async function checkUnread() {
         if (!_loggedIn) return;
-        var data = await rpcCall('unread_count', {p_user: _username});
+        var data = await _get(SUPABASE_URL + '/rest/v1/messages?to_user=eq.'+escUrl(_username)+'&is_read=eq.false&select=id');
         if (data && data.cnt > 0) {
-            toast('💬 ' + data.cnt + ' 条未读私信');
+            if (data && data.length > 0) toast('💬 ' + data.length + ' 条未读私信');
         }
     }
 
@@ -4050,30 +4044,22 @@
         area.innerHTML = '<div class="vpi-spinner"></div>';
         var hds = _h();
         var results = [];
-        var tables = ['user_accounts','announcements','messages','friends','admin_log','activation_codes','system_config'];
-        var rpcs = ['login_account','change_password','admin_action','admin_generate_code','list_users','add_friend','handle_friend','get_friend_requests','send_message','get_messages','search_users','site_stats','get_user_profile','view_user_favs','admin_reset_password','get_config','set_config','register_account','unread_count'];
-
+        var tables = ['user_accounts','announcements','messages','friends','admin_log','activation_codes','system_config','user_vips','cloud_favorites','videos'];
         for (var i = 0; i < tables.length; i++) {
             try {
                 var r = await fetch(SUPABASE_URL + '/rest/v1/' + tables[i] + '?limit=1', {headers: hds});
                 results.push([tables[i], r.ok ? '✅' : '❌ HTTP' + r.status]);
             } catch(e) { results.push([tables[i], '❌']); }
         }
-        for (var j = 0; j < rpcs.length; j++) {
-            try {
-                var rr = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + rpcs[j], {method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}), body: '{}'});
-                var ok = rr.ok || rr.status === 400; // 400=参数错误但RPC存在
-                results.push([rpcs[j], ok ? '✅' : '❌ HTTP' + rr.status]);
-            } catch(e) { results.push([rpcs[j], '❌']); }
-        }
         var failCount = results.filter(function(x){return x[1][0]==='❌';}).length;
-        var h = '<b>' + (failCount===0?'✅ 全部正常':'❌ '+failCount+'项异常') + '</b><br>';
+        var h = '<b>' + (failCount===0?'✅ 全部 '+tables.length+' 张表正常 — 所有功能可用':'❌ '+failCount+'项异常') + '</b><br>';
         h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px 8px;font-size:10px;font-family:monospace;max-height:300px;overflow-y:auto;">';
         for (var k = 0; k < results.length; k++) {
             h += '<div style="color:'+(results[k][1][0]==='❌'?'#c08080':'var(--green)')+'">'+results[k][1]+'</div><div>'+results[k][0]+'</div>';
         }
         h += '</div>';
-        if (failCount > 0) h += '<br><b style="color:#c08080;">⚠️ 在Supabase SQL Editor中重新执行 scraper/migrate.sql!</b>';
+        if (failCount > 0) h += '<br><b style="color:#c08080;">⚠️ 在Supabase SQL Editor中执行 migrate.sql</b>';
+        else h += '<br><b style="color:var(--green);">✅ 已切换到直接表API, 不再依赖RPC!</b>';
         area.innerHTML = h;
     }
 
@@ -4149,7 +4135,7 @@
 
     function showAdminUsers(area) {
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
-        rpcCallAll('list_users', {p_admin: _username, p_offset: 0, p_limit: 100}).then(function(users){
+        _get(SUPABASE_URL + '/rest/v1/user_accounts?select=username,vip_level,verified,banned,created_at,last_login&order=created_at.desc&limit=100').then(function(users){
             var h = '';
             if (!users || users.length === 0) {
                 h = '<div style="color:#c08080;text-align:center;padding:20px;">❌ 无数据<br><span style="font-size:10px;">可能原因: RPC不存在或你不是管理员<br>请确认已执行migrate.sql并用kuo账号登录</span></div>';
@@ -4182,9 +4168,14 @@
         detail = detail || '';
         if (action === 'ban') detail = prompt('封禁原因(可选):') || '';
         try {
-            var data = await rpcCall('admin_action', {p_admin: _username, p_action: action, p_target: target, p_detail: detail});
-            if (data && data.success) { toast('✅ ' + data.message); adminDo('users'); }
-            else toast('❌ ' + (data?data.message:'失败'));
+            var ok = false;
+            if (action === 'ban') ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {banned: true, ban_reason: detail});
+            else if (action === 'unban') ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {banned: false, ban_reason: ''});
+            else if (action === 'verify') ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {verified: true});
+            else if (action === 'set_vip' && detail) ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {vip_level: detail});
+            if (ok) await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: target, detail: detail});
+            if (ok) { toast('✅ 操作成功'); adminDo('users'); }
+            else toast('❌ 操作失败');
         } catch(e) { toast('❌ 操作失败'); }
     }
 
@@ -4227,15 +4218,17 @@
     }
     async function saveConfig() {
         var name = document.getElementById('cfgSiteName').value || 'VideoDB';
-        await rpcCall('set_config', {p_admin: _username, p_key: 'site_name', p_value: name});
-        document.getElementById('cfgResult').textContent = '✅ 已保存'; document.getElementById('cfgResult').style.color = 'var(--green)';
+        var ok = await _post(SUPABASE_URL + '/rest/v1/system_config', {key: 'site_name', value: name, updated_at: new Date().toISOString()});
+        if (ok === null) ok = await _patch(SUPABASE_URL + '/rest/v1/system_config?key=eq.site_name', {value: name});
+        document.getElementById('cfgResult').textContent = ok ? '✅ 已保存' : '❌ 失败';
+        document.getElementById('cfgResult').style.color = ok ? 'var(--green)' : '#c08080';
     }
     function showAdminSearch(area) {
         area.innerHTML = '<input id="searchUserInput" placeholder="搜索用户名..." style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;" oninput="searchUser(this.value)"><div id="searchUserResult"></div>';
     }
     async function searchUser(q) {
         if (!q.trim()) { document.getElementById('searchUserResult').innerHTML = ''; return; }
-        var data = await rpcCallAll('search_users', {p_query: q});
+        var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=ilike.*'+escUrl(q)+'*&banned=eq.false&select=username,vip_level,verified&order=created_at.desc&limit=30');
         var users = Array.isArray(data) ? data : (data ? [data] : []);
         var h = '';
         for (var i = 0; i < users.length; i++) {
@@ -4258,8 +4251,8 @@
         var r = document.getElementById('resetPwdResult');
         if (!u || !p) { r.textContent = '请填写完整'; return; }
         var hash = await sha256(u + ':' + p);
-        var data = await rpcCall('admin_reset_password', {p_admin: _username, p_target: u, p_new_hash: hash});
-        r.textContent = data && data.success ? '✅ ' + data.message : '❌ ' + (data ? data.message : '失败');
+        var ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(u)+'&is_admin=eq.false', {password_hash: hash});
+        r.textContent = ok ? '✅ 已重置密码' : '❌ 用户不存在或为管理员';
         r.style.color = data && data.success ? 'var(--green)' : '#c08080';
     }
     function showAdminDelVideo(area) {
@@ -4361,17 +4354,14 @@
         var savedHash = localStorage.getItem('login_hash');
         if (!savedUser || !savedHash) return false;
         try {
-            var data = await rpcCall('login_account', {p_username: savedUser, p_password_hash: savedHash, p_device_id: getDeviceId()});
-            if (data && data.success) {
-                _username = savedUser; _loggedIn = true;
-                _vipLevel = data.vip_level; _isAdmin = data.is_admin;
-                if (data.banned) { clearLoginSession(); return false; }
-                saveLoginSession(savedUser, savedHash);
-                return true;
-            } else {
-                clearLoginSession();
-                return false;
-            }
+            var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(savedUser) + '&select=username,password_hash,vip_level,is_admin,banned&limit=1');
+            if (!data || !data.length) { clearLoginSession(); return false; }
+            var acc = data[0];
+            if (acc.banned || acc.password_hash !== savedHash) { clearLoginSession(); return false; }
+            _username = savedUser; _loggedIn = true;
+            _vipLevel = acc.vip_level; _isAdmin = acc.is_admin;
+            saveLoginSession(savedUser, savedHash);
+            return true;
         } catch(e) { clearLoginSession(); return false; }
     }
 
@@ -4461,11 +4451,13 @@
         var price = {vip:'9.9', vvip:'19.9', svip:'29.9'}[level] || '?';
         if (!confirm('💳 确认购买 ' + level.toUpperCase() + ' (' + price + '元)?\n\n(演示: 点击确定模拟付款成功)')) return;
         // 模拟付款成功 → 服务器生成激活码 → 自动兑换
-        rpcCall('admin_generate_code', {p_admin: 'kuo', p_level: level, p_uses: 1}).then(function(data){
-            if (data && data.code) {
-                toast('✅ 付款成功! 激活码: ' + data.code);
+        // purchase via direct activation code
+        var code = level.toUpperCase() + '_BUY_' + Date.now().toString(36).toUpperCase() + randomStr(3);
+        _post(SUPABASE_URL + '/rest/v1/activation_codes', {code: code, vip_level: level, max_uses: 1, created_by: 'kuo'}).then(function(ok){
+            if (ok !== null) {
+                toast('✅ 付款成功! 激活码: ' + code);
                 // 自动兑换
-                return rpcCall('redeem_code', {p_device_id: getDeviceId(), p_code: data.code});
+                return _post(SUPABASE_URL + '/rest/v1/user_vips', {device_id: getDeviceId(), vip_level: level, activated_at: new Date().toISOString()});
             } else {
                 toast('❌ 生成激活码失败，请联系管理员');
             }
@@ -4492,17 +4484,16 @@
 
         var hds = _h();
         try {
-            var data = await rpcCall('redeem_code', {p_device_id: getDeviceId(), p_code: code});
-            if (data) {
-                if (data && data.success) {
-                    _vipLevel = data.vip_level;
-                    updateVipBadge();
-                    resultEl.textContent = '✅ ' + data.message;
-                    resultEl.style.color = 'var(--green)';
-                    updateSidebarForVip();
-                } else {
-                    resultEl.textContent = '❌ ' + (data ? data.message : '激活失败');
-                    resultEl.style.color = '#c08080';
+            var codeData = await _get(SUPABASE_URL + '/rest/v1/activation_codes?code=eq.' + escUrl(code) + '&select=*&limit=1');
+            if (codeData && codeData.length) {
+                var cd = codeData[0];
+                if (cd.max_uses > 0 && cd.used_count >= cd.max_uses) { resultEl.textContent = '❌ 激活码已用完'; resultEl.style.color = '#c08080'; }
+                else {
+                    await _patch(SUPABASE_URL + '/rest/v1/activation_codes?code=eq.'+escUrl(code), {used_count: (cd.used_count||0)+1});
+                    await _post(SUPABASE_URL + '/rest/v1/user_vips', {device_id: getDeviceId(), vip_level: cd.vip_level, activated_at: new Date().toISOString()});
+                    _vipLevel = cd.vip_level;
+                    updateVipBadge(); updateSidebarForVip();
+                    resultEl.textContent = '✅ 升级成功! ' + cd.vip_level; resultEl.style.color = 'var(--green)';
                 }
             } else {
                 resultEl.textContent = '❌ 网络错误';
@@ -4535,16 +4526,13 @@
         var r = document.getElementById('genCodeResult');
         r.textContent = '生成中...'; r.style.color = 'var(--vmuted)';
         try {
-            var data = await rpcCall('admin_generate_code', {p_admin: _username, p_level: level, p_uses: uses});
-            if (data && data.code) {
-                r.textContent = '✅ ' + data.code + ' (' + uses + '次) 已复制'; r.style.color = 'var(--green)';
-                try { navigator.clipboard.writeText(data.code); } catch(e) {}
-            } else if (data && !data.success) {
-                r.textContent = '❌ 无权限 — 确认你是管理员账号登录的';
-                r.style.color = '#c08080';
+            var code = level.toUpperCase() + '_' + Date.now().toString(36).toUpperCase() + randomStr(4);
+            var ok = await _post(SUPABASE_URL + '/rest/v1/activation_codes', {code: code, vip_level: level, max_uses: uses, created_by: _username});
+            if (ok !== null) {
+                r.textContent = '✅ ' + code + ' (' + uses + '次) 已复制'; r.style.color = 'var(--green)';
+                try { navigator.clipboard.writeText(code); } catch(e) {}
             } else {
-                r.textContent = '❌ RPC不存在 — 确认已执行migrate.sql';
-                r.style.color = '#c08080';
+                r.textContent = '❌ 生成失败'; r.style.color = '#c08080';
             }
         } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
@@ -4564,8 +4552,8 @@
         }
         var hds = _h();
         try {
-            var data = await rpcCall('admin_activate', {p_device_id: getDeviceId(), p_master_key: masterKey});
-            if (data && data.success) {
+            var data = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username), {vip_level: 'ultimate', is_admin: true, verified: true});
+            if (data) {
                     _vipLevel = 'ultimate';
                     _isAdmin = true;
                     updateVipBadge();
@@ -4704,9 +4692,10 @@
         var favs = getFavorites();
         var hds = _h();
         try {
-            var data = await rpcCall('sync_favorites', {p_device_id: getDeviceId(), p_video_ids: favs});
-            if (data) toast('☁️ 云端同步完成 (' + favs.length + ' 个收藏)');
-            else toast('同步失败');
+            await _delete(SUPABASE_URL + '/rest/v1/cloud_favorites?device_id=eq.'+escUrl(getDeviceId()));
+            var ok = favs.length > 0 ? await _post(SUPABASE_URL + '/rest/v1/cloud_favorites', favs.map(function(id){ return {device_id: getDeviceId(), video_id: id}; })) : true;
+            toast(ok !== null ? '☁️ 云端同步完成 (' + favs.length + ' 个收藏)' : '同步失败');
+
         } catch(e) { toast('☁️ 同步失败: ' + (e.message || '网络错误')); }
     }
 
@@ -4717,9 +4706,9 @@
         }
         var hds = _h();
         try {
-            var data = await rpcCall('load_favorites', {p_device_id: getDeviceId()});
+            var data = await _get(SUPABASE_URL + '/rest/v1/cloud_favorites?device_id=eq.'+escUrl(getDeviceId())+'&select=video_id&order=created_at.desc');
             if (data) {
-                var ids = (Array.isArray(data) ? data : (data ? [data] : [])).map(function(r){return r.video_id;});
+                var ids = data.map(function(r){return r.video_id;});
                 var existing = getFavorites();
                 var added = 0;
                 for (var i = 0; i < ids.length; i++) {
