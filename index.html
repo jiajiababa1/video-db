@@ -1215,13 +1215,17 @@
             if (p.sortOrder === 'asc' || p.sortOrder === 'desc') sortOrder = p.sortOrder;
             if (p.playableFilter === 'all' || p.playableFilter === 'playable' || p.playableFilter === 'unplayable') playableFilter = p.playableFilter;
         } catch(e) {}
-        // 恢复 UI 状态
-        if (compactView) { $grid.classList.add('compact'); document.getElementById('viewToggle').classList.add('active'); }
-        $sortBtn.textContent = sortOrder === 'desc' ? '↓ 最新' : '↑ 最早';
-        $sortLabel.textContent = sortOrder === 'desc' ? '最新优先' : '最早优先';
+    }
+    function applyPrefsUI() {
+        // 恢复 UI 状态 (DOM 元素就绪后才能调用)
+        if (compactView && $grid) { $grid.classList.add('compact'); var vt=document.getElementById('viewToggle'); if(vt)vt.classList.add('active'); }
+        if ($sortBtn) { $sortBtn.textContent = sortOrder === 'desc' ? '↓ 最新' : '↑ 最早'; }
+        if ($sortLabel) { $sortLabel.textContent = sortOrder === 'desc' ? '最新优先' : '最早优先'; }
         var pfBtn = document.getElementById('playableFilter');
-        if (playableFilter === 'playable') { pfBtn.textContent = '✅ 可播'; pfBtn.classList.add('active'); }
-        else if (playableFilter === 'unplayable') { pfBtn.textContent = '⚠️ 失效'; pfBtn.classList.add('active'); }
+        if (pfBtn) {
+            if (playableFilter === 'playable') { pfBtn.textContent = '✅ 可播'; pfBtn.classList.add('active'); }
+            else if (playableFilter === 'unplayable') { pfBtn.textContent = '⚠️ 失效'; pfBtn.classList.add('active'); }
+        }
     }
     loadPrefs();
 
@@ -2597,8 +2601,8 @@
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
             total=r.count;
-            applyFiltersAndRender(r.data, total, page>1);
-            hasMore=r.data.length>=PAGE_SIZE;
+            var filtered=applyFiltersAndRender(r.data, total, page>1);
+            hasMore=filtered.length>=PAGE_SIZE;
             hideSkeletons();
             if(reset) fetchLastScrape();
         }catch(e){
@@ -2616,8 +2620,8 @@
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
             total=r.count;
-            applyFiltersAndRender(r.data, total, true);
-            hasMore=r.data.length>=PAGE_SIZE;
+            var filtered2=applyFiltersAndRender(r.data, total, true);
+            hasMore=filtered2.length>=PAGE_SIZE;
         }catch(e){toast('加载失败: '+e.message);page--;}
         loading=false;
     }
@@ -3022,6 +3026,7 @@
     initGame();
     updateFavsBadge();
     updateHistBadge();
+    applyPrefsUI();
 
     // iOS 独立模式检测
     if (window.navigator.standalone) {
