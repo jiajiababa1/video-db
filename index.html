@@ -285,6 +285,27 @@
             gap:20px;
         }
         .vid-grid.compact { grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+        /* 作者页紧凑列表 */
+        .vid-grid.author-list { display:block; max-width:900px; margin:0 auto; }
+        .author-row {
+            display:flex; align-items:center; gap:12px; padding:12px 16px;
+            border-bottom:1px solid var(--vborder); cursor:pointer; transition:all 0.2s;
+            font-family:var(--font-sans);
+        }
+        .author-row:hover { background:rgba(200,164,92,0.04); }
+        .author-row .ar-title {
+            flex:1; font-size:13px; color:var(--vtext); min-width:0;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        }
+        .author-row .ar-meta { font-size:10px; color:var(--vmuted); white-space:nowrap; font-family:var(--font-mono); }
+        .author-row .ar-status { font-size:12px; flex-shrink:0; }
+        .author-row .ar-loading {
+            width:16px; height:16px; border:2px solid var(--vborder);
+            border-top-color:var(--vprimary); border-radius:50%; animation:spin 0.6s linear infinite;
+            display:none; flex-shrink:0;
+        }
+        .author-row.loading .ar-loading { display:block; }
+        .author-row.loading .ar-status { display:none; }
         .vid-card {
             background:var(--vcard); border-radius:2px; overflow:hidden;
             border:1px solid var(--vborder); cursor:pointer; display:flex; flex-direction:column;
@@ -1824,7 +1845,7 @@
         ah.classList.add('on');
         document.getElementById('authorName').textContent = '@' + author;
         document.getElementById('authorAvatar').textContent = author.charAt(0).toUpperCase();
-        document.getElementById('authorMeta').textContent = '作者作品列表';
+        document.getElementById('authorMeta').textContent = '点击标题即可加载视频';
         // 滚动到顶部
         window.scrollTo({top: 0, behavior: 'smooth'});
         loadVids(true);
@@ -1834,6 +1855,8 @@
         activeAuthor = '';
         var ah = document.getElementById('authorHeader');
         ah.classList.remove('on');
+        // 恢复网格模式
+        $grid.classList.remove('author-list');
         // 恢复「全部」标签激活
         var tabs = document.querySelectorAll('#vidTabs .vid-tab');
         for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
@@ -2397,6 +2420,33 @@
     }
     function showCopied(btn){btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='🔗';btn.classList.remove('copied');},1500);}
 
+    // ============ 作者页紧凑行 ============
+    function authorRow(v) {
+        var row = document.createElement('div');
+        row.className = 'author-row';
+        var hasMp4 = v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0);
+        var statusIcon = hasMp4 ? '✅' : '⏳';
+        var title = v.title || v.video_id || '无标题';
+        var date = v.scraped_at ? new Date(v.scraped_at).toLocaleDateString('zh-CN') : '';
+        row.innerHTML =
+            '<span class="ar-title">' + esc(title) + '</span>' +
+            '<span class="ar-meta">' + (v.source_section||'') + '</span>' +
+            '<span class="ar-meta">' + date + '</span>' +
+            '<span class="ar-status" title="'+(hasMp4?'已缓存':'点击解析')+'">' + statusIcon + '</span>' +
+            '<div class="ar-loading"></div>';
+        row.addEventListener('click', function(e) {
+            if (e.target.closest('.vid-copy')) return;
+            addToHistory(v.video_id);
+            // 标记加载状态
+            row.classList.add('loading');
+            // 尝试播放
+            showInlinePlayer(v, row);
+            // 播放器打开后恢复状态
+            setTimeout(function() { row.classList.remove('loading'); }, 2000);
+        });
+        return row;
+    }
+
     // ============ 键盘关闭播放器 ============
 
     function render(vids, append){
@@ -2405,16 +2455,25 @@
             $grid.innerHTML='<div class="empty-state" style="grid-column:1/-1;"><span class="icon">📭</span><p class="title">'+(sq?'没找到匹配的视频':(activeAuthor?'该作者暂无作品':'暂无视频数据'))+'</p><p class="desc">'+(activeAuthor?'试试查看其他作者':(sq?'试试其他关键词':'点顶部「更新」按钮触发爬虫获取数据'))+'</p></div>';
             hasMore=false; return;
         }
-        var f=document.createDocumentFragment();
-        for(var i=0;i<vids.length;i++)f.appendChild(card(vids[i]));
-        $grid.appendChild(f);
+        // 作者页: 紧凑标题列表模式 (每行: 标题 + 可播状态 + 发布日期)
+        if (activeAuthor) {
+            $grid.classList.add('author-list');
+            var f=document.createDocumentFragment();
+            for(var i=0;i<vids.length;i++)f.appendChild(authorRow(vids[i]));
+            $grid.appendChild(f);
+        } else {
+            $grid.classList.remove('author-list');
+            var f=document.createDocumentFragment();
+            for(var i=0;i<vids.length;i++)f.appendChild(card(vids[i]));
+            $grid.appendChild(f);
+        }
         hasMore=vids.length>=PAGE_SIZE;
     }
 
     // ============ 加载数据 ============
     async function loadVids(reset){
         if(loading)return; loading=true;
-        if(reset){page=1;hasMore=true;buildSkeletons(8);}
+        if(reset){page=1;hasMore=true;if(!activeAuthor)$grid.classList.remove('author-list');buildSkeletons(8);}
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
             // 客户端可播放性过滤
