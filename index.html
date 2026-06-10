@@ -1662,16 +1662,13 @@
                 if (cardEl) {
                     cardEl.classList.remove('needs-rescrape', 'unplayable');
                     cardEl.classList.add('has-mp4');
-                    // 更新卡片上的状态标签 🔄/⚠️ → ✅
-                    var footSpans = cardEl.querySelectorAll('.vid-foot span');
-                    for (var si = 0; si < footSpans.length; si++) {
-                        var txt = footSpans[si].textContent || '';
-                        if (txt === '⚠️' || txt === '🔄') {
-                            footSpans[si].textContent = '✅';
-                            footSpans[si].style.color = '#7a9a7a';
-                            footSpans[si].title = '可播放';
-                            break;
-                        }
+                    // 更新卡片上的状态标签 (通过 data-status 属性定位)
+                    var statusEl = cardEl.querySelector('.vid-status');
+                    if (statusEl) {
+                        statusEl.textContent = '✅';
+                        statusEl.style.color = '#7a9a7a';
+                        statusEl.title = '可播放';
+                        statusEl.setAttribute('data-status', 'playable');
                     }
                     // 如果有预览 video 需求但还没创建，补齐预览元素
                     var thumb = cardEl.querySelector('.vid-thumb');
@@ -2073,7 +2070,7 @@
         // 分类过滤 (非收藏/历史模式)
         if(activeSection && activeSection !== 'favs' && activeSection !== 'history') params+='&source_section=ilike.*'+encodeURIComponent(activeSection)+'*';
         // 作者过滤
-        if(activeAuthor) params+='&author=ilike.'+encodeURIComponent(activeAuthor);
+        if(activeAuthor) params+='&author=ilike.*'+encodeURIComponent(activeAuthor.trim())+'*';
         // 可播放性筛选 (客户端过滤, 因为 has_mp4 列可能不存在)
         // 不添加到 params, 在 render 之前过滤
         // 排序: 有播放量的按播放量排，否则按时间
@@ -2186,11 +2183,16 @@
             : '';
         var noImgDisplay = pu ? 'display:none;' : '';
         var sectionLabel = v.source_section ? '<span style="color:#6b6760;font-size:10px;">#' + esc(v.source_section) + '</span>' : '';
-        // 播放状态标记
-        var statusLabel = '';
-        if(!hasMp4 && needsRescrape) statusLabel = '<span style="color:#c8a45c;font-size:9px;margin-left:4px;" title="等待重爬">🔄</span>';
-        else if(!hasMp4) statusLabel = '<span style="color:#c08080;font-size:9px;margin-left:4px;" title="无法播放">⚠️</span>';
-        else statusLabel = '<span style="color:#7a9a7a;font-size:9px;margin-left:4px;" title="可播放">✅</span>';
+        // 播放状态标记 (用 data-status 属性方便 JS 更新)
+        var statusText, statusColor, statusTitle, statusClass;
+        if (!hasMp4 && needsRescrape) {
+            statusText = '\u{1F504}'; statusColor = '#c8a45c'; statusTitle = '等待重爬'; statusClass = 'needs';
+        } else if (!hasMp4) {
+            statusText = '⚠️'; statusColor = '#c08080'; statusTitle = '无法播放'; statusClass = 'unplay';
+        } else {
+            statusText = '✅'; statusColor = '#7a9a7a'; statusTitle = '可播放'; statusClass = 'playable';
+        }
+        var statusLabel = '<span class="vid-status" data-status="' + statusClass + '" style="color:' + statusColor + ';font-size:9px;margin-left:4px;" title="' + statusTitle + '">' + statusText + '</span>';
 
         // 预览 video 元素 (悬停时播放前3秒)
         var previewVideoHtml = previewMp4
@@ -2319,16 +2321,14 @@
                 if (card) {
                     card.classList.remove('needs-rescrape', 'unplayable');
                     card.classList.add('has-mp4');
-                    // 更新状态标签 ⚠️/🔄 → ✅
-                    var statusSpan = card.querySelector('.vid-foot span[style]');
-                    var spans = card.querySelectorAll('.vid-foot span');
-                    for (var si = 0; si < spans.length; si++) {
-                        var txt = spans[si].textContent;
-                        if (txt === '⚠️' || txt === '🔄' || txt === '✅') {
-                            spans[si].textContent = '✅';
-                            spans[si].style.color = '#7a9a7a';
-                            break;
-                        }
+                    // 更新状态标签 (通过 .vid-status 类定位)
+                    var statusEl = card.querySelector('.vid-status');
+                    if (statusEl) {
+                        statusEl.textContent = '✅';
+                        statusEl.style.color = '#7a9a7a';
+                        statusEl.title = '可播放';
+                        statusEl.setAttribute('data-status', 'playable');
+                    }
                     }
                     // 补充预览 video 元素 (让悬停预览生效)
                     var thumb = card.querySelector('.vid-thumb');
