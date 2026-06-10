@@ -87,15 +87,20 @@ CREATE TABLE IF NOT EXISTS public.user_follows (
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_videos_video_id ON videos(video_id);
 CREATE INDEX IF NOT EXISTS idx_videos_created_at ON videos(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_videos_scraped_at ON videos(scraped_at DESC);
 CREATE INDEX IF NOT EXISTS idx_videos_author ON videos(author);
 CREATE INDEX IF NOT EXISTS idx_videos_has_mp4 ON videos(has_mp4);
 CREATE INDEX IF NOT EXISTS idx_videos_needs_rescrape ON videos(needs_rescrape);
+CREATE INDEX IF NOT EXISTS idx_videos_source_section ON videos(source_section);
+CREATE INDEX IF NOT EXISTS idx_videos_monsnode_id ON videos(monsnode_video_id);
 CREATE INDEX IF NOT EXISTS idx_user_vips_device ON user_vips(device_id);
 CREATE INDEX IF NOT EXISTS idx_activation_codes_code ON activation_codes(code);
 CREATE INDEX IF NOT EXISTS idx_accounts_username ON user_accounts(username);
 CREATE INDEX IF NOT EXISTS idx_friends_u1 ON friends(user1);
 CREATE INDEX IF NOT EXISTS idx_friends_u2 ON friends(user2);
 CREATE INDEX IF NOT EXISTS idx_msg_users ON messages(from_user, to_user);
+CREATE INDEX IF NOT EXISTS idx_msg_created ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_msg_read ON messages(to_user, is_read);
 CREATE INDEX IF NOT EXISTS idx_cf_device ON cloud_favorites(device_id);
 
 -- 回填

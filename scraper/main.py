@@ -161,11 +161,10 @@ def supabase_fetch_failed(limit: int = 100) -> list[dict]:
     try:
         url = (
             SUPABASE_URL + "/rest/v1/videos"
-            + "?select=video_id,monsnode_video_id,retry_count"
+            + "?select=video_id,monsnode_video_id"
             + "&needs_rescrape=is.true"
             + "&monsnode_video_id=not.is.null"
-            + "&retry_count=lt." + str(MAX_RETRY_COUNT)
-            + "&order=retry_count.asc"
+            + "&order=created_at.desc"
             + "&limit=" + str(limit)
         )
         resp = client.get(url, headers=headers)
@@ -179,10 +178,10 @@ def supabase_fetch_failed(limit: int = 100) -> list[dict]:
         client.close()
 
 
-def supabase_update_mp4(updates: dict[str, str | None]) -> int:
-    """批量更新视频 MP4: {monsnode_video_id: mp4_url_or_None}
+def supabase_update_mp4(updates: dict[str, tuple[str, str | None]]) -> int:
+    """批量更新视频 MP4: {monsnode_video_id: (video_id, mp4_url_or_None)}
     - 成功 → has_mp4=true, needs_rescrape=false
-    - 失败 → retry_count++, 超过 MAX_RETRY_COUNT 标记 needs_rescrape=false
+    - 失败: 不修改needs_rescrape(保持原样)
     """
     if not updates:
         return 0
@@ -190,8 +189,7 @@ def supabase_update_mp4(updates: dict[str, str | None]) -> int:
     headers = {**supabase_headers(), "Content-Type": "application/json"}
     saved = 0
     client = httpx.Client(timeout=30)
-    for mid, mp4 in updates.items():
-        video_id = "v" + mid
+    for mid, (video_id, mp4) in updates.items():
         has_mp4 = bool(mp4 and "video.twimg.com" in mp4)
         patch = {
             "mp4_checked_at": now,
@@ -719,7 +717,8 @@ async def scrape_all():
 
             mp4_updates = {}
             for mid, mp4 in all_mp4.items():
-                mp4_updates[mid] = mp4
+                vid = all_targets.get(mid, {}).get("video_id", "v" + mid)
+                mp4_updates[mid] = (vid, mp4)
                 stats["mp4_resolved"] += 1
             if mp4_updates:
                 supabase_update_mp4(mp4_updates)
@@ -747,7 +746,8 @@ async def scrape_all():
 
                 all_updates = {}
                 for mid in mids:
-                    all_updates[mid] = all_rescraped_mp4.get(mid)
+                    real_vid = to_rescrape[mid].get("video_id", "v" + mid)
+                    all_updates[mid] = (real_vid, all_rescraped_mp4.get(mid))
 
                 updated = supabase_update_mp4(all_updates)
                 stats["rescrape_resolved"] = len(all_rescraped_mp4)
