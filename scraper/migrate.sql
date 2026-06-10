@@ -66,13 +66,15 @@ BEGIN
       views = COALESCE(NULLIF(v->>'views', ''), videos.views),
       monsnode_video_id = COALESCE(NULLIF(v->>'monsnode_video_id', ''), videos.monsnode_video_id),
       source_page = COALESCE(NULLIF(v->>'source_page', ''), videos.source_page),
-      -- Python 已做拼接合并，DB 层保留更长的一方以防丢失
+      -- 拼接 source_section: 新栏目追加到已有栏目后面 (用 | 分隔, 自动去重)
       source_section = CASE
           WHEN COALESCE(videos.source_section, '') = '' THEN COALESCE(NULLIF(v->>'source_section', ''), '')
           WHEN COALESCE(NULLIF(v->>'source_section', ''), '') = '' THEN videos.source_section
-          WHEN LENGTH(COALESCE(v->>'source_section', '')) > LENGTH(COALESCE(videos.source_section, ''))
-            THEN COALESCE(v->>'source_section', '')
-          ELSE videos.source_section
+          WHEN videos.source_section = (v->>'source_section') THEN videos.source_section
+          WHEN videos.source_section ILIKE (v->>'source_section') || '|%' THEN videos.source_section
+          WHEN videos.source_section ILIKE '%|' || (v->>'source_section') THEN videos.source_section
+          WHEN videos.source_section ILIKE '%|' || (v->>'source_section') || '|%' THEN videos.source_section
+          ELSE videos.source_section || '|' || COALESCE(v->>'source_section', '')
       END,
       scraped_at = COALESCE((v->>'scraped_at')::timestamptz, videos.scraped_at),
       updated_at = NOW(),

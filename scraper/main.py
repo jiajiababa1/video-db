@@ -210,6 +210,13 @@ def supabase_save(videos: list[dict]) -> int:
             if (not mp4_existing or "video.twimg.com" not in mp4_existing) and mp4_new and "video.twimg.com" in mp4_new:
                 existing["duration"] = mp4_new
 
+    # 日志: 合并统计
+    multi = sum(1 for v in merged.values() if "|" in (v.get("source_section") or ""))
+    log(f"  合并后: {len(merged)} 条 (其中 {multi} 条跨多栏目)")
+    if multi > 0:
+        examples = [f"{vid}:{v['source_section']}" for vid, v in list(merged.items())[:3] if "|" in (v.get("source_section") or "")]
+        log(f"  示例: {examples}")
+
     records = []
     for vid, v in merged.items():
         mp4 = v.get("duration", "") or ""
@@ -447,16 +454,16 @@ async def scrape_all():
             stats["videos_found"] += len(section_videos)
             elapsed = time.time() - t0
             log(f"[{label}] 共 {len(section_videos)} 个视频 ({elapsed:.0f}s)")
+
+            # 每个栏目立即保存 (不等其他栏目, 确保数据不丢)
+            if section_videos:
+                sv = supabase_save(section_videos)
+                stats["videos_saved"] += sv
+                log(f"  保存 {sv} → {label}")
+
             all_section_videos.extend(section_videos)
 
-        # 阶段 2: 先保存元数据到 Supabase (不等 MP4 解析，保证数据不丢)
-        log(f"\n[阶段2] 保存 {len(all_section_videos)} 个视频元数据到 Supabase...")
-        t1 = time.time()
-        saved = supabase_save(all_section_videos)
-        stats["videos_saved"] = saved
-        log(f"保存 {saved} ({time.time()-t1:.0f}s)")
-
-        # 阶段 3: 批量解析 MP4 并更新 (前台后台均可)
+        # 阶段 2: 解析有 monsnode_video_id 的视频 MP4 (仅前50个, 限速)
         all_targets = {}
         for v in all_section_videos:
             mid = v.get("monsnode_video_id", "").strip()
@@ -464,8 +471,9 @@ async def scrape_all():
                 all_targets[mid] = v
 
         if all_targets:
-            mids = list(all_targets.keys())
-            log(f"\n[阶段3] MP4 解析: {len(mids)} 个视频 (多 tab 真实导航)...")
+            # 只解析前 50 个 (避免太慢)
+            mids = list(all_targets.keys())[:50]
+            log(f"\n[阶段2] MP4 解析: {len(mids)} 个视频 (多 tab 真实导航)...")
             t2 = time.time()
 
             all_mp4 = {}
@@ -476,7 +484,6 @@ async def scrape_all():
                 done = min(batch_start + MP4_TAB_CONCURRENCY * 3, len(mids))
                 log(f"  {done}/{len(mids)} → {len(all_mp4)} MP4 ({time.time()-t2:.0f}s)")
 
-            # 合并 MP4 并更新 Supabase
             mp4_updates = {}
             for mid, mp4 in all_mp4.items():
                 mp4_updates[mid] = mp4
