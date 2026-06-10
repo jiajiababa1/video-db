@@ -985,7 +985,8 @@
                 <div class="vid-actions">
                     <button class="vid-btn ghost" id="viewToggle" onclick="cycleViewMode()" title="切换视图密度">▦</button>
                     <button class="vid-btn ghost" id="autoPlayBtn" onclick="toggleAutoPlay()" title="连播模式">▶️</button>
-                    <button class="vid-btn ghost" id="randomBtn" onclick="randomPlay()" title="随机播放">🎲</button>
+                    <button class="vid-btn ghost" id="randomBtn" onclick="feelingLucky()" title="手气不错 (自动播放)">🍀</button>
+                    <button class="vid-btn ghost" id="helpBtn" onclick="showShortcutHelp()" title="快捷键帮助">⌨️</button>
                     <button class="vid-btn ghost" id="sortBtn" onclick="toggleSort()" title="排序">↓ 最新</button>
                     <button class="vid-btn primary" id="refreshBtn">更新</button>
                     <button class="vid-btn ghost" id="playableFilter" onclick="togglePlayableFilter()" title="筛选可播放/全部">🔇 全部</button>
@@ -1043,6 +1044,8 @@
                     <div class="vpi-actions">
                         <button class="vpi-btn" onclick="window.open(this.dataset.url,'_blank')" data-url="" title="在 monsnode 打开">↗️ 原站</button>
                         <button class="vpi-btn" onclick="var a=document.createElement('a');a.href=this.dataset.url;a.download='';a.click()" data-url="" title="下载 MP4">⬇️ 下载</button>
+                        <button class="vpi-btn" onclick="cycleSpeed()" title="播放速度">⏩ 1x</button>
+                        <button class="vpi-btn" onclick="toggleLoop()" title="循环播放">🔁</button>
                         <button class="vpi-btn" onclick="if(document.pictureInPictureElement){document.exitPictureInPicture();}else{var v=this.closest('.vid-player-inline').querySelector('video');if(v)v.requestPictureInPicture().catch(function(){});}" title="画中画">📺 PiP</button>
                         <button class="vpi-btn vpi-close" onclick="closeInlinePlayer()">✕ 收起</button>
                     </div>
@@ -1219,6 +1222,23 @@
                 return;
             }
             if(e.keyCode===191&&!e.target.closest('input')){e.preventDefault();document.getElementById('searchInput').focus();} // /
+            // 视频播放器快捷键
+            if(currentInlinePlayer && !e.target.closest('input,textarea')){
+                var vid = currentInlinePlayer.querySelector('video');
+                if(vid){
+                    if(e.keyCode===32){e.preventDefault();vid.paused?vid.play():vid.pause();} // Space = 暂停/播放
+                    else if(e.keyCode===70){e.preventDefault();if(document.fullscreenElement){document.exitFullscreen();}else{vid.requestFullscreen().catch(function(){});}} // F = 全屏
+                    else if(e.keyCode===37){e.preventDefault();vid.currentTime=Math.max(0,vid.currentTime-5);} // ← 后退5秒
+                    else if(e.keyCode===39){e.preventDefault();vid.currentTime=Math.min(vid.duration,vid.currentTime+5);} // → 前进5秒
+                    else if(e.keyCode===38){e.preventDefault();vid.volume=Math.min(1,vid.volume+0.1);showVolumeToast(vid);} // ↑ 音量+
+                    else if(e.keyCode===40){e.preventDefault();vid.volume=Math.max(0,vid.volume-0.1);showVolumeToast(vid);} // ↓ 音量-
+                    else if(e.keyCode===77){e.preventDefault();vid.muted=!vid.muted;toast(vid.muted?'🔇 静音':'🔊 有声');} // M = 静音
+                    else if(e.keyCode===83&&e.ctrlKey){e.preventDefault();var a=document.createElement('a');a.href=vid.src;a.download='video.mp4';a.click();toast('⬇️ 下载中...');} // Ctrl+S = 下载
+                    else if(e.keyCode===83&&!e.ctrlKey){e.preventDefault();cycleSpeed();} // S = 切换速度
+                    else if(e.keyCode===76){e.preventDefault();toggleLoop();} // L = 循环
+                }
+                return;
+            }
             // 左右方向键翻页
             if(!currentInlinePlayer && !e.target.closest('input,textarea')){
                 if(e.keyCode===37 || e.keyCode===39){
@@ -1234,6 +1254,7 @@
         if(e.keyCode===78||e.keyCode===82){e.preventDefault();newGame();return;} // N/R
         if(e.keyCode===90&&e.ctrlKey){e.preventDefault();undoMove();return;} // Ctrl+Z
         if(e.keyCode===191){e.preventDefault();toggleShortcuts();return;} // ?
+        if(e.keyCode===84&&!e.ctrlKey&&!e.metaKey){e.preventDefault();toggleGameDark();return;} // T = 暗色模式
     });
 
     // 触屏滑动
@@ -3167,10 +3188,88 @@
     setInlineVideo = function(wrap, mp4Url) {
         _origSetInlineVideo(wrap, mp4Url);
         var v = wrap.querySelector('video');
-        if (v && autoPlayOn) {
-            v.addEventListener('ended', function() { setTimeout(playNextVideo, 1500); }, {once: true});
+        if (v) {
+            v.playbackRate = _speeds[_speedIdx];
+            if (autoPlayOn) {
+                v.addEventListener('ended', function() { setTimeout(playNextVideo, 1500); }, {once: true});
+            }
         }
     };
+
+    function showVolumeToast(vid) { toast('🔊 ' + Math.round(vid.volume * 100) + '%'); }
+
+    // ============ 播放速度控制 ============
+    var _speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    var _speedIdx = 2; // 默认 1x
+    function cycleSpeed() {
+        _speedIdx = (_speedIdx + 1) % _speeds.length;
+        var s = _speeds[_speedIdx];
+        if (currentInlinePlayer) {
+            var v = currentInlinePlayer.querySelector('video');
+            if (v) v.playbackRate = s;
+        }
+        toast('⏩ ' + s + 'x');
+    }
+    function setSpeed(s) {
+        if (currentInlinePlayer) {
+            var v = currentInlinePlayer.querySelector('video');
+            if (v) v.playbackRate = s;
+        }
+        _speedIdx = _speeds.indexOf(s);
+        if (_speedIdx < 0) _speedIdx = 2;
+    }
+    function toggleLoop() {
+        if (currentInlinePlayer) {
+            var v = currentInlinePlayer.querySelector('video');
+            if (v) { v.loop = !v.loop; toast(v.loop ? '🔁 循环: ON' : '🔁 循环: OFF'); }
+        }
+    }
+
+    // ============ I'm Feeling Lucky (一键随机+自动播放) ============
+    async function feelingLucky() {
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=*&has_mp4=is.true&order=random()&limit=1', {headers:hds});
+            if (resp.ok) {
+                var data = await resp.json();
+                if (data.length) {
+                    var v = data[0];
+                    var tmpCard = document.createElement('div');
+                    tmpCard.className = 'vid-card has-mp4';
+                    $grid.insertBefore(tmpCard, $grid.firstChild);
+                    autoPlayOn = true;
+                    showInlinePlayer(v, tmpCard);
+                    toast('🍀 手气不错: ' + (v.title || v.video_id));
+                }
+            }
+        } catch(e) { toast('加载失败'); }
+    }
+
+    // ============ 侧边栏快捷键面板 ============
+    function showShortcutHelp() {
+        var lines = [
+            '视频播放器快捷键:',
+            'Space  暂停/播放',
+            'F      全屏',
+            '← →   后退/前进 5秒',
+            '↑ ↓   音量 +/-',
+            'M      静音',
+            'Ctrl+S 下载视频',
+            'S      切换播放速度 (0.5x~2x)',
+            'L      循环播放',
+            '← →   翻页 (无播放器时)',
+            '/      搜索框',
+            'Esc    关闭播放器 / 返回游戏',
+            'Ctrl+Shift+V  进入视频模式',
+            'T      游戏暗色模式',
+        ];
+        // 简短提示用 toast 队列
+        for (var i = 0; i < lines.length; i++) {
+            (function(msg, delay) {
+                setTimeout(function() { toast(msg); }, delay);
+            })(lines[i], i * 80);
+        }
+    }
 
     // ============ 随机播放 ============
     async function randomPlay() {
@@ -3471,21 +3570,8 @@
     function toggleGameDark() {
         gameDarkOn = !gameDarkOn;
         document.body.classList.toggle('game-dark', gameDarkOn);
+        toast(gameDarkOn ? '🌙 游戏暗色模式: ON' : '☀️ 游戏暗色模式: OFF');
     }
-    // 键盘快捷键 T 切换游戏暗色
-    var _origKd = document.addEventListener.call ? true : false; // 占位
-    (function() {
-        var origHandler = null;
-        document.addEventListener('keydown', function _wrap(e) {
-            // 在游戏模式下按 T 切换暗色
-            if (!document.body.classList.contains('dark-mode') && !e.target.closest('input,textarea')) {
-                if (e.key === 't' || e.key === 'T') {
-                    e.preventDefault();
-                    toggleGameDark();
-                }
-            }
-        });
-    })();
 
     // ============ 损坏图片兜底 ============
     // 全局监听图片加载失败
