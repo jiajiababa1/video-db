@@ -130,9 +130,16 @@ CREATE TABLE IF NOT EXISTS public.activation_codes (
     expires_at    TIMESTAMPTZ                    -- NULL = 永久有效
 );
 
--- RLS
+-- RLS (先删后建, 避免重复执行报错)
 ALTER TABLE public.user_vips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activation_codes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "anon 可读取自己的 VIP" ON public.user_vips;
+DROP POLICY IF EXISTS "anon 可注册 VIP" ON public.user_vips;
+DROP POLICY IF EXISTS "anon 可更新自己的 VIP" ON public.user_vips;
+DROP POLICY IF EXISTS "anon 可读取激活码" ON public.activation_codes;
+DROP POLICY IF EXISTS "anon 可消耗激活码" ON public.activation_codes;
+DROP POLICY IF EXISTS "管理员可创建激活码" ON public.activation_codes;
 
 CREATE POLICY "anon 可读取自己的 VIP" ON public.user_vips FOR SELECT TO anon USING (true);
 CREATE POLICY "anon 可注册 VIP" ON public.user_vips FOR INSERT TO anon WITH CHECK (true);
@@ -207,6 +214,52 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.redeem_code(TEXT, TEXT) TO anon;
+
+-- ═══════════════════════════════════════════
+-- 云端收藏 (VVIP+ 专享, 跨设备同步)
+-- ═══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS public.cloud_favorites (
+    id          SERIAL PRIMARY KEY,
+    device_id   TEXT NOT NULL,
+    video_id    TEXT NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(device_id, video_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cf_device ON public.cloud_favorites(device_id);
+ALTER TABLE public.cloud_favorites ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon 管理自己的云收藏" ON public.cloud_favorites;
+CREATE POLICY "anon 管理自己的云收藏" ON public.cloud_favorites FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- RPC: 同步云端收藏 (VVIP+)
+DROP FUNCTION IF EXISTS public.sync_favorites(TEXT, TEXT[]);
+CREATE OR REPLACE FUNCTION public.sync_favorites(p_device_id TEXT, p_video_ids TEXT[]) RETURNS void AS $$
+BEGIN
+  -- 删除不在列表中的
+  DELETE FROM public.cloud_favorites WHERE device_id = p_device_id AND video_id != ALL(p_video_ids);
+  -- 插入新的 (幂等)
+  IF p_video_ids IS NOT NULL AND array_length(p_video_ids, 1) > 0 THEN
+    INSERT INTO public.cloud_favorites (device_id, video_id)
+    SELECT p_device_id, unnest(p_video_ids)
+    ON CONFLICT (device_id, video_id) DO NOTHING;
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.sync_favorites(TEXT, TEXT[]) TO anon;
+
+-- RPC: 下载云端收藏 (VVIP+)
+DROP FUNCTION IF EXISTS public.load_favorites(TEXT);
+CREATE OR REPLACE FUNCTION public.load_favorites(p_device_id TEXT)
+RETURNS TABLE(video_id TEXT) AS $$
+BEGIN
+  RETURN QUERY SELECT cf.video_id FROM public.cloud_favorites cf WHERE cf.device_id = p_device_id ORDER BY cf.created_at DESC;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+GRANT EXECUTE ON FUNCTION public.load_favorites(TEXT) TO anon;
+
+-- ═══════════════════════════════════════════
+-- VIP 先行看 (新视频免费用户延迟24h看到)
+-- ═══════════════════════════════════════════
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS vip_early BOOLEAN DEFAULT false;
 
 -- RPC: 管理员设置终极VIP (仅限管理员调用, code='ADMIN_MASTER_KEY' 校验)
 DROP FUNCTION IF EXISTS public.admin_activate(TEXT, TEXT);

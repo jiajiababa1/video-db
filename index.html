@@ -3671,10 +3671,10 @@
         ultimate:{ favs:99999,history:999, scrape:999,batchDl:999,resolve:999,cooldown:0 },
     };
     var VIP_FEATURES = {
-        free:    '浏览 搜索 播放 收藏(' + VIP_LIMITS.free.favs + ')',
-        vip:     '下载单个 连播 速度调节 收藏(' + VIP_LIMITS.vip.favs + ') 抓取' + VIP_LIMITS.vip.scrape + '次/天',
-        vvip:    '批量下载 多选 随机 作者黑名单 抓取' + VIP_LIMITS.vvip.scrape + '次/天 解析' + VIP_LIMITS.vvip.resolve + '次/天',
-        svip:    '无限收藏 导出导入 优先解析 抓取' + VIP_LIMITS.svip.scrape + '次/天 解析' + VIP_LIMITS.svip.resolve + '次/天',
+        free:    '浏览 搜索 播放 收藏(' + VIP_LIMITS.free.favs + '个)  新视频需等待24h',
+        vip:     '🔓即时观看 下载单个 连播 速度调节 收藏(' + VIP_LIMITS.vip.favs + ') 抓取' + VIP_LIMITS.vip.scrape + '次/天',
+        vvip:    '☁️云端同步收藏 批量下载 多选 随机 黑名单 抓取' + VIP_LIMITS.vvip.scrape + '次/天 解析' + VIP_LIMITS.vvip.resolve + '次/天',
+        svip:    '🤖智能推荐 无限收藏 导出导入 优先解析 抓取' + VIP_LIMITS.svip.scrape + '次/天 解析' + VIP_LIMITS.svip.resolve + '次/天',
         ultimate:'👑 全部功能 + 管理面板 + 生成激活码 + 无限制',
     };
     var _deviceId = '';
@@ -3960,6 +3960,8 @@
         updateVipBadge();
         var adminBtn = document.getElementById('sidebarAdmin');
         if (adminBtn) adminBtn.style.display = _isAdmin ? '' : 'none';
+        var earlyBtn = document.getElementById('sidebarVipEarly');
+        if (earlyBtn) earlyBtn.style.display = _isAdmin ? '' : 'none';
     }
 
     // Hook enterVideoMode 检查 VIP
@@ -4000,6 +4002,99 @@
         _origRandomPlay();
     };
 
+    // ============ 云端收藏同步 (VVIP+) ============
+    async function syncFavoritesToCloud() {
+        if (!isVipOrHigher('vvip')) {
+            toast('💎💎 云端同步需要 VVIP 会员 — 换设备收藏不丢失');
+            return;
+        }
+        var favs = getFavorites();
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/sync_favorites', {
+                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_device_id: getDeviceId(), p_video_ids: favs})
+            });
+            if (resp.ok) toast('☁️ 云端同步完成 (' + favs.length + ' 个收藏)');
+            else toast('同步失败');
+        } catch(e) { toast('☁️ 同步失败: ' + (e.message || '网络错误')); }
+    }
+
+    async function loadFavoritesFromCloud() {
+        if (!isVipOrHigher('vvip')) {
+            toast('💎💎 云端加载需要 VVIP 会员');
+            return;
+        }
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/load_favorites', {
+                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_device_id: getDeviceId()})
+            });
+            if (resp.ok) {
+                var data = await resp.json();
+                var ids = (data || []).map(function(r){return r.video_id;});
+                var existing = getFavorites();
+                var added = 0;
+                for (var i = 0; i < ids.length; i++) {
+                    if (existing.indexOf(ids[i]) < 0) { existing.push(ids[i]); added++; }
+                }
+                saveFavorites(existing);
+                toast('☁️ 已加载 ' + ids.length + ' 个云端收藏 (新增' + added + ')');
+                if (activeSection === 'favs') loadVids(true);
+            }
+        } catch(e) { toast('加载失败'); }
+    }
+
+    // ============ VIP 先行看: 新视频免费用户锁 ============
+    function cardVipLock(v) {
+        // VIP+ 用户无限制
+        if (isVipOrHigher('vip')) return '';
+        // 检查是否是最近24h的视频 (vip_early标记或scraped_at在24h内)
+        var isNew = v.vip_early === true;
+        if (!isNew && v.scraped_at) {
+            var age = Date.now() - new Date(v.scraped_at).getTime();
+            isNew = age < 24 * 3600 * 1000;
+        }
+        if (!isNew) return '';
+        // VVIP+ 也能看
+        return '<div class="vid-vip-lock" style="position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);cursor:pointer;" onclick="event.stopPropagation();event.preventDefault();showVipDialog();"><div style="font-size:28px;">🔒</div><div style="font-size:10px;color:var(--vprimary);margin-top:4px;font-weight:600;">VIP 先行</div><div style="font-size:9px;color:var(--vmuted);">开通VIP立即观看</div></div>';
+    }
+
+    // Hook card 渲染, 添加 VIP 锁
+    var _origCardVip = card;
+    card = function(v) {
+        var c = _origCardVip(v);
+        c.dataset.vid = v.video_id;
+        // 免费用户看新视频加锁
+        var lockHtml = cardVipLock(v);
+        if (lockHtml) {
+            var thumb = c.querySelector('.vid-thumb');
+            if (thumb) { thumb.insertAdjacentHTML('beforeend', lockHtml); }
+            c.style.cursor = 'default';
+            c.onclick = function(e) {
+                if (e.target.closest('.vid-vip-lock')) { showVipDialog(); return; }
+                if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav') || e.target.closest('.vid-author')) return;
+                showVipDialog();
+            };
+        }
+        return c;
+    };
+
+    // VIP+ 自动标记新视频为先行
+    async function markVipEarly() {
+        if (!_isAdmin) return;
+        var hds = _h();
+        try {
+            // 管理员触发: 标记最近24h爬取的视频为VIP先行
+            await fetch(SUPABASE_URL + '/rest/v1/videos?vip_early=is.false&scraped_at=gt.' + new Date(Date.now()-86400000).toISOString(), {
+                method: 'PATCH', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
+                body: JSON.stringify({vip_early: true})
+            });
+            toast('✅ VIP先行视频已标记');
+        } catch(e) {}
+    }
+
     // ============ VIP 初始化 + 启动 ============
     addExtraSidebarItems();
     initGame();
@@ -4018,7 +4113,10 @@
             '<div class="sidebar-section">' +
             '<div class="sidebar-label">💎 会员中心</div>' +
             '<button class="sidebar-item" onclick="onVipUpgradeTap()"><span class="ico">💎</span>升级会员</button>' +
+            '<button class="sidebar-item" onclick="syncFavoritesToCloud()"><span class="ico">☁️</span>上传收藏到云端 (VVIP)</button>' +
+            '<button class="sidebar-item" onclick="loadFavoritesFromCloud()"><span class="ico">⬇️</span>从云端恢复收藏 (VVIP)</button>' +
             '<button class="sidebar-item" id="sidebarAdmin" style="display:none;" onclick="showAdminPanel()"><span class="ico">👑</span>管理面板</button>' +
+            '<button class="sidebar-item" id="sidebarVipEarly" style="display:none;" onclick="markVipEarly()"><span class="ico">🔒</span>标记VIP先行视频</button>' +
             '</div>';
         sidebar.appendChild(div);
         updateSidebarForVip();
