@@ -4042,24 +4042,49 @@
     async function checkDBStatus() {
         var area = document.getElementById('adminContent');
         area.innerHTML = '<div class="vpi-spinner"></div>';
-        var hds = _h();
-        var results = [];
-        var tables = ['user_accounts','announcements','messages','friends','admin_log','activation_codes','system_config','user_vips','cloud_favorites','videos'];
+        var hds = _h(), results = [];
+
+        // 1. 连通性测试
+        var connOK = false;
+        try { var cr = await fetch(SUPABASE_URL, {headers:hds}); connOK = cr.ok; } catch(e) {}
+        results.push(['📡 Supabase连接', connOK ? '✅' : '❌']);
+
+        // 2. 来自 01_tables.sql 的13张表
+        var tables = ['videos','scrape_status','user_accounts','user_vips','activation_codes',
+                      'friends','messages','announcements','admin_log','bans','system_config',
+                      'cloud_favorites','user_follows'];
         for (var i = 0; i < tables.length; i++) {
             try {
                 var r = await fetch(SUPABASE_URL + '/rest/v1/' + tables[i] + '?limit=1', {headers: hds});
                 results.push([tables[i], r.ok ? '✅' : '❌ HTTP' + r.status]);
             } catch(e) { results.push([tables[i], '❌']); }
         }
-        var failCount = results.filter(function(x){return x[1][0]==='❌';}).length;
-        var h = '<b>' + (failCount===0?'✅ 全部 '+tables.length+' 张表正常 — 所有功能可用':'❌ '+failCount+'项异常') + '</b><br>';
-        h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px 8px;font-size:10px;font-family:monospace;max-height:300px;overflow-y:auto;">';
+
+        // 3. 管理员账号
+        try {
+            var adm = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.kuo&select=username,vip_level,is_admin,verified&limit=1');
+            if (adm && adm.length > 0) {
+                var a = adm[0];
+                results.push(['👤 管理员 kuo', '✅ ' + a.vip_level + (a.is_admin?' 👑':'') + (a.verified?' 🔵':'')]);
+            } else { results.push(['👤 管理员 kuo', '❌ 不存在']); }
+        } catch(e) { results.push(['👤 管理员 kuo', '❌']); }
+
+        // 4. RLS 检查
+        try {
+            var rls = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.kuo&select=vip_level&limit=1', {headers:hds});
+            results.push(['🔒 RLS读取检查', rls.ok ? '✅' : '❌']);
+        } catch(e) { results.push(['🔒 RLS读取检查', '❌']); }
+
+        var failCount = results.filter(function(x){return x[1].indexOf('❌')===0;}).length;
+        var h = '<b>' + (failCount===0?'✅ 全部正常':'❌ '+failCount+' 项异常') + '</b><br>';
+        h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px 8px;font-size:10px;font-family:monospace;max-height:350px;overflow-y:auto;">';
         for (var k = 0; k < results.length; k++) {
-            h += '<div style="color:'+(results[k][1][0]==='❌'?'#c08080':'var(--green)')+'">'+results[k][1]+'</div><div>'+results[k][0]+'</div>';
+            h += '<div style="color:'+(results[k][1].indexOf('❌')===0?'#c08080':'var(--green)')+'">'+results[k][1]+'</div><div>'+results[k][0]+'</div>';
         }
         h += '</div>';
-        if (failCount > 0) h += '<br><b style="color:#c08080;">⚠️ 在Supabase SQL Editor中执行 migrate.sql</b>';
-        else h += '<br><b style="color:var(--green);">✅ 已切换到直接表API, 不再依赖RPC!</b>';
+        if (failCount > 0) {
+            h += '<br><b style="color:#c08080;">请依次执行: 01_tables.sql → 02_security.sql → 03_seed.sql → 04_scraper_fn.sql</b>';
+        }
         area.innerHTML = h;
     }
 
@@ -4530,18 +4555,6 @@
 
     // ============ 管理员功能 ============
     var ADMIN_MASTER_KEY = 'admin2026ultimate'; // ← 改成你自己的管理员密码
-
-    function showAdminPanel() {
-        if (!_isAdmin) { showVipDialog(); return; }
-        document.getElementById('adminPanelOverlay').classList.add('on');
-        document.getElementById('adminVipLevel').textContent = VIP_LABELS[_vipLevel];
-        document.getElementById('adminDeviceId').textContent = getDeviceId();
-        document.getElementById('genCodeResult').textContent = '';
-    }
-
-    function closeAdminPanel() {
-        document.getElementById('adminPanelOverlay').classList.remove('on');
-    }
 
     async function generateCode() {
         var level = document.getElementById('genCodeLevel').value;
