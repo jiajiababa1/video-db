@@ -838,7 +838,26 @@
 </head>
 <body>
 
-    <!-- ==================== VIP 激活对话框 ==================== -->
+    <!-- ==================== 登录/注册对话框 ==================== -->
+    <div class="cheat-dialog-overlay" id="loginDialogOverlay">
+        <div class="cheat-dialog" style="width:340px;">
+            <button class="vid-modal-close" onclick="closeLoginDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
+            <p class="title" id="loginTitle">🔐 登录</p>
+            <div style="margin-bottom:12px;">
+                <input type="text" id="loginUsername" placeholder="用户名" autocomplete="username" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
+                <input type="password" id="loginPassword" placeholder="密码" autocomplete="current-password" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);">
+                <input type="password" id="loginPassword2" placeholder="确认密码(仅注册)" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);display:none;margin-top:8px;">
+            </div>
+            <div class="actions" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+                <button class="btn-cancel" onclick="closeLoginDialog()">取消</button>
+                <button class="cheat-btn accent" id="loginBtn" onclick="doLogin()">登录</button>
+                <button class="cheat-btn" id="registerBtn" onclick="switchToRegister()" style="font-size:10px;">注册新账号</button>
+            </div>
+            <p style="font-size:10px;color:var(--vmuted);margin-top:12px;" id="loginResult"></p>
+        </div>
+    </div>
+
+    <!-- ==================== VIP 激活/升级对话框 ==================== -->
     <div class="cheat-dialog-overlay" id="vipDialogOverlay">
         <div class="cheat-dialog">
             <button class="vid-modal-close" onclick="closeVipDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
@@ -3692,34 +3711,184 @@
         return stored;
     }
 
-    async function checkVipStatus() {
-        var did = getDeviceId();
-        var hds = _h();
+    // ============ 账号登录系统 ============
+    var _username = '';
+    var _loggedIn = false;
+
+    function sha256(str) {
+        // 浏览器原生 SHA-256
+        var buffer = new TextEncoder().encode(str);
+        return crypto.subtle.digest('SHA-256', buffer).then(function(hash) {
+            return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+        });
+    }
+
+    async function doLogin() {
+        var user = document.getElementById('loginUsername').value.trim();
+        var pass = document.getElementById('loginPassword').value.trim();
+        if (!user || !pass) { document.getElementById('loginResult').textContent = '请填写用户名和密码'; return; }
+        document.getElementById('loginResult').textContent = '登录中...';
+        document.getElementById('loginResult').style.color = 'var(--vmuted)';
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/user_vips?device_id=eq.' + encodeURIComponent(did) + '&limit=1', {headers:hds});
-            if (resp.ok) {
-                var data = await resp.json();
-                if (data.length) {
-                    _vipLevel = data[0].vip_level || 'free';
-                    _isAdmin = data[0].is_admin === true;
-                }
+            var hash = await sha256(user + ':' + pass);
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/login_account', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_username: user, p_password_hash: hash, p_device_id: getDeviceId()})
+            });
+            var data = await resp.json();
+            if (data && data.success) {
+                _username = user; _loggedIn = true;
+                _vipLevel = data.vip_level; _isAdmin = data.is_admin;
+                saveLoginSession(user, hash);
+                updateVipBadge(); updateSidebarForVip();
+                document.getElementById('loginResult').textContent = '✅ 欢迎, ' + user + '! (' + VIP_LABELS[_vipLevel] + ')';
+                document.getElementById('loginResult').style.color = 'var(--green)';
+                setTimeout(closeLoginDialog, 800);
+            } else {
+                document.getElementById('loginResult').textContent = '❌ ' + (data ? data.message : '登录失败');
+                document.getElementById('loginResult').style.color = '#c08080';
+            }
+        } catch(e) {
+            document.getElementById('loginResult').textContent = '❌ 网络错误';
+            document.getElementById('loginResult').style.color = '#c08080';
+        }
+    }
+
+    async function doRegister() {
+        var user = document.getElementById('loginUsername').value.trim();
+        var pass = document.getElementById('loginPassword').value.trim();
+        var pass2 = document.getElementById('loginPassword2').value.trim();
+        if (!user || !pass) { document.getElementById('loginResult').textContent = '请填写用户名和密码'; return; }
+        if (pass !== pass2) { document.getElementById('loginResult').textContent = '两次密码不一致'; document.getElementById('loginResult').style.color = '#c08080'; return; }
+        if (user.length < 2) { document.getElementById('loginResult').textContent = '用户名至少2个字符'; document.getElementById('loginResult').style.color = '#c08080'; return; }
+        if (pass.length < 4) { document.getElementById('loginResult').textContent = '密码至少4个字符'; document.getElementById('loginResult').style.color = '#c08080'; return; }
+        document.getElementById('loginResult').textContent = '注册中...';
+        try {
+            var hash = await sha256(user + ':' + pass);
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/register_account', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_username: user, p_password_hash: hash, p_device_id: getDeviceId()})
+            });
+            var data = await resp.json();
+            if (data && data.success) {
+                document.getElementById('loginResult').textContent = '✅ 注册成功! 请登录';
+                document.getElementById('loginResult').style.color = 'var(--green)';
+                switchToLogin();
+            } else {
+                document.getElementById('loginResult').textContent = '❌ ' + (data ? data.message : '注册失败');
+                document.getElementById('loginResult').style.color = '#c08080';
+            }
+        } catch(e) {
+            document.getElementById('loginResult').textContent = '❌ 网络错误';
+            document.getElementById('loginResult').style.color = '#c08080';
+        }
+    }
+
+    function switchToRegister() {
+        document.getElementById('loginTitle').textContent = '📝 注册新账号';
+        document.getElementById('loginPassword2').style.display = 'block';
+        document.getElementById('loginBtn').textContent = '注册';
+        document.getElementById('loginBtn').onclick = doRegister;
+        document.getElementById('registerBtn').textContent = '已有账号? 登录';
+        document.getElementById('registerBtn').onclick = switchToLogin;
+        document.getElementById('loginResult').textContent = '';
+    }
+
+    function switchToLogin() {
+        document.getElementById('loginTitle').textContent = '🔐 登录';
+        document.getElementById('loginPassword2').style.display = 'none';
+        document.getElementById('loginBtn').textContent = '登录';
+        document.getElementById('loginBtn').onclick = doLogin;
+        document.getElementById('registerBtn').textContent = '注册新账号';
+        document.getElementById('registerBtn').onclick = switchToRegister;
+        document.getElementById('loginResult').textContent = '';
+    }
+
+    function showLoginDialog() {
+        switchToLogin();
+        document.getElementById('loginDialogOverlay').classList.add('on');
+        document.getElementById('loginUsername').value = '';
+        document.getElementById('loginPassword').value = '';
+        document.getElementById('loginPassword2').value = '';
+        document.getElementById('loginResult').textContent = '';
+        setTimeout(function(){ document.getElementById('loginUsername').focus(); }, 300);
+    }
+
+    function closeLoginDialog() {
+        document.getElementById('loginDialogOverlay').classList.remove('on');
+    }
+
+    function saveLoginSession(user, hash) {
+        localStorage.setItem('login_user', user);
+        localStorage.setItem('login_hash', hash);
+        localStorage.setItem('login_time', Date.now().toString());
+    }
+
+    function clearLoginSession() {
+        localStorage.removeItem('login_user');
+        localStorage.removeItem('login_hash');
+        localStorage.removeItem('login_time');
+        _username = ''; _loggedIn = false;
+        _vipLevel = 'free'; _isAdmin = false;
+        updateVipBadge(); updateSidebarForVip();
+    }
+
+    async function autoLogin() {
+        var savedUser = localStorage.getItem('login_user');
+        var savedHash = localStorage.getItem('login_hash');
+        if (!savedUser || !savedHash) return false;
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/login_account', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_username: savedUser, p_password_hash: savedHash, p_device_id: getDeviceId()})
+            });
+            var data = await resp.json();
+            if (data && data.success) {
+                _username = savedUser; _loggedIn = true;
+                _vipLevel = data.vip_level; _isAdmin = data.is_admin;
+                saveLoginSession(savedUser, savedHash);
+                return true;
             }
         } catch(e) {}
+        clearLoginSession();
+        return false;
+    }
+
+    async function checkVipStatus() {
+        if (_loggedIn) { updateVipBadge(); return; }
+        var ok = await autoLogin();
+        if (!ok) {
+            // 回退到 device-based VIP (兼容旧数据)
+            try {
+                var resp = await fetch(SUPABASE_URL + '/rest/v1/user_vips?device_id=eq.' + encodeURIComponent(getDeviceId()) + '&limit=1', {headers:_h()});
+                if (resp.ok) {
+                    var data = await resp.json();
+                    if (data.length) { _vipLevel = data[0].vip_level || 'free'; _isAdmin = data[0].is_admin === true; }
+                }
+            } catch(e) {}
+        }
         updateVipBadge();
     }
 
     function updateVipBadge() {
         var badge = document.getElementById('vipBadge');
         if (!badge) return;
-        badge.textContent = VIP_LABELS[_vipLevel] || VIP_LABELS.free;
-        badge.style.color = VIP_COLORS[_vipLevel] || VIP_COLORS.free;
-        if (_isAdmin) {
-            badge.textContent += ' 👑';
-            badge.title = '管理员 — 点击管理';
-            badge.onclick = function(e) { e.stopPropagation(); showAdminPanel(); };
+        if (_loggedIn) {
+            badge.textContent = (_isAdmin ? '👑 ' : '') + _username + ' ' + (VIP_LABELS[_vipLevel] || '');
         } else {
-            badge.title = '点击升级会员 | 连续点5次→管理员激活';
-            badge.onclick = function(e) { e.stopPropagation(); onVipUpgradeTap(); };
+            badge.textContent = '🔐 未登录';
+        }
+        badge.style.color = VIP_COLORS[_vipLevel] || VIP_COLORS.free;
+        badge.style.cursor = 'pointer';
+        if (_isAdmin) {
+            badge.title = '管理员: ' + _username + ' — 点击管理';
+            badge.onclick = function(e) { e.stopPropagation(); showAdminPanel(); };
+        } else if (_loggedIn) {
+            badge.title = _username + ' (' + VIP_LABELS[_vipLevel] + ') — 升级/切换账号';
+            badge.onclick = function(e) { e.stopPropagation(); showVipDialog(); };
+        } else {
+            badge.title = '点击登录';
+            badge.onclick = function(e) { e.stopPropagation(); showLoginDialog(); };
         }
     }
 
@@ -3839,16 +4008,18 @@
     async function generateCode() {
         var level = document.getElementById('genCodeLevel').value;
         var uses = parseInt(document.getElementById('genCodeUses').value) || 1;
-        var code = level.toUpperCase() + '_' + Date.now().toString(36).toUpperCase() + randomStr(4);
         var hds = _h();
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/activation_codes', {
-                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json', 'Prefer':'return=representation'}),
-                body: JSON.stringify({code: code, vip_level: level, max_uses: uses, created_by: getDeviceId()})
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/admin_generate_code', {
+                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_admin: _username, p_level: level, p_uses: uses})
             });
             if (resp.ok) {
-                document.getElementById('genCodeResult').textContent = '✅ ' + code + ' (' + uses + '次)';
-                try { navigator.clipboard.writeText(code); } catch(e) {}
+                var data = await resp.json();
+                if (data && data.code) {
+                    document.getElementById('genCodeResult').textContent = '✅ ' + data.code + ' (' + uses + '次)';
+                    try { navigator.clipboard.writeText(data.code); } catch(e) {}
+                }
             } else {
                 document.getElementById('genCodeResult').textContent = '❌ 生成失败';
                 document.getElementById('genCodeResult').style.color = '#c08080';
@@ -3962,6 +4133,10 @@
         if (adminBtn) adminBtn.style.display = _isAdmin ? '' : 'none';
         var earlyBtn = document.getElementById('sidebarVipEarly');
         if (earlyBtn) earlyBtn.style.display = _isAdmin ? '' : 'none';
+        var loginBtn = document.getElementById('sideLogin');
+        if (loginBtn) loginBtn.style.display = _loggedIn ? 'none' : '';
+        var logoutBtn = document.getElementById('sideLogout');
+        if (logoutBtn) logoutBtn.style.display = _loggedIn ? '' : 'none';
     }
 
     // Hook enterVideoMode 检查 VIP
@@ -4112,7 +4287,9 @@
             '<div class="sidebar-divider" style="height:1px;background:var(--vborder);margin:8px 0;"></div>' +
             '<div class="sidebar-section">' +
             '<div class="sidebar-label">💎 会员中心</div>' +
-            '<button class="sidebar-item" onclick="onVipUpgradeTap()"><span class="ico">💎</span>升级会员</button>' +
+            '<button class="sidebar-item" id="sideLogin" onclick="showLoginDialog()"><span class="ico">🔐</span>登录/注册</button>' +
+            '<button class="sidebar-item" id="sideLogout" style="display:none;" onclick="clearLoginSession()"><span class="ico">🚪</span>退出登录</button>' +
+            '<button class="sidebar-item" onclick="showVipDialog()"><span class="ico">💎</span>升级会员</button>' +
             '<button class="sidebar-item" onclick="syncFavoritesToCloud()"><span class="ico">☁️</span>上传收藏到云端 (VVIP)</button>' +
             '<button class="sidebar-item" onclick="loadFavoritesFromCloud()"><span class="ico">⬇️</span>从云端恢复收藏 (VVIP)</button>' +
             '<button class="sidebar-item" id="sidebarAdmin" style="display:none;" onclick="showAdminPanel()"><span class="ico">👑</span>管理面板</button>' +

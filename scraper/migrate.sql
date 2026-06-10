@@ -404,3 +404,84 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══════════════════════════════════════════
+-- 账号登录系统 (用户名+密码)
+-- ═══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS public.user_accounts (
+    id            SERIAL PRIMARY KEY,
+    username      TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    device_id     TEXT DEFAULT '',
+    vip_level     TEXT NOT NULL DEFAULT 'free',
+    is_admin      BOOLEAN DEFAULT false,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    last_login    TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.user_accounts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon 可读写账号" ON public.user_accounts;
+CREATE POLICY "anon 可读写账号" ON public.user_accounts FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE INDEX IF NOT EXISTS idx_accounts_username ON public.user_accounts(username);
+
+-- 预置管理员: admin / admin2026 (SHA256)
+INSERT INTO public.user_accounts (username, password_hash, vip_level, is_admin)
+VALUES ('admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'ultimate', true)
+ON CONFLICT (username) DO NOTHING;
+
+-- RPC: 注册
+DROP FUNCTION IF EXISTS public.register_account(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.register_account(p_username TEXT, p_password_hash TEXT, p_device_id TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT, is_admin BOOLEAN) AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.user_accounts WHERE username = p_username) THEN
+        RETURN QUERY SELECT false, '用户名已存在', ''::TEXT, false; RETURN;
+    END IF;
+    INSERT INTO public.user_accounts (username, password_hash, device_id, vip_level, is_admin)
+    VALUES (p_username, p_password_hash, p_device_id, 'free', false);
+    RETURN QUERY SELECT true, '注册成功', 'free'::TEXT, false;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.register_account(TEXT, TEXT, TEXT) TO anon;
+
+-- RPC: 登录
+DROP FUNCTION IF EXISTS public.login_account(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.login_account(p_username TEXT, p_password_hash TEXT, p_device_id TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT, is_admin BOOLEAN) AS $$
+DECLARE v_acc RECORD;
+BEGIN
+    SELECT * INTO v_acc FROM public.user_accounts WHERE username = p_username;
+    IF v_acc IS NULL THEN RETURN QUERY SELECT false, '账号不存在', ''::TEXT, false; RETURN; END IF;
+    IF v_acc.password_hash != p_password_hash THEN RETURN QUERY SELECT false, '密码错误', ''::TEXT, false; RETURN; END IF;
+    UPDATE public.user_accounts SET device_id = p_device_id, last_login = NOW() WHERE id = v_acc.id;
+    RETURN QUERY SELECT true, '登录成功', v_acc.vip_level, v_acc.is_admin;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.login_account(TEXT, TEXT, TEXT) TO anon;
+
+-- RPC: 改密码
+DROP FUNCTION IF EXISTS public.change_password(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.change_password(p_username TEXT, p_old_hash TEXT, p_new_hash TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT) AS $$
+BEGIN
+    UPDATE public.user_accounts SET password_hash = p_new_hash WHERE username = p_username AND password_hash = p_old_hash;
+    IF FOUND THEN RETURN QUERY SELECT true, '密码修改成功';
+    ELSE RETURN QUERY SELECT false, '原密码错误'; END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.change_password(TEXT, TEXT, TEXT) TO anon;
+
+-- RPC: 管理员升级用户
+DROP FUNCTION IF EXISTS public.admin_upgrade(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.admin_upgrade(p_admin_username TEXT, p_target_username TEXT, p_level TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT) AS $$
+DECLARE v_admin RECORD;
+BEGIN
+    SELECT * INTO v_admin FROM public.user_accounts WHERE username = p_admin_username AND is_admin = true;
+    IF v_admin IS NULL THEN RETURN QUERY SELECT false, '无管理员权限'; RETURN; END IF;
+    UPDATE public.user_accounts SET vip_level = p_level WHERE username = p_target_username;
+    IF FOUND THEN RETURN QUERY SELECT true, '已升级 ' || p_target_username || ' → ' || p_level;
+    ELSE RETURN QUERY SELECT false, '用户不存在'; END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.admin_upgrade(TEXT, TEXT, TEXT) TO anon;
