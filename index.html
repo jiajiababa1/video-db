@@ -3725,25 +3725,34 @@
     var _username = '';
     var _loggedIn = false;
 
-    // Supabase RPC 统一解析 (RETURNS TABLE → 数组, 取第一行)
+    // Supabase RPC 统一解析
     async function rpcCall(fn, body) {
+        // 单行模式: 返回第一行或null
         try {
             var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
                 method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
                 body: JSON.stringify(body)
             });
-            if (!resp.ok) {
-                console.error('RPC ' + fn + ' failed: HTTP ' + resp.status);
-                return null;
-            }
+            if (!resp.ok) { console.error('RPC ' + fn + ' failed: HTTP ' + resp.status); return null; }
             var txt = await resp.text();
             if (!txt || txt === 'null') return null;
             var raw = JSON.parse(txt);
             return Array.isArray(raw) ? (raw[0] || null) : raw;
-        } catch(e) {
-            console.error('RPC ' + fn + ' error:', e);
-            return null;
-        }
+        } catch(e) { console.error('RPC ' + fn + ' error:', e); return null; }
+    }
+    async function rpcCallAll(fn, body) {
+        // 多行模式: 返回完整数组
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) { console.error('RPC ' + fn + ' failed: HTTP ' + resp.status); return []; }
+            var txt = await resp.text();
+            if (!txt || txt === 'null') return [];
+            var raw = JSON.parse(txt);
+            return Array.isArray(raw) ? raw : (raw ? [raw] : []);
+        } catch(e) { console.error('RPC ' + fn + ' error:', e); return []; }
     }
 
     // SHA-256 (crypto.subtle优先, 降级到纯JS实现)
@@ -3969,7 +3978,7 @@
         toast(data && data.success ? '✅ ' + data.message : '❌ ' + (data ? data.message : '失败'));
     }
     async function showFriendRequests() {
-        var data = await rpcCall('get_friend_requests', {p_user: _username});
+        var data = await rpcCallAll('get_friend_requests', {p_user: _username});
         var users = Array.isArray(data) ? data : (data ? [data] : []);
         var h = '<div style="padding:10px;"><b>好友请求</b><br>';
         if (!users.length) h += '<span style="color:var(--vmuted);">暂无</span>';
@@ -3998,7 +4007,7 @@
     }
     async function refreshMessages() {
         if (!_chatWith) return;
-        var data = await rpcCall('get_messages', {p_user: _username, p_with: _chatWith, p_limit: 50});
+        var data = await rpcCallAll('get_messages', {p_user: _username, p_with: _chatWith, p_limit: 50});
         var msgs = Array.isArray(data) ? data : (data ? [data] : []);
         msgs.reverse(); // 旧→新
         var h = '';
@@ -4094,7 +4103,7 @@
 
     function showAdminUsers(area) {
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
-        rpcCall('list_users', {p_admin: _username, p_offset: 0, p_limit: 100}).then(function(users){
+        rpcCallAll('list_users', {p_admin: _username, p_offset: 0, p_limit: 100}).then(function(users){
             var h = '<div style="max-height:300px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
             h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>VIP</th><th>认证</th><th>状态</th><th>操作</th></tr>';
             for (var i=0;i<users.length;i++) {
@@ -4173,7 +4182,7 @@
     }
     async function searchUser(q) {
         if (!q.trim()) { document.getElementById('searchUserResult').innerHTML = ''; return; }
-        var data = await rpcCall('search_users', {p_query: q});
+        var data = await rpcCallAll('search_users', {p_query: q});
         var users = Array.isArray(data) ? data : (data ? [data] : []);
         var h = '';
         for (var i = 0; i < users.length; i++) {
