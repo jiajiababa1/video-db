@@ -3512,11 +3512,8 @@
         $grid.innerHTML = '<div class="vpi-spinner" style="grid-column:1/-1;margin:60px auto;"></div>';
         var hds = _h();
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/popular_authors', {
-                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}), body: '{}'
-            });
-            if (!resp.ok) throw new Error('RPC 不可用，回退到客户端聚合');
-            var authors = await resp.json();
+            var authors = await rpcCall('popular_authors', {});
+            if (!authors) throw new Error('RPC 不可用，回退到客户端聚合');
             renderAuthorRanking(authors);
         } catch(e) {
             // 回退: 客户端查询
@@ -3714,6 +3711,17 @@
     var _username = '';
     var _loggedIn = false;
 
+    // Supabase RPC 统一解析 (RETURNS TABLE → 数组, 取第一行)
+    async function rpcCall(fn, body) {
+        var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+            method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) return null;
+        var raw = await resp.json();
+        return Array.isArray(raw) ? (raw[0] || null) : raw;
+    }
+
     function sha256(str) {
         // 浏览器原生 SHA-256
         var buffer = new TextEncoder().encode(str);
@@ -3730,11 +3738,7 @@
         document.getElementById('loginResult').style.color = 'var(--vmuted)';
         try {
             var hash = await sha256(user + ':' + pass);
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/login_account', {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_username: user, p_password_hash: hash, p_device_id: getDeviceId()})
-            });
-            var data = await resp.json();
+            var data = await rpcCall('login_account', {p_username: user, p_password_hash: hash, p_device_id: getDeviceId()});
             if (data && data.success) {
                 _username = user; _loggedIn = true;
                 _vipLevel = data.vip_level; _isAdmin = data.is_admin;
@@ -3744,7 +3748,7 @@
                 document.getElementById('loginResult').style.color = 'var(--green)';
                 setTimeout(closeLoginDialog, 800);
             } else {
-                document.getElementById('loginResult').textContent = '❌ ' + (data ? data.message : '登录失败');
+                document.getElementById('loginResult').textContent = '❌ ' + (data ? (data.message || '登录失败') : '登录失败');
                 document.getElementById('loginResult').style.color = '#c08080';
             }
         } catch(e) {
@@ -3791,11 +3795,7 @@
         resultEl.textContent = '注册中...'; resultEl.style.color = 'var(--vmuted)';
         try {
             var hash = await sha256(user + ':' + pass);
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/register_account', {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_username: user, p_password_hash: hash, p_device_id: getDeviceId()})
-            });
-            var data = await resp.json();
+            var data = await rpcCall('register_account', {p_username: user, p_password_hash: hash, p_device_id: getDeviceId()});
             if (data && data.success) {
                 resultEl.textContent = '✅ 注册成功! 请登录'; resultEl.style.color = 'var(--green)';
                 setTimeout(toggleLoginMode, 1000);
@@ -3838,12 +3838,9 @@
     async function showUserProfile(username) {
         if (!username) return;
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/get_user_profile', {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_username: username})
-            });
-            if (resp.ok) {
-                var data = await resp.json();
+            var data = await rpcCall('get_user_profile', {p_username: username});
+            if (data) {
+                data = Array.isArray(data) ? data : [data];
                 if (data && data.length) {
                     var p = data[0];
                     var badge = p.verified ? ' <span style="color:#4a9adf;font-size:14px;">✔️</span>' : '';
@@ -3935,10 +3932,7 @@
 
     function showAdminUsers(area) {
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
-        fetch(SUPABASE_URL + '/rest/v1/rpc/list_users', {
-            method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-            body: JSON.stringify({p_admin: _username, p_offset: 0, p_limit: 100})
-        }).then(function(r){return r.json();}).then(function(users){
+        rpcCall('list_users', {p_admin: _username, p_offset: 0, p_limit: 100}).then(function(users){
             var h = '<div style="max-height:300px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
             h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>VIP</th><th>认证</th><th>状态</th><th>操作</th></tr>';
             for (var i=0;i<users.length;i++) {
@@ -3964,11 +3958,7 @@
         detail = detail || '';
         if (action === 'ban') detail = prompt('封禁原因(可选):') || '';
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/admin_action', {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_admin: _username, p_action: action, p_target: target, p_detail: detail})
-            });
-            var data = await resp.json();
+            var data = await rpcCall('admin_action', {p_admin: _username, p_action: action, p_target: target, p_detail: detail});
             if (data && data.success) { toast('✅ ' + data.message); adminDo('users'); }
             else toast('❌ ' + (data?data.message:'失败'));
         } catch(e) { toast('❌ 操作失败'); }
@@ -4042,11 +4032,7 @@
         var savedHash = localStorage.getItem('login_hash');
         if (!savedUser || !savedHash) return false;
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/login_account', {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_username: savedUser, p_password_hash: savedHash, p_device_id: getDeviceId()})
-            });
-            var data = await resp.json();
+            var data = await rpcCall('login_account', {p_username: savedUser, p_password_hash: savedHash, p_device_id: getDeviceId()});
             if (data && data.success) {
                 _username = savedUser; _loggedIn = true;
                 _vipLevel = data.vip_level; _isAdmin = data.is_admin;
@@ -4140,12 +4126,8 @@
 
         var hds = _h();
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/redeem_code', {
-                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_device_id: getDeviceId(), p_code: code})
-            });
-            if (resp.ok) {
-                var data = await resp.json();
+            var data = await rpcCall('redeem_code', {p_device_id: getDeviceId(), p_code: code});
+            if (data) {
                 if (data && data.success) {
                     _vipLevel = data.vip_level;
                     updateVipBadge();
@@ -4186,12 +4168,8 @@
         var uses = parseInt(document.getElementById('genCodeUses').value) || 1;
         var hds = _h();
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/admin_generate_code', {
-                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_admin: _username, p_level: level, p_uses: uses})
-            });
-            if (resp.ok) {
-                var data = await resp.json();
+            var data = await rpcCall('admin_generate_code', {p_admin: _username, p_level: level, p_uses: uses});
+            if (data) {
                 if (data && data.code) {
                     document.getElementById('genCodeResult').textContent = '✅ ' + data.code + ' (' + uses + '次)';
                     try { navigator.clipboard.writeText(data.code); } catch(e) {}
@@ -4221,13 +4199,8 @@
         }
         var hds = _h();
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/admin_activate', {
-                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_device_id: getDeviceId(), p_master_key: masterKey})
-            });
-            if (resp.ok) {
-                var data = await resp.json();
-                if (data && data.success) {
+            var data = await rpcCall('admin_activate', {p_device_id: getDeviceId(), p_master_key: masterKey});
+            if (data && data.success) {
                     _vipLevel = 'ultimate';
                     _isAdmin = true;
                     updateVipBadge();
@@ -4363,11 +4336,8 @@
         var favs = getFavorites();
         var hds = _h();
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/sync_favorites', {
-                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_device_id: getDeviceId(), p_video_ids: favs})
-            });
-            if (resp.ok) toast('☁️ 云端同步完成 (' + favs.length + ' 个收藏)');
+            var data = await rpcCall('sync_favorites', {p_device_id: getDeviceId(), p_video_ids: favs});
+            if (data) toast('☁️ 云端同步完成 (' + favs.length + ' 个收藏)');
             else toast('同步失败');
         } catch(e) { toast('☁️ 同步失败: ' + (e.message || '网络错误')); }
     }
@@ -4379,13 +4349,9 @@
         }
         var hds = _h();
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/load_favorites', {
-                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
-                body: JSON.stringify({p_device_id: getDeviceId()})
-            });
-            if (resp.ok) {
-                var data = await resp.json();
-                var ids = (data || []).map(function(r){return r.video_id;});
+            var data = await rpcCall('load_favorites', {p_device_id: getDeviceId()});
+            if (data) {
+                var ids = (Array.isArray(data) ? data : (data ? [data] : [])).map(function(r){return r.video_id;});
                 var existing = getFavorites();
                 var added = 0;
                 for (var i = 0; i < ids.length; i++) {
