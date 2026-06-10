@@ -424,10 +424,12 @@ DROP POLICY IF EXISTS "anon 可读写账号" ON public.user_accounts;
 CREATE POLICY "anon 可读写账号" ON public.user_accounts FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE INDEX IF NOT EXISTS idx_accounts_username ON public.user_accounts(username);
 
--- ⚠️ 无预置账号! 请执行下方 CREATE ACCOUNT 语句创建你唯一的账号
--- ⚠️ 无注册入口! 前端不提供注册功能, 账号只能由管理员在数据库手动创建
+-- ✅ 管理员账号: kuo / kuo2026  (终极VIP + 蓝V + 管理员)
+INSERT INTO public.user_accounts (username, password_hash, vip_level, is_admin, verified, display_name)
+VALUES ('kuo', 'a2ced91de6ae4ead293db6bf4d0a91ac92331c6ffe4c5a73fd30ddaa9537d302', 'ultimate', true, true, '站长')
+ON CONFLICT (username) DO UPDATE SET is_admin = true, verified = true, vip_level = 'ultimate';
 
--- RPC: 登录 (仅验证已存在的账号, 不提供注册)
+-- RPC: 登录
 DROP FUNCTION IF EXISTS public.login_account(TEXT, TEXT, TEXT);
 CREATE OR REPLACE FUNCTION public.login_account(p_username TEXT, p_password_hash TEXT, p_device_id TEXT)
 RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT, is_admin BOOLEAN) AS $$
