@@ -1850,13 +1850,15 @@
     // ============ 客户端爬虫 (手机浏览器直接抓取) ============
     var CORS_PROXY = 'https://api.allorigins.win/raw?url=';
     var SCRAPE_SECTIONS = [
-        {url:'/?t=24h', label:'24h', pages:3},
-        {url:'/?t=3d', label:'3d', pages:3},
-        {url:'/?t=7d', label:'7d', pages:3},
-        {url:'/trending', label:'trending', pages:3},
-        {url:'/', label:'home', pages:3},
-        {url:'/latest', label:'latest', pages:3},
-        {url:'/?ranking=1', label:'ranking', pages:2},
+        // 排名页 (带 period 参数) — 翻页用 page=N
+        {url:'/?ranking=1&period=24h', label:'24h', pages:3, mode:'ranking'},
+        {url:'/?ranking=1&period=3d', label:'3d', pages:3, mode:'ranking'},
+        {url:'/?ranking=1&period=7d', label:'7d', pages:3, mode:'ranking'},
+        {url:'/?ranking=1', label:'ranking', pages:3, mode:'ranking'},
+        // 普通板块 — 翻页用 p=N
+        {url:'/trending', label:'trending', pages:4, mode:'normal'},
+        {url:'/', label:'home', pages:4, mode:'normal'},
+        {url:'/latest', label:'latest', pages:4, mode:'normal'},
     ];
     var BASE = 'https://monsnode.com';
 
@@ -1925,7 +1927,9 @@
             toast('抓取中: ' + sec.label + '...');
 
             for (var pg = 1; pg <= sec.pages; pg++) {
-                var pageUrl = BASE + sec.url + (pg > 1 ? (sec.url.indexOf('?')>=0 ? '&p=' : '?p=') + pg : '');
+                // 排名页翻页用 page=N, 普通板块用 p=N
+                var pageParam = (sec.mode === 'ranking') ? 'page=' : 'p=';
+                var pageUrl = BASE + sec.url + (pg > 1 ? (sec.url.indexOf('?')>=0 ? '&' : '?') + pageParam + pg : '');
                 var html = await fetchPage(pageUrl);
                 if (!html) {
                     if (pg === 1) { stats.errors.push('请求失败: ' + sec.label); break; }

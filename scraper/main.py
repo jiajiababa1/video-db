@@ -13,13 +13,15 @@ import httpx
 BASE_URL = "https://monsnode.com"
 
 TARGET_SECTIONS = [
-    ("/?t=24h", "24h", 4),
-    ("/?t=3d", "3d", 4),
-    ("/?t=7d", "7d", 4),
-    ("/trending", "trending", 4),
-    ("/", "home", 4),
-    ("/latest", "latest", 4),
-    ("/?ranking=1", "ranking", 3),
+    # 排名页 (带 period 参数) — 翻页用 page=N
+    ("/?ranking=1&period=24h", "24h", 3, "ranking"),      # ranking 翻页模式
+    ("/?ranking=1&period=3d", "3d", 3, "ranking"),
+    ("/?ranking=1&period=7d", "7d", 3, "ranking"),
+    ("/?ranking=1", "ranking", 3, "ranking"),              # 总排行 (无 period)
+    # 普通板块 — 翻页用 p=N
+    ("/trending", "trending", 4, "normal"),
+    ("/", "home", 4, "normal"),
+    ("/latest", "latest", 4, "normal"),
 ]
 
 MAX_VIDEOS_PER_SECTION = 300
@@ -35,9 +37,21 @@ def log(msg: str, level: str = "INFO"):
     print(f"[{ts}] [{level}] {msg}", flush=True)
 
 
-def build_page_url(base_url: str, page: int) -> str:
-    sep = "&" if "?" in base_url else "?"
-    return f"{base_url}{sep}p={page}"
+def build_page_url(base_url: str, page: int, mode: str = "normal") -> str:
+    """构建翻页 URL
+    mode="ranking": 使用 page=N 参数 (排名页)
+    mode="normal":  使用 p=N 参数 (普通板块)
+    """
+    if mode == "ranking":
+        # 排名页第1页不加 page 参数, 第2页起加 page=N
+        if page <= 1:
+            return base_url
+        sep = "&" if "?" in base_url else "?"
+        return f"{base_url}{sep}page={page}"
+    else:
+        # 普通板块翻页: 加 p=N
+        sep = "&" if "?" in base_url else "?"
+        return f"{base_url}{sep}p={page}"
 
 
 # ========== 浏览器提取卡片的 JS ==========
@@ -295,7 +309,7 @@ async def scrape_all():
 
     try:
         # 阶段 1: 收集所有板块的视频卡片
-        for path, label, max_pages in TARGET_SECTIONS:
+        for path, label, max_pages, mode in TARGET_SECTIONS:
             section_url = urljoin(BASE_URL, path)
             section_videos = []
             t0 = time.time()
@@ -304,7 +318,7 @@ async def scrape_all():
             page = await context.new_page()
             try:
                 for page_num in range(1, max_pages + 1):
-                    url = section_url if page_num == 1 else build_page_url(section_url, page_num)
+                    url = build_page_url(section_url, page_num, mode)
                     # Cloudflare 重试循环 (最多 3 次)
                     cards = []
                     for cf_retry in range(3):
