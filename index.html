@@ -911,8 +911,12 @@
             <span>排序: <b id="sortLabel">最新优先</b></span>
             <span class="sep"></span>
             <span style="font-size:11px;color:#6b6760;" id="pageIndicator"></span>
-            <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;margin-left:auto;display:none;" id="prevPageBtn" onclick="page--;loadVids(true);">◀</button>
-            <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;display:none;" id="nextPageBtn" onclick="page++;loadVids(true);">▶</button>
+            <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;margin-left:auto;" id="prevPageBtn" onclick="page--;loadVids(true);window.scrollTo({top:0,behavior:'smooth'});" disabled>◀</button>
+            <span id="pageJumpWrap" style="display:none;align-items:center;gap:2px;font-size:10px;color:var(--vmuted);">
+                <input type="number" id="pageJumpInput" style="width:40px;padding:2px 4px;border-radius:2px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);font-size:10px;text-align:center;font-family:var(--font-mono);" min="1" value="1" onkeydown="if(event.key==='Enter'){var v=parseInt(this.value)||1;var max=Math.ceil(total/PAGE_SIZE);page=Math.max(1,Math.min(v,max));loadVids(true);window.scrollTo({top:0,behavior:'smooth'});}">
+                <button class="vid-btn ghost" style="font-size:9px;padding:2px 6px;" onclick="var v=parseInt(document.getElementById('pageJumpInput').value)||1;var max=Math.ceil(total/PAGE_SIZE);page=Math.max(1,Math.min(v,max));loadVids(true);window.scrollTo({top:0,behavior:'smooth'});">跳</button>
+            </span>
+            <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;" id="nextPageBtn" onclick="page++;loadVids(true);window.scrollTo({top:0,behavior:'smooth'});" disabled>▶</button>
             <span class="scrape-info" id="scrapeInfo"></span>
         </div>
         <div class="vid-tabs" id="vidTabs">
@@ -1196,6 +1200,31 @@
     var lastScrapeTime=null;
     var playableFilter='all'; // 'all' | 'playable' | 'unplayable'
 
+    // ============ 偏好持久化 ============
+    function savePrefs() {
+        localStorage.setItem('vid_prefs', JSON.stringify({
+            compactView: compactView,
+            sortOrder: sortOrder,
+            playableFilter: playableFilter
+        }));
+    }
+    function loadPrefs() {
+        try {
+            var p = JSON.parse(localStorage.getItem('vid_prefs') || '{}');
+            if (typeof p.compactView === 'boolean') compactView = p.compactView;
+            if (p.sortOrder === 'asc' || p.sortOrder === 'desc') sortOrder = p.sortOrder;
+            if (p.playableFilter === 'all' || p.playableFilter === 'playable' || p.playableFilter === 'unplayable') playableFilter = p.playableFilter;
+        } catch(e) {}
+        // 恢复 UI 状态
+        if (compactView) { $grid.classList.add('compact'); document.getElementById('viewToggle').classList.add('active'); }
+        $sortBtn.textContent = sortOrder === 'desc' ? '↓ 最新' : '↑ 最早';
+        $sortLabel.textContent = sortOrder === 'desc' ? '最新优先' : '最早优先';
+        var pfBtn = document.getElementById('playableFilter');
+        if (playableFilter === 'playable') { pfBtn.textContent = '✅ 可播'; pfBtn.classList.add('active'); }
+        else if (playableFilter === 'unplayable') { pfBtn.textContent = '⚠️ 失效'; pfBtn.classList.add('active'); }
+    }
+    loadPrefs();
+
     // ============================================================
     // TOTP 动态密码验证 (Steam Guard 风格)
     // 纯数学算法, 每 5 分钟换一次 4 位数密码
@@ -1343,6 +1372,7 @@
         activeAuthor = '';
         document.getElementById('authorHeader').classList.remove('on');
         closeSidebar();
+        updateHash();
         loadVids(true);
         // 滚动到顶部
         window.scrollTo({top: 0, behavior: 'instant'});
@@ -1636,12 +1666,15 @@
     var currentInlinePlayer = null;
     var currentInlineMp4 = '';
 
+    var _savedScrollY = 0;
+
     function showInlinePlayer(v, cardEl) {
         // 同一个卡片 → 收起
         if (currentInlineCard === cardEl && currentInlinePlayer) {
             closeInlinePlayer();
             return;
         }
+        _savedScrollY = window.scrollY;
         closeInlinePlayer();
 
         var tmpl = document.getElementById('inlinePlayerTemplate');
@@ -1772,6 +1805,13 @@
         currentInlineCard = null;
         currentInlineVideo = null;
         currentInlineMp4 = '';
+        // 恢复滚动位置
+        if (_savedScrollY > 0) {
+            requestAnimationFrame(function() {
+                window.scrollTo({top: _savedScrollY, behavior: 'instant'});
+                _savedScrollY = 0;
+            });
+        }
     }
 
     var $grid=document.getElementById('videoGrid');
@@ -1789,13 +1829,31 @@
     var $pull=document.getElementById('pullIndicator');
 
     function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
-    function toast(msg){$toast.textContent=msg;$toast.classList.add('on');setTimeout(function(){$toast.classList.remove('on');},2200);}
+    var _toastQueue=[], _toasting=false;
+    function toast(msg){
+        _toastQueue.push(msg);
+        if(_toasting)return;
+        _showNextToast();
+    }
+    function _showNextToast(){
+        if(!_toastQueue.length){_toasting=false;return;}
+        _toasting=true;
+        var msg=_toastQueue.shift();
+        $toast.textContent=msg;$toast.classList.add('on');
+        setTimeout(function(){
+            $toast.classList.remove('on');
+            setTimeout(_showNextToast, 300);
+        }, 2000);
+    }
 
     // ============ 搜索 ============
     $search.addEventListener('input',function(){
         clearTimeout(st); var v=this.value;
         $clear.style.display=v?'block':'none';
-        st=setTimeout(function(){sq=v;loadVids(true);if(sq.trim())triggerScraper();},600);
+        st=setTimeout(function(){sq=v;loadVids(true);},400);
+    });
+    $search.addEventListener('keydown',function(e){
+        if(e.key==='Enter'){clearTimeout(st);sq=this.value;loadVids(true);}
     });
 
     function clearSearch(){
@@ -1810,6 +1868,9 @@
         for(var i=0;i<tabs.length;i++)tabs[i].classList.remove('active');
         e.target.classList.add('active');
         activeSection=e.target.dataset.section;
+        activeAuthor='';
+        document.getElementById('authorHeader').classList.remove('on');
+        updateHash();
         loadVids(true);
     });
 
@@ -1818,6 +1879,7 @@
         sortOrder=sortOrder==='desc'?'asc':'desc';
         $sortBtn.textContent=sortOrder==='desc'?'↓ 最新':'↑ 最早';
         $sortLabel.textContent=sortOrder==='desc'?'最新优先':'最早优先';
+        savePrefs();
         loadVids(true);
     }
 
@@ -1827,6 +1889,7 @@
         if(playableFilter==='all'){playableFilter='playable';btn.textContent='✅ 可播';btn.classList.add('active');}
         else if(playableFilter==='playable'){playableFilter='unplayable';btn.textContent='⚠️ 失效';btn.classList.add('active');}
         else{playableFilter='all';btn.textContent='🔇 全部';btn.classList.remove('active');}
+        savePrefs();
         loadVids(true);
     }
 
@@ -1835,6 +1898,7 @@
         compactView=!compactView;
         if(compactView){$grid.classList.add('compact');document.getElementById('viewToggle').classList.add('active');}
         else{$grid.classList.remove('compact');document.getElementById('viewToggle').classList.remove('active');}
+        savePrefs();
     }
 
     // ============ 作者详情页 ============
@@ -1850,6 +1914,7 @@
         document.getElementById('authorName').textContent = '@' + author;
         document.getElementById('authorAvatar').textContent = author.charAt(0).toUpperCase();
         document.getElementById('authorMeta').textContent = '点击标题即可加载视频';
+        updateHash();
         // 滚动到顶部
         window.scrollTo({top: 0, behavior: 'smooth'});
         loadVids(true);
@@ -1867,6 +1932,7 @@
         var allTab = document.querySelector('#vidTabs .vid-tab[data-section=""]');
         if (allTab) allTab.classList.add('active');
         activeSection = '';
+        updateHash();
         window.scrollTo({top: 0, behavior: 'smooth'});
         loadVids(true);
     }
@@ -2476,48 +2542,64 @@
         hasMore=vids.length>=PAGE_SIZE;
     }
 
+    // ============ 通用: 过滤 + 渲染统计 + 分页 ============
+    function applyFiltersAndRender(data, count, append) {
+        // 客户端可播放性过滤
+        if (playableFilter === 'playable') {
+            data = data.filter(function(v){ return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0); });
+        } else if (playableFilter === 'unplayable') {
+            data = data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
+        }
+        // 观看历史排序
+        if(activeSection === 'history' && data.length) {
+            var histOrder = getHistory();
+            var orderMap = {};
+            for (var oi = 0; oi < histOrder.length; oi++) orderMap[histOrder[oi]] = oi;
+            data.sort(function(a, b) {
+                var oa = orderMap[a.video_id] !== undefined ? orderMap[a.video_id] : 999999;
+                var ob = orderMap[b.video_id] !== undefined ? orderMap[b.video_id] : 999999;
+                return oa - ob;
+            });
+        }
+        // 统计标签
+        if(activeSection === 'history') $stat.innerHTML='🕐 <b>观看历史</b> — 共 '+count.toLocaleString()+' 个视频 <button onclick="clearHistory()" style="margin-left:8px;padding:2px 8px;border-radius:4px;border:1px solid #c08080;background:transparent;color:#c08080;cursor:pointer;font-size:10px;">清空历史</button>';
+        else if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+count.toLocaleString()+' 个视频';
+        else {
+            var pc = data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
+            var uc = data.length - pc;
+            var fl = playableFilter==='all' ? '' : (playableFilter==='playable' ? ' [仅可播]' : ' [仅失效]');
+            $stat.innerHTML = '共 ' + count.toLocaleString() + ' 个视频' + fl + ' | <span style="color:#7a9a7a;">✅'+pc+'</span> <span style="color:#c08080;">⚠️'+uc+'</span>';
+        }
+        // 分页 UI
+        var maxPage = Math.ceil(count / PAGE_SIZE);
+        var pi = document.getElementById('pageIndicator');
+        var pb = document.getElementById('prevPageBtn');
+        var nb = document.getElementById('nextPageBtn');
+        var pw = document.getElementById('pageJumpWrap');
+        var pj = document.getElementById('pageJumpInput');
+        if (pi) pi.textContent = '第 ' + page + '/' + (maxPage||1) + ' 页';
+        if (pb) { pb.disabled = page <= 1; }
+        if (nb) { nb.disabled = page >= maxPage; }
+        if (pw) { pw.style.display = maxPage > 1 ? 'flex' : 'none'; }
+        if (pj) { pj.max = maxPage || 1; pj.value = page; }
+        // 渲染
+        render(data, append);
+        return data;
+    }
+
     // ============ 加载数据 ============
     async function loadVids(reset){
         if(loading)return; loading=true;
-        if(reset){page=1;hasMore=true;if(!activeAuthor)$grid.classList.remove('author-list');buildSkeletons(8);}
+        if(reset){page=1;hasMore=true;if(!activeAuthor)$grid.classList.remove('author-list');
+            var skCols = Math.max(2, Math.floor((window.innerWidth - 40) / (compactView ? 220 : 300)));
+            buildSkeletons(skCols * (activeAuthor ? 1 : 2));
+        }
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
-            // 客户端可播放性过滤
-            if (playableFilter === 'playable') {
-                r.data = r.data.filter(function(v){ return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0); });
-            } else if (playableFilter === 'unplayable') {
-                r.data = r.data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
-            }
             total=r.count;
-            if(activeSection === 'history') $stat.innerHTML='🕐 <b>观看历史</b> — 共 '+total.toLocaleString()+' 个视频 <button onclick="clearHistory()" style="margin-left:8px;padding:2px 8px;border-radius:4px;border:1px solid #c08080;background:transparent;color:#c08080;cursor:pointer;font-size:10px;">清空历史</button>';
-            else if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
-            else {
-                var playableCount = r.data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
-                var unplayableCount = r.data.length - playableCount;
-                var filterLabel = playableFilter==='all' ? '' : (playableFilter==='playable' ? ' [仅可播]' : ' [仅失效]');
-                $stat.innerHTML = '共 ' + total.toLocaleString() + ' 个视频' + filterLabel + ' | <span style="color:#7a9a7a;">✅'+playableCount+'</span> <span style="color:#c08080;">⚠️'+unplayableCount+'</span>';
-            }
-            // 翻页指示器
-            var maxPage = Math.ceil(total / PAGE_SIZE);
-            var pi = document.getElementById('pageIndicator');
-            var pb = document.getElementById('prevPageBtn');
-            var nb = document.getElementById('nextPageBtn');
-            if (pi) pi.textContent = '第 ' + page + '/' + (maxPage||1) + ' 页';
-            if (pb) pb.style.display = page > 1 ? '' : 'none';
-            if (nb) nb.style.display = page < maxPage ? '' : 'none';
-            // 观看历史: 按观看顺序排列 (最近观看在前)
-            if(activeSection === 'history' && r.data.length) {
-                var histOrder = getHistory();
-                var orderMap = {};
-                for (var oi = 0; oi < histOrder.length; oi++) orderMap[histOrder[oi]] = oi;
-                r.data.sort(function(a, b) {
-                    var oa = orderMap[a.video_id] !== undefined ? orderMap[a.video_id] : 999999;
-                    var ob = orderMap[b.video_id] !== undefined ? orderMap[b.video_id] : 999999;
-                    return oa - ob;
-                });
-            }
+            applyFiltersAndRender(r.data, total, page>1);
+            hasMore=r.data.length>=PAGE_SIZE;
             hideSkeletons();
-            render(r.data,page>1);
             if(reset) fetchLastScrape();
         }catch(e){
             hideSkeletons();
@@ -2533,33 +2615,9 @@
         page++; loading=true;
         try{
             var r=await fetchVids(page,sq,PAGE_SIZE);
-            // 客户端可播放性过滤
-            if (playableFilter === 'playable') {
-                r.data = r.data.filter(function(v){ return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0); });
-            } else if (playableFilter === 'unplayable') {
-                r.data = r.data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
-            }
             total=r.count;
-            if(activeSection === 'history') $stat.innerHTML='🕐 <b>观看历史</b> — 共 '+total.toLocaleString()+' 个视频 <button onclick="clearHistory()" style="margin-left:8px;padding:2px 8px;border-radius:4px;border:1px solid #c08080;background:transparent;color:#c08080;cursor:pointer;font-size:10px;">清空历史</button>';
-            else if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+total.toLocaleString()+' 个视频';
-            else {
-                var pc2 = r.data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
-                var uc2 = r.data.length - pc2;
-                var fl2 = playableFilter==='all' ? '' : (playableFilter==='playable' ? ' [仅可播]' : ' [仅失效]');
-                $stat.innerHTML = '共 ' + total.toLocaleString() + ' 个视频' + fl2 + ' | <span style="color:#7a9a7a;">✅'+pc2+'</span> <span style="color:#c08080;">⚠️'+uc2+'</span>';
-            }
-            // 观看历史: 按观看顺序排列
-            if(activeSection === 'history' && r.data.length) {
-                var histOrder2 = getHistory();
-                var orderMap2 = {};
-                for (var oi2 = 0; oi2 < histOrder2.length; oi2++) orderMap2[histOrder2[oi2]] = oi2;
-                r.data.sort(function(a, b) {
-                    var oa2 = orderMap2[a.video_id] !== undefined ? orderMap2[a.video_id] : 999999;
-                    var ob2 = orderMap2[b.video_id] !== undefined ? orderMap2[b.video_id] : 999999;
-                    return oa2 - ob2;
-                });
-            }
-            render(r.data,true);
+            applyFiltersAndRender(r.data, total, true);
+            hasMore=r.data.length>=PAGE_SIZE;
         }catch(e){toast('加载失败: '+e.message);page--;}
         loading=false;
     }
@@ -2601,9 +2659,73 @@
     // ============ 事件绑定 ============
     $refresh.addEventListener('click',function(){triggerScraper();loadVids(true);});
 
-    // 进入视频模式自动加载数据（不再自动触发客户端爬虫，GitHub Actions 已定时抓取）
+    // 进入视频模式自动加载数据 + hash 路由恢复
     var _orig=enterVideoMode;
-    enterVideoMode=function(){_orig();loadVids(true);};
+    enterVideoMode=function(){
+        _orig();
+        parseHash();
+        // 恢复 UI
+        if (activeAuthor) {
+            document.getElementById('authorHeader').classList.add('on');
+            document.getElementById('authorName').textContent = '@' + activeAuthor;
+            document.getElementById('authorAvatar').textContent = activeAuthor.charAt(0).toUpperCase();
+        }
+        if (activeSection) {
+            var tabs = document.querySelectorAll('#vidTabs .vid-tab');
+            for (var ti = 0; ti < tabs.length; ti++) {
+                tabs[ti].classList.toggle('active', tabs[ti].dataset.section === activeSection);
+            }
+        }
+        loadVids(true);
+    };
+
+    // ============ Hash 路由 (URL 分享) ============
+    // 格式: #/author/某作者  |  #/section/24h  |  #/video/v123456
+    function parseHash() {
+        var h = location.hash.replace(/^#\/?/, '');
+        if (!h) return;
+        var parts = h.split('/');
+        if (parts[0] === 'author' && parts[1]) {
+            activeAuthor = decodeURIComponent(parts[1]);
+            activeSection = '';
+        } else if (parts[0] === 'section' && parts[1]) {
+            activeSection = decodeURIComponent(parts[1]);
+            activeAuthor = '';
+        }
+        // video# 延迟处理 (等数据加载后打开)
+        if (parts[0] === 'video' && parts[1]) {
+            window._pendingVideoId = parts[1];
+        }
+    }
+    function updateHash() {
+        var h = '';
+        if (activeAuthor) h = '#/author/' + encodeURIComponent(activeAuthor);
+        else if (activeSection) h = '#/section/' + encodeURIComponent(activeSection);
+        if (location.hash !== h) {
+            try { history.replaceState(null, '', h || ' '); } catch(e) {}
+        }
+    }
+    // 监听 hashchange
+    window.addEventListener('hashchange', function() {
+        if (!document.body.classList.contains('dark-mode')) return;
+        var prevAuthor = activeAuthor, prevSection = activeSection;
+        activeAuthor = ''; activeSection = '';
+        parseHash();
+        if (activeAuthor !== prevAuthor || activeSection !== prevSection) {
+            document.getElementById('authorHeader').classList.toggle('on', !!activeAuthor);
+            if (activeAuthor) {
+                document.getElementById('authorName').textContent = '@' + activeAuthor;
+                document.getElementById('authorAvatar').textContent = activeAuthor.charAt(0).toUpperCase();
+            }
+            // 更新 tab 选中
+            var tabs = document.querySelectorAll('#vidTabs .vid-tab');
+            for (var ti = 0; ti < tabs.length; ti++) {
+                tabs[ti].classList.toggle('active', tabs[ti].dataset.section === activeSection);
+            }
+            loadVids(true);
+            window.scrollTo({top: 0, behavior: 'instant'});
+        }
+    });
 
     // ============ 批量解析 MP4 (后台, 使用 twjn.php) ============
     var resolveRunning = false;

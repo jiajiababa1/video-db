@@ -1,4 +1,4 @@
-name: Scraper v7 (全自动闭环)
+name: Scraper v8 (并行栏目 + 优先解析)
 
 on:
   schedule:
@@ -22,3 +22,9 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scraper/main.py
+      - name: 上传调试截图 (失败时)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: /tmp/monsnode_debug.png

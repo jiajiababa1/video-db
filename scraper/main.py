@@ -13,16 +13,19 @@ import httpx
 BASE_URL = "https://monsnode.com"
 
 TARGET_SECTIONS = [
-    # 排名页 (带 period 参数) — 翻页用 page=N (每栏目1页, 提速)
-    ("/?ranking=1&period=24h", "24h", 1, "ranking"),
-    ("/?ranking=1&period=3d", "3d", 1, "ranking"),
-    ("/?ranking=1&period=7d", "7d", 1, "ranking"),
-    ("/?ranking=1", "ranking", 1, "ranking"),
+    # 排名页 (带 period 参数) — 翻页用 page=N
+    ("/?ranking=1&period=24h", "24h", 3, "ranking"),
+    ("/?ranking=1&period=3d", "3d", 2, "ranking"),
+    ("/?ranking=1&period=7d", "7d", 2, "ranking"),
+    ("/?ranking=1", "ranking", 3, "ranking"),
     # 普通板块 — 翻页用 p=N
-    ("/trending", "trending", 1, "normal"),
-    ("/", "home", 1, "normal"),
-    ("/latest", "latest", 1, "normal"),
+    ("/trending", "trending", 3, "normal"),
+    ("/", "home", 2, "normal"),
+    ("/latest", "latest", 3, "normal"),
 ]
+
+# MP4 解析优先级: trending/latest 视频更可能还在线上
+MP4_PRIORITY = ["trending", "latest", "home", "24h", "3d", "7d", "ranking"]
 
 MAX_VIDEOS_PER_SECTION = 150
 BATCH_SIZE = 100
@@ -279,6 +282,7 @@ def supabase_save_status(stats: dict):
         "videos_found": stats.get("videos_found", 0),
         "videos_saved": stats.get("videos_saved", 0),
         "pages_crawled": stats.get("pages_crawled", 0),
+        "mp4_resolved": stats.get("mp4_resolved", 0),
         "errors": "\n".join(stats.get("errors", [])[:10]),
     }
     try:
@@ -358,6 +362,7 @@ async def scrape_all():
             "--mute-audio",
         ]
     )
+    # 共享 context (所有 section 共用 cookie/缓存, Cloudflare 只需过一次)
     context = await browser.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         viewport={"width": 1366, "height": 768},
@@ -367,94 +372,101 @@ async def scrape_all():
     )
     log("浏览器已启动")
 
+    # 用于聚合各 section 的并行结果
+    section_results_lock = asyncio.Lock()
+
+    async def scrape_one_section(path: str, label: str, max_pages: int, mode: str) -> list[dict]:
+        """抓取单个栏目的所有页面, 返回视频列表"""
+        section_url = urljoin(BASE_URL, path)
+        section_videos = []
+        t0 = time.time()
+        log(f"[{label}] {section_url}")
+
+        page = await context.new_page()
+        try:
+            for page_num in range(1, max_pages + 1):
+                url = build_page_url(section_url, page_num, mode)
+                page_ok = False
+                cards = []
+                for cf_retry in range(2):
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                        try:
+                            await page.wait_for_selector("div.listn", timeout=8000)
+                        except Exception:
+                            content = await page.content()
+                            if "challenges.cloudflare.com" in content or "お待ちください" in content:
+                                wait_sec = 3 + cf_retry * 3
+                                log(f"  [{label}] Cloudflare 挑战 (第{cf_retry+1}次), 等待 {wait_sec}s...")
+                                await asyncio.sleep(wait_sec)
+                                continue
+                        await asyncio.sleep(0.5)
+
+                        raw = await page.evaluate(EXTRACT_CARDS_JS)
+                        cards = [c for c in raw if isinstance(c, dict) and c.get("video_id")]
+                        page_ok = True
+                        break
+                    except Exception as e:
+                        if cf_retry < 1:
+                            log(f"  [{label}] 加载异常, 重试...", "WARN")
+                            await asyncio.sleep(1)
+                        else:
+                            log(f"  [{label}] 加载失败(已重试2次): {str(e)[:80]}", "ERROR")
+
+                if not page_ok:
+                    if page_num == 1:
+                        async with section_results_lock:
+                            stats["errors"].append(f"{label}: 第1页加载失败")
+                    break
+
+                async with section_results_lock:
+                    stats["pages_crawled"] += 1
+                log(f"  [{label}] 第{page_num}页: {len(cards)} 个视频 ({time.time()-t0:.0f}s)")
+
+                if not cards:
+                    if page_num == 1:
+                        async with section_results_lock:
+                            stats["errors"].append(f"{label}: 第1页无视频")
+                    break
+
+                existing = {v["video_id"] for v in section_videos}
+                new = [c for c in cards if c["video_id"] not in existing]
+                if not new and page_num > 1:
+                    break
+
+                for c in new:
+                    c["source_section"] = label
+                    c["source_page"] = url
+
+                section_videos.extend(new)
+                if len(section_videos) >= MAX_VIDEOS_PER_SECTION:
+                    break
+
+                await asyncio.sleep(1)
+
+        finally:
+            await page.close()
+
+        elapsed = time.time() - t0
+        async with section_results_lock:
+            stats["sections_crawled"] += 1
+            stats["videos_found"] += len(section_videos)
+        log(f"[{label}] 共 {len(section_videos)} 个视频 ({elapsed:.0f}s)")
+        return section_videos
+
     all_section_videos = []  # 跨板块收集所有视频用于最后的批量 MP4 解析
 
     try:
-        # 阶段 1: 收集所有板块的视频卡片
-        for path, label, max_pages, mode in TARGET_SECTIONS:
-            section_url = urljoin(BASE_URL, path)
-            section_videos = []
-            t0 = time.time()
-            log(f"[{label}] {section_url}")
-
-            page = await context.new_page()
-            try:
-                for page_num in range(1, max_pages + 1):
-                    url = build_page_url(section_url, page_num, mode)
-                    page_ok = False
-                    try:
-                        # Cloudflare 重试循环 (最多 2 次)
-                        cards = []
-                        for cf_retry in range(2):
-                            try:
-                                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                                try:
-                                    await page.wait_for_selector("div.listn", timeout=8000)
-                                except Exception:
-                                    content = await page.content()
-                                    if "challenges.cloudflare.com" in content or "お待ちください" in content:
-                                        wait_sec = 3 + cf_retry * 3
-                                        log(f"  Cloudflare 挑战 (第{cf_retry+1}次), 等待 {wait_sec}s...")
-                                        await asyncio.sleep(wait_sec)
-                                        continue  # 重试页面加载
-                                await asyncio.sleep(0.5)
-
-                                raw = await page.evaluate(EXTRACT_CARDS_JS)
-                                cards = [c for c in raw if isinstance(c, dict) and c.get("video_id")]
-                                page_ok = True
-                                break  # 成功获取, 退出重试循环
-                            except Exception as e:
-                                if cf_retry < 1:
-                                    log(f"  加载异常, 重试...", "WARN")
-                                    await asyncio.sleep(1)
-                                else:
-                                    log(f"  加载失败(已重试2次): {str(e)[:80]}", "ERROR")
-                                    # 不 raise, 让外层 catch 处理
-                                    page_ok = False
-
-                        if not page_ok:
-                            if page_num == 1:
-                                stats["errors"].append(f"{label}: 第1页加载失败")
-                            break  # 这个栏目跳过剩余页
-
-                        stats["pages_crawled"] += 1
-                        log(f"  第{page_num}页: {len(cards)} 个视频 ({time.time()-t0:.0f}s)")
-
-                        if not cards:
-                            if page_num == 1:
-                                stats["errors"].append(f"{label}: 第1页无视频")
-                            break
-
-                        existing = {v["video_id"] for v in section_videos}
-                        new = [c for c in cards if c["video_id"] not in existing]
-                        if not new and page_num > 1:
-                            break
-
-                        for c in new:
-                            c["source_section"] = label
-                            c["source_page"] = url
-
-                        section_videos.extend(new)
-                        if len(section_videos) >= MAX_VIDEOS_PER_SECTION:
-                            break
-
-                        # 浏览间隔
-                        await asyncio.sleep(1)
-
-                    except Exception as page_err:
-                        log(f"  第{page_num}页异常: {str(page_err)[:80]}", "WARN")
-                        if page_num == 1:
-                            stats["errors"].append(f"{label}: {str(page_err)[:80]}")
-                        break
-
-            finally:
-                await page.close()
-
-            stats["sections_crawled"] += 1
-            stats["videos_found"] += len(section_videos)
-            elapsed = time.time() - t0
-            log(f"[{label}] 共 {len(section_videos)} 个视频 ({elapsed:.0f}s)")
-            all_section_videos.extend(section_videos)
+        # 阶段 1: 并行抓取所有栏目
+        log(f"开始并行抓取 {len(TARGET_SECTIONS)} 个栏目...")
+        tasks = [scrape_one_section(path, label, max_pages, mode)
+                 for path, label, max_pages, mode in TARGET_SECTIONS]
+        section_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in section_results:
+            if isinstance(result, list):
+                all_section_videos.extend(result)
+            else:
+                log(f"栏目抓取异常: {result}", "WARN")
 
         # 阶段 2: Python 端合并 + 保存 (同一视频跨多个栏目 → source_section 拼接)
         if all_section_videos:
@@ -464,7 +476,7 @@ async def scrape_all():
         else:
             log("\n[阶段2] 无视频可保存")
 
-        # 阶段 3: 解析前 50 个视频的 MP4
+        # 阶段 3: 解析 MP4 (按优先级排序: trending/latest 优先, 最大 60 个)
         all_targets = {}
         for v in all_section_videos:
             mid = v.get("monsnode_video_id", "").strip()
@@ -472,9 +484,18 @@ async def scrape_all():
                 all_targets[mid] = v
 
         if all_targets:
-            # 只解析前 50 个 (避免太慢)
-            mids = list(all_targets.keys())[:50]
-            log(f"\n[阶段3] MP4 解析: {len(mids)} 个视频 (多 tab 真实导航)...")
+            # 按 source_section 优先级排序
+            def _mp4_rank(item):
+                mid, v = item
+                sec = v.get("source_section", "")
+                try:
+                    return MP4_PRIORITY.index(sec)
+                except ValueError:
+                    return 99
+
+            sorted_targets = sorted(all_targets.items(), key=_mp4_rank)
+            mids = [mid for mid, _ in sorted_targets[:60]]
+            log(f"\n[阶段3] MP4 解析: {len(mids)} 个视频 (多 tab 真实导航, 热门优先)...")
             t2 = time.time()
 
             all_mp4 = {}
@@ -538,7 +559,7 @@ async def scrape_all():
 
 def main():
     print("=" * 55)
-    log(f"monsnode 爬虫 v6 — 真实浏览器导航")
+    log(f"monsnode 爬虫 v8 — 真实浏览器导航 (并行栏目)")
     key_ok = SUPABASE_KEY and len(SUPABASE_KEY) > 100
     log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌'} ({len(SUPABASE_URL)} 字符)")
     log(f"SUPABASE_KEY={'已设置' if key_ok else '❌'} ({len(SUPABASE_KEY)} 字符)")
