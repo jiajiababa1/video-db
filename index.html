@@ -2268,6 +2268,8 @@
 
     // ============ 爬虫触发入口 ============
     function triggerScraper(){
+        // VIP 门控
+        if (!checkDailyLimit('scrape')) return;
         var now = Date.now();
         if (now - lastTrigger < COOLDOWN) {
             toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastTrigger))/60000) + ' 分钟后可再触发');
@@ -2899,6 +2901,7 @@
     var resolveRunning = false;
     async function batchResolveMp4() {
         if (resolveRunning) { toast('正在解析中, 请稍后...'); return; }
+        if (!checkDailyLimit('resolve')) return;
         resolveRunning = true;
         var btn = document.getElementById('resolveBtn');
         btn.disabled = true;
@@ -3658,6 +3661,22 @@
     var VIP_LEVELS = { free: 0, vip: 1, vvip: 2, svip: 3, ultimate: 4 };
     var VIP_LABELS = { free: '🆓 免费', vip: '💎 VIP', vvip: '💎💎 VVIP', svip: '👑 SVIP', ultimate: '⚡ 终极VIP' };
     var VIP_COLORS = { free: 'var(--vmuted)', vip: '#7a9a7a', vvip: '#4a9adf', svip: '#c8a45c', ultimate: '#e04040' };
+
+    // 各等级每日限制
+    var VIP_LIMITS = {
+        free:    { favs:100,  history:50,  scrape:0,  batchDl:0,  resolve:5,  cooldown:0 },
+        vip:     { favs:500,  history:200, scrape:1,  batchDl:1,  resolve:20, cooldown:0 },
+        vvip:    { favs:2000, history:999, scrape:3,  batchDl:10, resolve:50, cooldown:0 },
+        svip:    { favs:9999, history:999, scrape:10, batchDl:50, resolve:200,cooldown:0 },
+        ultimate:{ favs:99999,history:999, scrape:999,batchDl:999,resolve:999,cooldown:0 },
+    };
+    var VIP_FEATURES = {
+        free:    '浏览 搜索 播放 收藏(' + VIP_LIMITS.free.favs + ')',
+        vip:     '下载单个 连播 速度调节 收藏(' + VIP_LIMITS.vip.favs + ') 抓取' + VIP_LIMITS.vip.scrape + '次/天',
+        vvip:    '批量下载 多选 随机 作者黑名单 抓取' + VIP_LIMITS.vvip.scrape + '次/天 解析' + VIP_LIMITS.vvip.resolve + '次/天',
+        svip:    '无限收藏 导出导入 优先解析 抓取' + VIP_LIMITS.svip.scrape + '次/天 解析' + VIP_LIMITS.svip.resolve + '次/天',
+        ultimate:'👑 全部功能 + 管理面板 + 生成激活码 + 无限制',
+    };
     var _deviceId = '';
     var _vipLevel = 'free';
     var _isAdmin = false;
@@ -3750,7 +3769,15 @@
         document.getElementById('vipDialogOverlay').classList.add('on');
         document.getElementById('vipCodeInput').value = '';
         document.getElementById('vipResult').textContent = '';
-        document.getElementById('vipDialogDesc').textContent = '当前: ' + VIP_LABELS[_vipLevel] + ' | 输入激活码升级';
+        var desc = '当前: ' + VIP_LABELS[_vipLevel] + '\n';
+        desc += '━━━━━━━━━━━━━\n';
+        desc += '💎 VIP: ' + VIP_FEATURES.vip + '\n';
+        desc += '💎💎 VVIP: ' + VIP_FEATURES.vvip + '\n';
+        desc += '👑 SVIP: ' + VIP_FEATURES.svip + '\n';
+        desc += '⚡ 终极VIP: ' + VIP_FEATURES.ultimate + '\n';
+        desc += '━━━━━━━━━━━━━\n本月剩余: 抓取' + getRemainingDaily('scrape') + '次 解析' + getRemainingDaily('resolve') + '次';
+        document.getElementById('vipDialogDesc').style.whiteSpace = 'pre-line';
+        document.getElementById('vipDialogDesc').textContent = desc;
         setTimeout(function() { document.getElementById('vipCodeInput').focus(); }, 300);
     }
 
@@ -3871,6 +3898,64 @@
         return (VIP_LEVELS[_vipLevel] || 0) >= (VIP_LEVELS[minLevel] || 0);
     }
 
+    // ============ 每日配额 ============
+    function getDailyKey(key) {
+        return 'daily_' + key + '_' + new Date().toISOString().slice(0,10);
+    }
+    function getDailyCount(key) {
+        return parseInt(localStorage.getItem(getDailyKey(key)) || '0');
+    }
+    function incDailyCount(key) {
+        var k = getDailyKey(key);
+        var v = (parseInt(localStorage.getItem(k) || '0')) + 1;
+        localStorage.setItem(k, v.toString());
+        return v;
+    }
+    function getDailyLimit(key) {
+        var limits = VIP_LIMITS[_vipLevel] || VIP_LIMITS.free;
+        return limits[key] || 0;
+    }
+    function checkDailyLimit(key) {
+        var limit = getDailyLimit(key);
+        if (limit >= 999) return true; // 无限制
+        var used = getDailyCount(key);
+        if (used >= limit) {
+            var labels = { scrape: '客户端抓取', resolve: 'MP4解析', batchDl: '批量下载' };
+            toast('🚫 今日' + (labels[key] || key) + '已达上限(' + limit + '次), 请升级VIP');
+            return false;
+        }
+        incDailyCount(key);
+        return true;
+    }
+    function getRemainingDaily(key) {
+        var limit = getDailyLimit(key);
+        if (limit >= 999) return '∞';
+        return Math.max(0, limit - getDailyCount(key));
+    }
+
+    // Hook 收藏功能限制数量
+    var _origToggleFav = toggleFavorite;
+    toggleFavorite = function(videoId, btn) {
+        if (getFavorites().length >= getDailyLimit('favs') && !isFavorited(videoId)) {
+            toast('🚫 收藏已达上限(' + getDailyLimit('favs') + '), 请升级VIP');
+            return;
+        }
+        _origToggleFav(videoId, btn);
+    };
+
+    // Hook 历史记录限制
+    var _origAddHistory = addToHistory;
+    addToHistory = function(vid) {
+        var limit = getDailyLimit('history');
+        var hist = getHistory();
+        if (hist.length >= limit && hist.indexOf(vid) < 0) {
+            // 移除最旧的
+            hist = hist.slice(0, limit - 1);
+            saveHistoryData(hist);
+        }
+        _origAddHistory(vid);
+    };
+
     function updateSidebarForVip() {
         updateVipBadge();
         var adminBtn = document.getElementById('sidebarAdmin');
@@ -3884,14 +3969,35 @@
         checkVipStatus();
     };
 
-    // VIP 门控: 下载全部需要 VIP
+    // VIP 门控: 下载全部需要 VIP + 每日配额
     var _origDownloadSelected = downloadSelected;
     downloadSelected = function() {
         if (!isVipOrHigher('vip')) {
-            toast('💎 此功能需要 VIP 会员，点击顶部会员标识升级');
+            toast('💎 批量下载需要 VIP 会员，点击顶部会员标识升级');
             return;
         }
+        if (!checkDailyLimit('batchDl')) return;
         _origDownloadSelected();
+    };
+
+    // VIP 门控: 导出收藏需要 SVIP+
+    var _origExportFav = exportFavorites;
+    exportFavorites = function() {
+        if (!isVipOrHigher('svip')) {
+            toast('👑 导出收藏需要 SVIP 会员');
+            return;
+        }
+        _origExportFav();
+    };
+
+    // VIP 门控: 随机播放需要 VVIP+
+    var _origRandomPlay = randomPlay;
+    randomPlay = function() {
+        if (!isVipOrHigher('vvip')) {
+            toast('💎💎 随机播放需要 VVIP 会员');
+            return;
+        }
+        _origRandomPlay();
     };
 
     // ============ VIP 初始化 + 启动 ============
