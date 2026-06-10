@@ -181,21 +181,50 @@ def supabase_save(videos: list[dict]) -> int:
         "Authorization": "Bearer " + SUPABASE_KEY,
         "Content-Type": "application/json",
     }
-    records = []
+
+    # 合并同 video_id 的记录：拼接 source_section，保留最佳元数据
+    merged = {}
     for v in videos:
+        vid = v["video_id"]
+        if vid not in merged:
+            merged[vid] = dict(v)  # 浅拷贝
+        else:
+            existing = merged[vid]
+            # 拼接 source_section (去重用管道符)
+            new_sec = (v.get("source_section") or "")
+            old_sec = (existing.get("source_section") or "")
+            all_secs = [s.strip() for s in old_sec.split("|") if s.strip()]
+            if new_sec and new_sec not in all_secs:
+                all_secs.append(new_sec)
+            existing["source_section"] = "|".join(all_secs)
+            # 保留更好的元数据
+            if not existing.get("title") and v.get("title"):
+                existing["title"] = v["title"]
+            if not existing.get("author") and v.get("author"):
+                existing["author"] = v["author"]
+            if not existing.get("thumbnail") and v.get("thumbnail"):
+                existing["thumbnail"] = v["thumbnail"]
+            # 保留 MP4 (如果任一有)
+            mp4_existing = existing.get("duration", "") or ""
+            mp4_new = v.get("duration", "") or ""
+            if (not mp4_existing or "video.twimg.com" not in mp4_existing) and mp4_new and "video.twimg.com" in mp4_new:
+                existing["duration"] = mp4_new
+
+    records = []
+    for vid, v in merged.items():
         mp4 = v.get("duration", "") or ""
         has_mp4 = bool(mp4 and mp4.startswith("http") and "video.twimg.com" in mp4)
         records.append({
-            "video_id": v["video_id"],
-            "title": (v["title"] or "")[:500],
-            "thumbnail_url": (v["thumbnail"] or "")[:1000],
+            "video_id": vid,
+            "title": (v.get("title") or "")[:500],
+            "thumbnail_url": (v.get("thumbnail") or "")[:1000],
             "video_url": urljoin(BASE_URL, v.get("url", ""))[:1000],
             "author": (v.get("author") or "")[:200],
-            "duration": mp4 if has_mp4 else "",  # 不截断, Twitter MP4 URL 可能超过 500 字符
+            "duration": mp4 if has_mp4 else "",
             "views": (v.get("views") or "")[:50],
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
             "source_page": (v.get("source_page") or "")[:500],
-            "source_section": (v.get("source_section") or "")[:50],
+            "source_section": (v.get("source_section") or "")[:100],
             "scraped_at": now,
             "has_mp4": has_mp4,
             "needs_rescrape": not has_mp4,
