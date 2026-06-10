@@ -899,6 +899,7 @@
                 <button class="ms-btn" onclick="adminDo('friends_all')">👫 好友管理</button>
                 <button class="ms-btn" onclick="adminDo('broadcast')">📨 群发通知</button>
                 <button class="ms-btn" onclick="adminDo('audit')">🛡️ 安全审计</button>
+                <button class="ms-btn" onclick="adminDo('diag')" style="background:rgba(200,164,92,0.1);color:var(--vprimary);">🔧 检测数据库</button>
             </div>
             <div id="adminContent" style="font-size:11px;color:var(--vmuted);text-align:center;">选择上方功能</div>
         </div>
@@ -3963,12 +3964,16 @@
         var oldP = document.getElementById('pwdOld').value.trim();
         var newP = document.getElementById('pwdNew').value.trim();
         var r = document.getElementById('pwdResult');
-        if (!oldP || !newP || newP.length < 4) { r.textContent = '新密码至少4个字符'; r.style.color = '#c08080'; return; }
+        if (!oldP || !newP || newP.length < 4) { r.textContent = '❌ 新密码至少4个字符'; r.style.color = '#c08080'; return; }
+        r.textContent = '验证中...'; r.style.color = 'var(--vmuted)';
         var oldHash = await sha256(_username + ':' + oldP);
         var newHash = await sha256(_username + ':' + newP);
-        var data = await rpcCall('change_password', {p_username: _username, p_old_hash: oldHash, p_new_hash: newHash});
-        if (data && data.success) { r.textContent = '✅ 密码修改成功, 请重新登录'; r.style.color = 'var(--green)'; clearLoginSession(); }
-        else { r.textContent = '❌ ' + (data ? data.message : '原密码错误'); r.style.color = '#c08080'; }
+        try {
+            var data = await rpcCall('change_password', {p_username: _username, p_old_hash: oldHash, p_new_hash: newHash});
+            if (data && data.success) { r.textContent = '✅ 密码修改成功, 请重新登录'; r.style.color = 'var(--green)'; clearLoginSession(); }
+            else if (!data) { r.textContent = '❌ RPC不存在 — 确认已执行migrate.sql'; r.style.color = '#c08080'; }
+            else { r.textContent = '❌ ' + (data.message || '原密码错误'); r.style.color = '#c08080'; }
+        } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
 
     // ============ 好友系统 ============
@@ -4039,10 +4044,44 @@
         }
     }
 
+    // ============ 数据库状态检测 ============
+    async function checkDBStatus() {
+        var area = document.getElementById('adminContent');
+        area.innerHTML = '<div class="vpi-spinner"></div>';
+        var hds = _h();
+        var results = [];
+        var tables = ['user_accounts','announcements','messages','friends','admin_log','activation_codes','system_config'];
+        var rpcs = ['login_account','change_password','admin_action','admin_generate_code','list_users','add_friend','handle_friend','get_friend_requests','send_message','get_messages','search_users','site_stats','get_user_profile','view_user_favs','admin_reset_password','get_config','set_config','register_account','unread_count'];
+
+        for (var i = 0; i < tables.length; i++) {
+            try {
+                var r = await fetch(SUPABASE_URL + '/rest/v1/' + tables[i] + '?limit=1', {headers: hds});
+                results.push([tables[i], r.ok ? '✅' : '❌ HTTP' + r.status]);
+            } catch(e) { results.push([tables[i], '❌']); }
+        }
+        for (var j = 0; j < rpcs.length; j++) {
+            try {
+                var rr = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + rpcs[j], {method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}), body: '{}'});
+                var ok = rr.ok || rr.status === 400; // 400=参数错误但RPC存在
+                results.push([rpcs[j], ok ? '✅' : '❌ HTTP' + rr.status]);
+            } catch(e) { results.push([rpcs[j], '❌']); }
+        }
+        var failCount = results.filter(function(x){return x[1][0]==='❌';}).length;
+        var h = '<b>' + (failCount===0?'✅ 全部正常':'❌ '+failCount+'项异常') + '</b><br>';
+        h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px 8px;font-size:10px;font-family:monospace;max-height:300px;overflow-y:auto;">';
+        for (var k = 0; k < results.length; k++) {
+            h += '<div style="color:'+(results[k][1][0]==='❌'?'#c08080':'var(--green)')+'">'+results[k][1]+'</div><div>'+results[k][0]+'</div>';
+        }
+        h += '</div>';
+        if (failCount > 0) h += '<br><b style="color:#c08080;">⚠️ 在Supabase SQL Editor中重新执行 scraper/migrate.sql!</b>';
+        area.innerHTML = h;
+    }
+
     // ============ 管理员面板 (20功能) ============
     function adminDo(action) {
         var area = document.getElementById('adminContent');
         switch(action) {
+            case 'diag': checkDBStatus(); break;
             case 'announce': showAdminAnnounce(area); break;
             case 'users': showAdminUsers(area); break;
             case 'gencode': showAdminGenCode(area); break;
@@ -4084,15 +4123,22 @@
     async function publishAnnounce() {
         var t = document.getElementById('annTitle').value.trim();
         var c = document.getElementById('annContent').value.trim();
-        if (!t||!c) return;
+        var r = document.getElementById('annResult');
+        if (!t||!c) { r.textContent = '请填写标题和内容'; return; }
         try {
-            await fetch(SUPABASE_URL + '/rest/v1/announcements', {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements', {
                 method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-                body: JSON.stringify({title: t, content: c, created_by: _username})
+                body: JSON.stringify({title: t, content: c, created_by: _username, is_active: true})
             });
-            document.getElementById('annResult').textContent = '✅ 公告已发布';
-            document.getElementById('annResult').style.color = 'var(--green)';
-        } catch(e) { document.getElementById('annResult').textContent = '❌ 失败'; }
+            if (resp.ok) {
+                r.textContent = '✅ 公告已发布'; r.style.color = 'var(--green)';
+                // 刷新页面公告
+                loadAnnouncements();
+            } else {
+                r.textContent = '❌ 发布失败 HTTP ' + resp.status + ' — 确认已执行migrate.sql';
+                r.style.color = '#c08080';
+            }
+        } catch(e) { r.textContent = '❌ 网络错误: ' + (e.message || ''); r.style.color = '#c08080'; }
     }
 
     async function clearAnnounces() {
@@ -4104,24 +4150,31 @@
     function showAdminUsers(area) {
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
         rpcCallAll('list_users', {p_admin: _username, p_offset: 0, p_limit: 100}).then(function(users){
-            var h = '<div style="max-height:300px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
-            h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>VIP</th><th>认证</th><th>状态</th><th>操作</th></tr>';
-            for (var i=0;i<users.length;i++) {
-                var u = users[i];
-                h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
-                h += '<td style="padding:4px;cursor:pointer;color:var(--vprimary);" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+'</td>';
-                h += '<td style="font-size:9px;">'+VIP_LABELS[u.vip_level]+'</td>';
-                h += '<td>'+(u.verified?'🔵':'')+'</td>';
-                h += '<td style="color:'+(u.banned?'#c08080':'var(--green)')+'">'+(u.banned?'封禁':'正常')+'</td>';
-                h += '<td>';
-                if (!u.banned) h += '<button onclick="adminDoAction(\'ban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">封</button> ';
-                else h += '<button onclick="adminDoAction(\'unban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">解</button> ';
-                if (!u.verified) h += '<button onclick="adminDoAction(\'verify\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">认证</button> ';
-                h += '<select onchange="adminDoAction(\'set_vip\',\''+esc(u.username)+'\',this.value)" style="font-size:9px;padding:1px;background:var(--vcard);color:var(--vtext);border:1px solid var(--vborder);"><option value="">VIP</option><option value="free">免费</option><option value="vip">VIP</option><option value="vvip">VVIP</option><option value="svip">SVIP</option></select>';
-                h += '</td></tr>';
+            var h = '';
+            if (!users || users.length === 0) {
+                h = '<div style="color:#c08080;text-align:center;padding:20px;">❌ 无数据<br><span style="font-size:10px;">可能原因: RPC不存在或你不是管理员<br>请确认已执行migrate.sql并用kuo账号登录</span></div>';
+            } else {
+                h += '<div style="max-height:300px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
+                h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>VIP</th><th>认证</th><th>状态</th><th>操作</th></tr>';
+                for (var i=0;i<users.length;i++) {
+                    var u = users[i];
+                    h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+                    h += '<td style="padding:4px;cursor:pointer;color:var(--vprimary);" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+'</td>';
+                    h += '<td style="font-size:9px;">'+(VIP_LABELS[u.vip_level]||u.vip_level)+'</td>';
+                    h += '<td>'+(u.verified?'🔵':'')+'</td>';
+                    h += '<td style="color:'+(u.banned?'#c08080':'var(--green)')+'">'+(u.banned?'封禁':'正常')+'</td>';
+                    h += '<td>';
+                    if (!u.banned) h += '<button onclick="adminDoAction(\'ban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">封</button> ';
+                    else h += '<button onclick="adminDoAction(\'unban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">解</button> ';
+                    if (!u.verified) h += '<button onclick="adminDoAction(\'verify\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">认证</button> ';
+                    h += '<select onchange="adminDoAction(\'set_vip\',\''+esc(u.username)+'\',this.value)" style="font-size:9px;padding:1px;background:var(--vcard);color:var(--vtext);border:1px solid var(--vborder);"><option value="">VIP改</option><option value="free">免费</option><option value="vip">VIP</option><option value="vvip">VVIP</option><option value="svip">SVIP</option></select>';
+                    h += '</td></tr>';
+                }
+                h += '</table></div>';
             }
-            h += '</table></div>';
             area.innerHTML = h;
+        }).catch(function(e){
+            area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">❌ 加载失败: '+esc(e.message)+'<br>确认已执行migrate.sql</div>';
         });
     }
 
@@ -4479,22 +4532,21 @@
     async function generateCode() {
         var level = document.getElementById('genCodeLevel').value;
         var uses = parseInt(document.getElementById('genCodeUses').value) || 1;
-        var hds = _h();
+        var r = document.getElementById('genCodeResult');
+        r.textContent = '生成中...'; r.style.color = 'var(--vmuted)';
         try {
             var data = await rpcCall('admin_generate_code', {p_admin: _username, p_level: level, p_uses: uses});
-            if (data) {
-                if (data && data.code) {
-                    document.getElementById('genCodeResult').textContent = '✅ ' + data.code + ' (' + uses + '次)';
-                    try { navigator.clipboard.writeText(data.code); } catch(e) {}
-                }
+            if (data && data.code) {
+                r.textContent = '✅ ' + data.code + ' (' + uses + '次) 已复制'; r.style.color = 'var(--green)';
+                try { navigator.clipboard.writeText(data.code); } catch(e) {}
+            } else if (data && !data.success) {
+                r.textContent = '❌ 无权限 — 确认你是管理员账号登录的';
+                r.style.color = '#c08080';
             } else {
-                document.getElementById('genCodeResult').textContent = '❌ 生成失败';
-                document.getElementById('genCodeResult').style.color = '#c08080';
+                r.textContent = '❌ RPC不存在 — 确认已执行migrate.sql';
+                r.style.color = '#c08080';
             }
-        } catch(e) {
-            document.getElementById('genCodeResult').textContent = '❌ 网络错误';
-            document.getElementById('genCodeResult').style.color = '#c08080';
-        }
+        } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
 
     function randomStr(len) {
