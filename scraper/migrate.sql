@@ -5,36 +5,36 @@
 -- ═══════════════════════════════════════════
 -- 1. 添加新字段 (如果不存在)
 -- ═══════════════════════════════════════════
-ALTER TABLE videos ADD COLUMN IF NOT EXISTS monsnode_video_id TEXT DEFAULT '';
-ALTER TABLE videos ADD COLUMN IF NOT EXISTS has_mp4 BOOLEAN DEFAULT false;
-ALTER TABLE videos ADD COLUMN IF NOT EXISTS needs_rescrape BOOLEAN DEFAULT false;
-ALTER TABLE videos ADD COLUMN IF NOT EXISTS mp4_checked_at TIMESTAMPTZ;
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS monsnode_video_id TEXT DEFAULT '';
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS has_mp4 BOOLEAN DEFAULT false;
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS needs_rescrape BOOLEAN DEFAULT false;
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS mp4_checked_at TIMESTAMPTZ;
 
 -- ═══════════════════════════════════════════
 -- 2. 更新现有数据
 -- ═══════════════════════════════════════════
-UPDATE videos SET has_mp4 = true WHERE duration LIKE '%video.twimg.com%';
-UPDATE videos SET needs_rescrape = true WHERE duration NOT LIKE '%video.twimg.com%' OR duration IS NULL OR duration = '';
+UPDATE public.videos SET has_mp4 = true WHERE duration LIKE '%video.twimg.com%';
+UPDATE public.videos SET needs_rescrape = true WHERE duration NOT LIKE '%video.twimg.com%' OR duration IS NULL OR duration = '';
 
 -- ═══════════════════════════════════════════
 -- 3. 索引
 -- ═══════════════════════════════════════════
-CREATE INDEX IF NOT EXISTS idx_videos_has_mp4 ON videos(has_mp4);
-CREATE INDEX IF NOT EXISTS idx_videos_needs_rescrape ON videos(needs_rescrape);
+CREATE INDEX IF NOT EXISTS idx_videos_has_mp4 ON public.videos(has_mp4);
+CREATE INDEX IF NOT EXISTS idx_videos_needs_rescrape ON public.videos(needs_rescrape);
 
 -- ═══════════════════════════════════════════
 -- 4. 核心: UPSERT 函数 (INSERT ON CONFLICT)
 --    解决 merge-duplicates 只认主键 id 的问题
 --    这个函数用 video_id 的 UNIQUE 约束做冲突检测
 -- ═══════════════════════════════════════════
-DROP FUNCTION IF EXISTS upsert_videos(jsonb);
-CREATE OR REPLACE FUNCTION upsert_videos(videos jsonb) RETURNS void AS $$
+DROP FUNCTION IF EXISTS public.upsert_videos(jsonb);
+CREATE OR REPLACE FUNCTION public.upsert_videos(videos jsonb) RETURNS void AS $$
 DECLARE
   v jsonb;
 BEGIN
   FOR v IN SELECT * FROM jsonb_array_elements(videos)
   LOOP
-    INSERT INTO videos (
+    INSERT INTO public.videos (
       video_id, title, thumbnail_url, video_url, author,
       duration, views, monsnode_video_id,
       source_page, source_section,
@@ -86,18 +86,18 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 授权
-GRANT EXECUTE ON FUNCTION upsert_videos(jsonb) TO anon;
-GRANT EXECUTE ON FUNCTION upsert_videos(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.upsert_videos(jsonb) TO anon;
+GRANT EXECUTE ON FUNCTION public.upsert_videos(jsonb) TO service_role;
 
 -- ═══════════════════════════════════════════
 -- 5. 批量标记重爬函数
 -- ═══════════════════════════════════════════
-DROP FUNCTION IF EXISTS mark_rescrape(TEXT[]);
-CREATE OR REPLACE FUNCTION mark_rescrape(video_ids TEXT[]) RETURNS void AS $$
+DROP FUNCTION IF EXISTS public.mark_rescrape(TEXT[]);
+CREATE OR REPLACE FUNCTION public.mark_rescrape(video_ids TEXT[]) RETURNS void AS $$
 BEGIN
-  UPDATE videos SET needs_rescrape = true, updated_at = NOW()
+  UPDATE public.videos SET needs_rescrape = true, updated_at = NOW()
   WHERE video_id = ANY(video_ids);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-GRANT EXECUTE ON FUNCTION mark_rescrape(TEXT[]) TO anon;
+GRANT EXECUTE ON FUNCTION public.mark_rescrape(TEXT[]) TO anon;
