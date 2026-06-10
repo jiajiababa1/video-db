@@ -857,18 +857,24 @@
         </div>
     </div>
 
-    <!-- ==================== VIP 激活/升级对话框 ==================== -->
+    <!-- ==================== VIP 激活/升级/付款 ==================== -->
     <div class="cheat-dialog-overlay" id="vipDialogOverlay">
-        <div class="cheat-dialog">
+        <div class="cheat-dialog" style="max-height:80vh;overflow-y:auto;">
             <button class="vid-modal-close" onclick="closeVipDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
-            <p class="title">💎 会员升级</p>
-            <p class="desc" id="vipDialogDesc">输入激活码升级会员等级</p>
-            <input type="text" id="vipCodeInput" placeholder="输入激活码" autocomplete="off">
-            <div class="actions">
-                <button class="btn-cancel" onclick="closeVipDialog()">取消</button>
-                <button class="cheat-btn accent" onclick="redeemVipCode()">确认激活</button>
+            <p class="title">💎 会员中心</p>
+            <p class="desc" id="vipDialogDesc"></p>
+            <!-- 付费选项 -->
+            <div style="display:grid;gap:8px;margin:12px 0;" id="vipPriceList"></div>
+            <!-- 激活码输入 -->
+            <div id="vipCodeSection" style="display:none;">
+                <input type="text" id="vipCodeInput" placeholder="输入激活码" autocomplete="off" style="width:100%;padding:8px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:13px;margin-top:8px;">
+                <button class="cheat-btn accent" onclick="redeemVipCode()" style="width:100%;margin-top:8px;">确认激活</button>
             </div>
-            <p style="font-size:10px;color:var(--vmuted);margin-top:12px;" id="vipResult"></p>
+            <div class="actions" style="margin-top:8px;">
+                <button class="btn-cancel" onclick="closeVipDialog()">关闭</button>
+                <button class="btn-cancel" onclick="document.getElementById('vipCodeSection').style.display='block';this.style.display='none';" id="vipShowCodeBtn">有激活码</button>
+            </div>
+            <p style="font-size:10px;color:var(--vmuted);margin-top:8px;" id="vipResult"></p>
         </div>
     </div>
 
@@ -3713,21 +3719,65 @@
 
     // Supabase RPC 统一解析 (RETURNS TABLE → 数组, 取第一行)
     async function rpcCall(fn, body) {
-        var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
-            method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
-            body: JSON.stringify(body)
-        });
-        if (!resp.ok) return null;
-        var raw = await resp.json();
-        return Array.isArray(raw) ? (raw[0] || null) : raw;
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) {
+                console.error('RPC ' + fn + ' failed: HTTP ' + resp.status);
+                return null;
+            }
+            var txt = await resp.text();
+            if (!txt || txt === 'null') return null;
+            var raw = JSON.parse(txt);
+            return Array.isArray(raw) ? (raw[0] || null) : raw;
+        } catch(e) {
+            console.error('RPC ' + fn + ' error:', e);
+            return null;
+        }
     }
 
+    // SHA-256 (crypto.subtle优先, 降级到纯JS实现)
     function sha256(str) {
-        // 浏览器原生 SHA-256
-        var buffer = new TextEncoder().encode(str);
-        return crypto.subtle.digest('SHA-256', buffer).then(function(hash) {
-            return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
-        });
+        try {
+            var buffer = new TextEncoder().encode(str);
+            return crypto.subtle.digest('SHA-256', buffer).then(function(hash) {
+                return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+            });
+        } catch(e) {
+            // crypto.subtle 不可用(HTTP等), 降级到纯JS SHA-256
+            return Promise.resolve(sha256_fallback(str));
+        }
+    }
+    function sha256_fallback(s) {
+        function R(n,w){return((n>>>w)|(n<<(32-w)))>>>0;}
+        function B(x,y){return x>>>y;}
+        var K=[1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,
+                3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,
+                3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,
+                2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,
+                666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,
+                2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,
+                430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,
+                1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298];
+        var H=[1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225];
+        var b=[],i,l=s.length*8;
+        for(i=0;i<l;i+=8)b[i>>5]|=(s.charCodeAt(i/8)&255)<<(24-i%32);
+        b[i>>5]|=128<<(24-i%32);b[((i+64>>9)<<4)+15]=l;
+        for(var j=0;j<b.length;j+=16){
+            var w=b.slice(j,j+16),a=H[0],c=H[1],d=H[2],e=H[3],f=H[4],g=H[5],h=H[6],k=H[7];
+            for(i=0;i<64;i++){
+                if(i>=16)w[i]=((R(w[i-2],17)^R(w[i-2],19)^B(w[i-2],10))+w[i-7]+(R(w[i-15],7)^R(w[i-15],18)^B(w[i-15],3))+w[i-16])>>>0;
+                var t1=(k+(R(f,6)^R(f,11)^R(f,25))+(f&g^~f&h)+K[i]+w[i])>>>0;
+                var t2=((R(a,2)^R(a,13)^R(a,22))+(a&c^a&d^c&d))>>>0;
+                k=h;h=g;g=f;f=(e+t1)>>>0;e=d;d=c;c=a;a=(t1+t2)>>>0;
+            }
+            H[0]=(H[0]+a)>>>0;H[1]=(H[1]+c)>>>0;H[2]=(H[2]+d)>>>0;H[3]=(H[3]+e)>>>0;
+            H[4]=(H[4]+f)>>>0;H[5]=(H[5]+g)>>>0;H[6]=(H[6]+h)>>>0;H[7]=(H[7]+k)>>>0;
+        }
+        var r='';for(i=0;i<8;i++)r+=((H[i]>>>24)&255).toString(16).padStart(2,'0')+((H[i]>>>16)&255).toString(16).padStart(2,'0')+((H[i]>>>8)&255).toString(16).padStart(2,'0')+(H[i]&255).toString(16).padStart(2,'0');
+        return r;
     }
 
     async function doLogin() {
@@ -3739,7 +3789,12 @@
         try {
             var hash = await sha256(user + ':' + pass);
             var data = await rpcCall('login_account', {p_username: user, p_password_hash: hash, p_device_id: getDeviceId()});
-            if (data && data.success) {
+            if (!data) {
+                document.getElementById('loginResult').textContent = '❌ 服务器无响应 — 请确认已执行 migrate.sql';
+                document.getElementById('loginResult').style.color = '#c08080';
+                return;
+            }
+            if (data.success) {
                 _username = user; _loggedIn = true;
                 _vipLevel = data.vip_level; _isAdmin = data.is_admin;
                 saveLoginSession(user, hash);
@@ -3748,7 +3803,7 @@
                 document.getElementById('loginResult').style.color = 'var(--green)';
                 setTimeout(closeLoginDialog, 800);
             } else {
-                document.getElementById('loginResult').textContent = '❌ ' + (data ? (data.message || '登录失败') : '登录失败');
+                document.getElementById('loginResult').textContent = '❌ ' + (data.message || '登录失败');
                 document.getElementById('loginResult').style.color = '#c08080';
             }
         } catch(e) {
@@ -4036,12 +4091,14 @@
             if (data && data.success) {
                 _username = savedUser; _loggedIn = true;
                 _vipLevel = data.vip_level; _isAdmin = data.is_admin;
+                if (data.banned) { clearLoginSession(); return false; }
                 saveLoginSession(savedUser, savedHash);
                 return true;
+            } else {
+                clearLoginSession();
+                return false;
             }
-        } catch(e) {}
-        clearLoginSession();
-        return false;
+        } catch(e) { clearLoginSession(); return false; }
     }
 
     async function checkVipStatus() {
@@ -4096,20 +4153,55 @@
 
     function showVipDialog() {
         if (_isAdmin) { showAdminPanel(); return; }
-        restoreVipDialog();
         document.getElementById('vipDialogOverlay').classList.add('on');
         document.getElementById('vipCodeInput').value = '';
         document.getElementById('vipResult').textContent = '';
-        var desc = '当前: ' + VIP_LABELS[_vipLevel] + '\n';
-        desc += '━━━━━━━━━━━━━\n';
-        desc += '💎 VIP: ' + VIP_FEATURES.vip + '\n';
-        desc += '💎💎 VVIP: ' + VIP_FEATURES.vvip + '\n';
-        desc += '👑 SVIP: ' + VIP_FEATURES.svip + '\n';
-        desc += '⚡ 终极VIP: ' + VIP_FEATURES.ultimate + '\n';
-        desc += '━━━━━━━━━━━━━\n本月剩余: 抓取' + getRemainingDaily('scrape') + '次 解析' + getRemainingDaily('resolve') + '次';
-        document.getElementById('vipDialogDesc').style.whiteSpace = 'pre-line';
-        document.getElementById('vipDialogDesc').textContent = desc;
-        setTimeout(function() { document.getElementById('vipCodeInput').focus(); }, 300);
+        document.getElementById('vipCodeSection').style.display = 'none';
+        var showCodeBtn = document.getElementById('vipShowCodeBtn');
+        if (showCodeBtn) showCodeBtn.style.display = '';
+
+        // 套餐列表
+        var prices = [
+            {level:'vip', label:'💎 VIP', price:'¥9.9/月', desc:VIP_FEATURES.vip},
+            {level:'vvip', label:'💎💎 VVIP', price:'¥19.9/月', desc:VIP_FEATURES.vvip},
+            {level:'svip', label:'👑 SVIP', price:'¥29.9/月', desc:VIP_FEATURES.svip},
+        ];
+        if (_vipLevel === 'ultimate') prices = [];
+        var html = '';
+        for (var i=0;i<prices.length;i++) {
+            var p = prices[i];
+            var isCurrent = _vipLevel === p.level;
+            html += '<div style="background:var(--vcard);border:1px solid '+(isCurrent?'var(--vprimary)':'var(--vborder)')+';border-radius:2px;padding:12px;display:flex;justify-content:space-between;align-items:center;">';
+            html += '<div><div style="font-size:13px;color:var(--vtext);font-weight:600;">'+p.label+'</div><div style="font-size:10px;color:var(--vmuted);">'+p.desc+'</div></div>';
+            html += '<div style="text-align:right;"><div style="font-size:14px;color:var(--vprimary);font-weight:700;">'+p.price+'</div>';
+            html += isCurrent ? '<div style="font-size:9px;color:var(--green);">当前等级</div>' : '<button class="cheat-btn accent" style="font-size:9px;padding:4px 10px;margin-top:4px;" onclick="purchaseVip(\''+p.level+'\')">购买</button>';
+            html += '</div></div>';
+        }
+        document.getElementById('vipPriceList').innerHTML = html;
+        document.getElementById('vipDialogDesc').textContent = '当前: ' + VIP_LABELS[_vipLevel] + ' | 剩余: 抓取' + getRemainingDaily('scrape') + '次 解析' + getRemainingDaily('resolve') + '次';
+    }
+
+    function purchaseVip(level) {
+        closeVipDialog();
+        // 模拟支付确认
+        var price = {vip:'9.9', vvip:'19.9', svip:'29.9'}[level] || '?';
+        if (!confirm('💳 确认购买 ' + level.toUpperCase() + ' (' + price + '元)?\n\n(演示: 点击确定模拟付款成功)')) return;
+        // 模拟付款成功 → 服务器生成激活码 → 自动兑换
+        rpcCall('admin_generate_code', {p_admin: 'kuo', p_level: level, p_uses: 1}).then(function(data){
+            if (data && data.code) {
+                toast('✅ 付款成功! 激活码: ' + data.code);
+                // 自动兑换
+                return rpcCall('redeem_code', {p_device_id: getDeviceId(), p_code: data.code});
+            } else {
+                toast('❌ 生成激活码失败，请联系管理员');
+            }
+        }).then(function(rd) {
+            if (rd && rd.success) {
+                _vipLevel = rd.vip_level;
+                updateVipBadge(); updateSidebarForVip();
+                toast('🎉 升级成功! ' + VIP_LABELS[_vipLevel]);
+            }
+        }).catch(function(){ toast('❌ 网络错误'); });
     }
 
     function closeVipDialog() {

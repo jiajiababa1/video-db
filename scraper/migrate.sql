@@ -424,10 +424,71 @@ DROP POLICY IF EXISTS "anon 可读写账号" ON public.user_accounts;
 CREATE POLICY "anon 可读写账号" ON public.user_accounts FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE INDEX IF NOT EXISTS idx_accounts_username ON public.user_accounts(username);
 
--- ✅ 管理员账号: kuo / kuo2026  (终极VIP + 蓝V + 管理员)
+-- ✅ 管理员账号: kuo / kuo2026  (终极VIP + 蓝V + 管理员, 不可降级/不可封禁)
 INSERT INTO public.user_accounts (username, password_hash, vip_level, is_admin, verified, display_name)
 VALUES ('kuo', 'a2ced91de6ae4ead293db6bf4d0a91ac92331c6ffe4c5a73fd30ddaa9537d302', 'ultimate', true, true, '站长')
 ON CONFLICT (username) DO UPDATE SET is_admin = true, verified = true, vip_level = 'ultimate';
+
+-- ═══ 安全约束: 管理员账号不可被修改 ═══
+-- ban/unban/降级操作不生效于管理员
+CREATE OR REPLACE FUNCTION public.admin_action(p_admin TEXT, p_action TEXT, p_target TEXT, p_detail TEXT DEFAULT '')
+RETURNS TABLE(success BOOLEAN, message TEXT) AS $$
+DECLARE v_admin RECORD; v_target RECORD;
+BEGIN
+  SELECT * INTO v_admin FROM public.user_accounts WHERE username = p_admin AND is_admin = true AND banned = false;
+  IF v_admin IS NULL THEN RETURN QUERY SELECT false, '无管理员权限'; RETURN; END IF;
+
+  -- 不允许操作其他管理员
+  SELECT * INTO v_target FROM public.user_accounts WHERE username = p_target;
+  IF v_target IS NOT NULL AND v_target.is_admin = true AND p_action IN ('ban','unban','set_vip','unverify') THEN
+    RETURN QUERY SELECT false, '不能操作管理员账号'; RETURN;
+  END IF;
+
+  INSERT INTO public.admin_log (admin_user, action, target, detail) VALUES (p_admin, p_action, p_target, p_detail);
+
+  CASE p_action
+    WHEN 'ban' THEN
+      UPDATE public.user_accounts SET banned = true, ban_reason = p_detail WHERE username = p_target AND is_admin = false;
+      INSERT INTO public.bans (username, reason, banned_by) VALUES (p_target, p_detail, p_admin);
+      RETURN QUERY SELECT true, '已封禁 ' || p_target;
+    WHEN 'unban' THEN
+      UPDATE public.user_accounts SET banned = false, ban_reason = '' WHERE username = p_target;
+      UPDATE public.bans SET unbanned_at = NOW() WHERE username = p_target AND unbanned_at IS NULL;
+      RETURN QUERY SELECT true, '已解封 ' || p_target;
+    WHEN 'verify' THEN
+      UPDATE public.user_accounts SET verified = true WHERE username = p_target;
+      RETURN QUERY SELECT true, '已认证 ' || p_target;
+    WHEN 'unverify' THEN
+      UPDATE public.user_accounts SET verified = false WHERE username = p_target AND is_admin = false;
+      RETURN QUERY SELECT true, '已取消认证 ' || p_target;
+    WHEN 'set_vip' THEN
+      UPDATE public.user_accounts SET vip_level = p_detail WHERE username = p_target AND is_admin = false;
+      RETURN QUERY SELECT true, '已设置 ' || p_target || ' → ' || p_detail;
+    WHEN 'delete_video' THEN
+      DELETE FROM public.videos WHERE video_id = p_target;
+      RETURN QUERY SELECT true, '已删除视频 ' || p_target;
+    ELSE
+      RETURN QUERY SELECT false, '未知操作';
+  END CASE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.admin_action(TEXT, TEXT, TEXT, TEXT) TO anon;
+
+-- ═══ 登录强化: 检查封禁状态 ═══
+DROP FUNCTION IF EXISTS public.login_account(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.login_account(p_username TEXT, p_password_hash TEXT, p_device_id TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT, is_admin BOOLEAN) AS $$
+DECLARE v_acc RECORD;
+BEGIN
+  SELECT * INTO v_acc FROM public.user_accounts WHERE username = p_username;
+  IF v_acc IS NULL THEN RETURN QUERY SELECT false, '账号不存在', ''::TEXT, false; RETURN; END IF;
+  IF v_acc.banned THEN RETURN QUERY SELECT false, '账号已被封禁', ''::TEXT, false; RETURN; END IF;
+  IF v_acc.password_hash != p_password_hash THEN RETURN QUERY SELECT false, '密码错误', ''::TEXT, false; RETURN; END IF;
+  UPDATE public.user_accounts SET device_id = p_device_id, last_login = NOW() WHERE id = v_acc.id;
+  RETURN QUERY SELECT true, '登录成功', v_acc.vip_level, v_acc.is_admin;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.login_account(TEXT, TEXT, TEXT) TO anon;
 
 -- RPC: 登录
 DROP FUNCTION IF EXISTS public.login_account(TEXT, TEXT, TEXT);
