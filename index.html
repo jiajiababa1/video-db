@@ -4149,19 +4149,55 @@
         area.innerHTML =
             '<p style="margin-bottom:6px;color:var(--vtext);">📢 发布公告</p>' +
             '<input id="annTitle" placeholder="标题" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
-            '<textarea id="annContent" placeholder="内容" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;height:60px;resize:vertical;"></textarea>' +
+            '<textarea id="annContent" placeholder="内容" style="width:100%;padding:8px;margin-bottom:4px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;height:60px;resize:vertical;"></textarea>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--vmuted);margin-bottom:8px;"><input type="checkbox" id="annOnly" checked> 仅显示此公告 (隐藏旧公告)</label>' +
             '<button class="cheat-btn accent" onclick="publishAnnounce()" style="width:100%;">发布公告</button>' +
-            '<button class="cheat-btn" onclick="clearAnnounces()" style="width:100%;margin-top:4px;">清除所有公告</button>' +
+            '<button class="cheat-btn" onclick="showAnnounceHistory()" style="width:100%;margin-top:4px;">📋 查看公告历史</button>' +
             '<div id="annResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+
+    function showAnnounceHistory() {
+        var area = document.getElementById('adminContent');
+        area.innerHTML = '<div class="vpi-spinner"></div>';
+        fetch(SUPABASE_URL+'/rest/v1/announcements?select=*&order=created_at.desc&limit=20',{headers:_h()}).then(function(r){return r.json();}).then(function(list){
+            var h = '<b>📋 公告历史</b> <button class="cheat-btn" onclick="adminDo(\'announce\')" style="font-size:9px;padding:2px 8px;">← 返回发布</button><br><br>';
+            h += '<div style="max-height:300px;overflow-y:auto;">';
+            for (var i=0;i<list.length;i++) {
+                var a = list[i];
+                h += '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03);">';
+                h += '<b style="color:'+(a.is_active?'var(--vprimary)':'var(--vmuted)')+'">'+esc(a.title)+'</b>';
+                h += ' <span style="font-size:9px;color:var(--vmuted);">by @'+esc(a.created_by)+' '+new Date(a.created_at).toLocaleString('zh-CN')+'</span>';
+                h += ' <button onclick="deleteAnnounce('+a.id+',this)" style="font-size:9px;padding:1px 6px;background:transparent;border:1px solid rgba(139,58,58,0.3);color:#c08080;border-radius:2px;cursor:pointer;">删除</button>';
+                h += '<div style="font-size:10px;color:var(--vmuted);">'+esc(a.content)+'</div>';
+                h += '</div>';
+            }
+            h += '</div>';
+            area.innerHTML = h;
+        });
+    }
+
+    async function deleteAnnounce(id, btn) {
+        if (!confirm('删除此公告?')) return;
+        btn.textContent = '...';
+        var ok = await _delete(SUPABASE_URL + '/rest/v1/announcements?id=eq.' + id);
+        if (ok) { btn.parentElement.remove(); loadAnnouncements(); }
+        else { btn.textContent = '失败'; }
     }
 
     async function publishAnnounce() {
         var t = document.getElementById('annTitle').value.trim();
         var c = document.getElementById('annContent').value.trim();
+        var only = document.getElementById('annOnly').checked;
         var r = document.getElementById('annResult');
         if (!t||!c) { r.textContent = '请填写标题和内容'; return; }
         try {
-            // 发布公告需要 service_role (RLS收紧后anon不能写)
+            // 如果选了"仅显示此",先把旧公告设为inactive
+            if (only) {
+                await fetch(SUPABASE_URL + '/rest/v1/announcements?is_active=is.true', {
+                    method: 'PATCH', headers: getServiceHeaders(),
+                    body: JSON.stringify({is_active: false})
+                }).catch(function(){});
+            }
             var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements', {
                 method: 'POST', headers: getServiceHeaders(),
                 body: JSON.stringify({title: t, content: c, created_by: _username, is_active: true})
@@ -4170,7 +4206,7 @@
                 r.textContent = '✅ 公告已发布'; r.style.color = 'var(--green)';
                 loadAnnouncements();
             } else if (resp.status === 401 || resp.status === 403) {
-                r.textContent = '❌ 权限不足 — 请在管理面板点「🔑 设置管理员密钥」输入 service_role 密钥';
+                r.textContent = '❌ 权限不足 — 请在管理面板点「🔑 设置管理员密钥」';
                 r.style.color = '#c08080';
             } else {
                 r.textContent = '❌ HTTP ' + resp.status; r.style.color = '#c08080';
@@ -4226,7 +4262,8 @@
             else if (action === 'set_vip' && detail) ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {vip_level: detail});
             if (ok) await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: target, detail: detail});
             if (ok) { toast('✅ 操作成功'); adminDo('users'); }
-            else toast('❌ 操作失败');
+            else if (!_serviceKey) toast('❌ 需要 service_role 密钥 — 点「🔑 设置管理员密钥」');
+            else toast('❌ 操作失败 (检查密钥是否正确)');
         } catch(e) { toast('❌ 操作失败'); }
     }
 
@@ -4572,10 +4609,9 @@
             var code = level.toUpperCase() + '_' + Date.now().toString(36).toUpperCase() + randomStr(4);
             var ok = await _adminPost(SUPABASE_URL + '/rest/v1/activation_codes', {code: code, vip_level: level, max_uses: uses, created_by: _username});
             if (ok !== null) {
-                r.textContent = '✅ ' + code + ' (' + uses + '次) 已复制'; r.style.color = 'var(--green)';
-                try { navigator.clipboard.writeText(code); } catch(e) {}
+                r.innerHTML = '✅ 激活码: <b style="font-size:14px;color:var(--vprimary);user-select:all;">' + code + '</b> (' + uses + '次)<br><button class="cheat-btn accent" style="font-size:10px;padding:4px 10px;margin-top:4px;" onclick="navigator.clipboard.writeText(\'' + code + '\');this.textContent=\'✅ 已复制!\'">📋 复制激活码</button>';
             } else {
-                r.textContent = '❌ 生成失败'; r.style.color = '#c08080';
+                r.textContent = '❌ 需要 service_role 密钥'; r.style.color = '#c08080';
             }
         } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
