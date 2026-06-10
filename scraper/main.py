@@ -142,7 +142,7 @@ def supabase_update_mp4(updates: dict[str, str | None]) -> int:
             "needs_rescrape": not has_mp4,
         }
         if has_mp4:
-            patch["duration"] = mp4[:500]
+            patch["duration"] = mp4  # 不截断, Twitter MP4 URL 可能超过 500 字符
             patch["has_mp4"] = True
         try:
             resp = client.patch(
@@ -177,7 +177,7 @@ def supabase_save(videos: list[dict]) -> int:
             "thumbnail_url": (v["thumbnail"] or "")[:1000],
             "video_url": urljoin(BASE_URL, v.get("url", ""))[:1000],
             "author": (v.get("author") or "")[:200],
-            "duration": mp4[:500] if has_mp4 else "",
+            "duration": mp4 if has_mp4 else "",  # 不截断, Twitter MP4 URL 可能超过 500 字符
             "views": (v.get("views") or "")[:50],
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
             "source_page": (v.get("source_page") or "")[:500],
@@ -305,49 +305,55 @@ async def scrape_all():
             try:
                 for page_num in range(1, max_pages + 1):
                     url = section_url if page_num == 1 else build_page_url(section_url, page_num)
-                    try:
-                        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                    # Cloudflare 重试循环 (最多 3 次)
+                    cards = []
+                    for cf_retry in range(3):
                         try:
-                            await page.wait_for_selector("div.listn", timeout=20000)
-                        except Exception:
-                            content = await page.content()
-                            if "challenges.cloudflare.com" in content or "お待ちください" in content:
-                                log(f"  Cloudflare 挑战, 等待...")
-                                await asyncio.sleep(25)
-                        await asyncio.sleep(1.5)
+                            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                            try:
+                                await page.wait_for_selector("div.listn", timeout=20000)
+                            except Exception:
+                                content = await page.content()
+                                if "challenges.cloudflare.com" in content or "お待ちください" in content:
+                                    wait_sec = 15 + cf_retry * 10
+                                    log(f"  Cloudflare 挑战 (第{cf_retry+1}次), 等待 {wait_sec}s...")
+                                    await asyncio.sleep(wait_sec)
+                                    continue  # 重试页面加载
+                            await asyncio.sleep(1.5)
 
-                        raw = await page.evaluate(EXTRACT_CARDS_JS)
-                        cards = [c for c in raw if isinstance(c, dict) and c.get("video_id")]
+                            raw = await page.evaluate(EXTRACT_CARDS_JS)
+                            cards = [c for c in raw if isinstance(c, dict) and c.get("video_id")]
+                            break  # 成功获取, 退出重试循环
+                        except Exception as e:
+                            if cf_retry < 2:
+                                log(f"  加载异常 (第{cf_retry+1}次): {str(e)[:60]}, 重试...")
+                                await asyncio.sleep(5)
+                            else:
+                                raise
 
-                        stats["pages_crawled"] += 1
-                        log(f"  第{page_num}页: {len(cards)} 个视频 ({time.time()-t0:.0f}s)")
+                    stats["pages_crawled"] += 1
+                    log(f"  第{page_num}页: {len(cards)} 个视频 ({time.time()-t0:.0f}s)")
 
-                        if not cards:
-                            if page_num == 1:
-                                stats["errors"].append(f"{label}: 第1页无视频")
-                            break
-
-                        existing = {v["video_id"] for v in section_videos}
-                        new = [c for c in cards if c["video_id"] not in existing]
-                        if not new and page_num > 1:
-                            break
-
-                        for c in new:
-                            c["source_section"] = label
-                            c["source_page"] = url
-
-                        section_videos.extend(new)
-                        if len(section_videos) >= MAX_VIDEOS_PER_SECTION:
-                            break
-
-                        # 真人浏览间隔
-                        await asyncio.sleep(2)
-
-                    except Exception as e:
-                        log(f"  第{page_num}页异常: {str(e)[:80]}", "WARN")
+                    if not cards:
                         if page_num == 1:
-                            stats["errors"].append(f"{label}: {str(e)[:80]}")
+                            stats["errors"].append(f"{label}: 第1页无视频")
                         break
+
+                    existing = {v["video_id"] for v in section_videos}
+                    new = [c for c in cards if c["video_id"] not in existing]
+                    if not new and page_num > 1:
+                        break
+
+                    for c in new:
+                        c["source_section"] = label
+                        c["source_page"] = url
+
+                    section_videos.extend(new)
+                    if len(section_videos) >= MAX_VIDEOS_PER_SECTION:
+                        break
+
+                    # 真人浏览间隔
+                    await asyncio.sleep(2)
             finally:
                 await page.close()
 

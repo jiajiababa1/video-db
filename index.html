@@ -1658,6 +1658,36 @@
                 setInlineVideo(wrap, result.mp4Url);
                 currentInlineMp4 = result.mp4Url;
                 updateInlineBtns(player, result.mp4Url, v);
+                // 立即更新卡片 UI: 去掉「待重爬」「无法播放」标记，改为可播放状态
+                if (cardEl) {
+                    cardEl.classList.remove('needs-rescrape', 'unplayable');
+                    cardEl.classList.add('has-mp4');
+                    // 更新卡片上的状态标签 🔄/⚠️ → ✅
+                    var footSpans = cardEl.querySelectorAll('.vid-foot span');
+                    for (var si = 0; si < footSpans.length; si++) {
+                        var txt = footSpans[si].textContent || '';
+                        if (txt === '⚠️' || txt === '🔄') {
+                            footSpans[si].textContent = '✅';
+                            footSpans[si].style.color = '#7a9a7a';
+                            footSpans[si].title = '可播放';
+                            break;
+                        }
+                    }
+                    // 如果有预览 video 需求但还没创建，补齐预览元素
+                    var thumb = cardEl.querySelector('.vid-thumb');
+                    if (thumb && !thumb.querySelector('.vid-preview-video')) {
+                        var pv = document.createElement('video');
+                        pv.className = 'vid-preview-video loading';
+                        pv.muted = true;
+                        pv.setAttribute('playsinline', '');
+                        pv.setAttribute('preload', 'none');
+                        pv.setAttribute('disablepictureinpicture', '');
+                        var ps = document.createElement('div');
+                        ps.className = 'preview-spinner';
+                        thumb.appendChild(pv);
+                        thumb.appendChild(ps);
+                    }
+                }
             } else {
                 renderVideoError(wrap, '暂无可用视频源', '点击原站链接在 monsnode 查看');
             }
@@ -2503,9 +2533,9 @@
     // ============ 事件绑定 ============
     $refresh.addEventListener('click',function(){triggerScraper();loadVids(true);});
 
-    // 进入视频模式自动触发
+    // 进入视频模式自动加载数据（不再自动触发客户端爬虫，GitHub Actions 已定时抓取）
     var _orig=enterVideoMode;
-    enterVideoMode=function(){_orig();setTimeout(function(){triggerScraper();},1500);};
+    enterVideoMode=function(){_orig();loadVids(true);};
 
     // ============ 批量解析 MP4 (后台, 使用 twjn.php) ============
     var resolveRunning = false;
