@@ -4086,10 +4086,32 @@
         }
     }
 
+    var _serviceKey = '';
+    function getServiceHeaders() {
+        if (!_serviceKey) _serviceKey = sessionStorage.getItem('svc_key') || '';
+        if (_serviceKey) return {'apikey': _serviceKey, 'Authorization': 'Bearer ' + _serviceKey, 'Content-Type': 'application/json'};
+        return _H();
+    }
+    function setServiceKey() {
+        var key = prompt('输入 Supabase service_role 密钥:\n(Settings→API→service_role)\n留空则使用受限权限');
+        if (key) { _serviceKey = key; sessionStorage.setItem('svc_key', key); toast('✅ 密钥已设置'); }
+        else { _serviceKey = ''; sessionStorage.removeItem('svc_key'); }
+    }
+
+    async function _adminPost(url, body) {
+        try { var r = await fetch(url, {method:'POST', headers:getServiceHeaders(), body:JSON.stringify(body)}); return r.ok ? r.json().catch(function(){return null}) : null; }
+        catch(e) { return null; }
+    }
+    async function _adminPatch(url, body) {
+        try { var r = await fetch(url, {method:'PATCH', headers:getServiceHeaders(), body:JSON.stringify(body)}); return r.ok; }
+        catch(e) { return false; }
+    }
+
     function showAdminPanel() {
         if (!_isAdmin) { showLoginDialog(); return; }
         document.getElementById('adminPanelOverlay').classList.add('on');
-        document.getElementById('adminContent').innerHTML = '选择上方功能';
+        var hasKey = !!sessionStorage.getItem('svc_key');
+        document.getElementById('adminContent').innerHTML = '选择上方功能<br><small style="color:var(--vmuted);">密钥: ' + (hasKey ? '✅ service_role' : '⚠️ anon(受限)') + ' — <a href="#" onclick="setServiceKey();return false;" style="color:var(--vprimary);">设置</a></small>';
     }
 
     function closeAdminPanel() {
@@ -4112,8 +4134,9 @@
         var r = document.getElementById('annResult');
         if (!t||!c) { r.textContent = '请填写标题和内容'; return; }
         try {
+            // 发布公告需要 service_role (RLS收紧后anon不能写)
             var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements', {
-                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                method: 'POST', headers: getServiceHeaders(),
                 body: JSON.stringify({title: t, content: c, created_by: _username, is_active: true})
             });
             if (resp.ok) {
@@ -4169,11 +4192,11 @@
         if (action === 'ban') detail = prompt('封禁原因(可选):') || '';
         try {
             var ok = false;
-            if (action === 'ban') ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {banned: true, ban_reason: detail});
-            else if (action === 'unban') ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {banned: false, ban_reason: ''});
-            else if (action === 'verify') ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {verified: true});
-            else if (action === 'set_vip' && detail) ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {vip_level: detail});
-            if (ok) await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: target, detail: detail});
+            if (action === 'ban') ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {banned: true, ban_reason: detail});
+            else if (action === 'unban') ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {banned: false, ban_reason: ''});
+            else if (action === 'verify') ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {verified: true});
+            else if (action === 'set_vip' && detail) ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {vip_level: detail});
+            if (ok) await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: target, detail: detail});
             if (ok) { toast('✅ 操作成功'); adminDo('users'); }
             else toast('❌ 操作失败');
         } catch(e) { toast('❌ 操作失败'); }
@@ -4251,7 +4274,7 @@
         var r = document.getElementById('resetPwdResult');
         if (!u || !p) { r.textContent = '请填写完整'; return; }
         var hash = await sha256(u + ':' + p);
-        var ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(u)+'&is_admin=eq.false', {password_hash: hash});
+        var ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(u)+'&is_admin=eq.false', {password_hash: hash});
         r.textContent = ok ? '✅ 已重置密码' : '❌ 用户不存在或为管理员';
         r.style.color = data && data.success ? 'var(--green)' : '#c08080';
     }
@@ -4297,7 +4320,7 @@
         var msg = document.getElementById('broadcastMsg').value.trim();
         if (!msg) return;
         // 发布为公告即可(所有用户可见)
-        await fetch(SUPABASE_URL+'/rest/v1/announcements',{method:'POST',headers:Object.assign({},_h(),{'Content-Type':'application/json'}),body:JSON.stringify({title:'📨 系统通知',content:msg,created_by:_username})});
+        await _adminPost(SUPABASE_URL+'/rest/v1/announcements',{title:'📨 系统通知',content:msg,created_by:_username,is_active:true});
         document.getElementById('bcResult').textContent = '✅ 公告已发布，全站可见';
     }
     function showAdminAudit(area) {
@@ -4527,7 +4550,7 @@
         r.textContent = '生成中...'; r.style.color = 'var(--vmuted)';
         try {
             var code = level.toUpperCase() + '_' + Date.now().toString(36).toUpperCase() + randomStr(4);
-            var ok = await _post(SUPABASE_URL + '/rest/v1/activation_codes', {code: code, vip_level: level, max_uses: uses, created_by: _username});
+            var ok = await _adminPost(SUPABASE_URL + '/rest/v1/activation_codes', {code: code, vip_level: level, max_uses: uses, created_by: _username});
             if (ok !== null) {
                 r.textContent = '✅ ' + code + ' (' + uses + '次) 已复制'; r.style.color = 'var(--green)';
                 try { navigator.clipboard.writeText(code); } catch(e) {}
