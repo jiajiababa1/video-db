@@ -14,19 +14,19 @@ BASE_URL = "https://monsnode.com"
 
 TARGET_SECTIONS = [
     # 排名页 (带 period 参数) — 翻页用 page=N
-    ("/?ranking=1&period=24h", "24h", 3, "ranking"),      # ranking 翻页模式
-    ("/?ranking=1&period=3d", "3d", 3, "ranking"),
-    ("/?ranking=1&period=7d", "7d", 3, "ranking"),
-    ("/?ranking=1", "ranking", 3, "ranking"),              # 总排行 (无 period)
+    ("/?ranking=1&period=24h", "24h", 2, "ranking"),
+    ("/?ranking=1&period=3d", "3d", 2, "ranking"),
+    ("/?ranking=1&period=7d", "7d", 2, "ranking"),
+    ("/?ranking=1", "ranking", 2, "ranking"),              # 总排行 (无 period)
     # 普通板块 — 翻页用 p=N
-    ("/trending", "trending", 4, "normal"),
-    ("/", "home", 4, "normal"),
-    ("/latest", "latest", 4, "normal"),
+    ("/trending", "trending", 2, "normal"),
+    ("/", "home", 2, "normal"),
+    ("/latest", "latest", 2, "normal"),
 ]
 
-MAX_VIDEOS_PER_SECTION = 300
+MAX_VIDEOS_PER_SECTION = 150
 BATCH_SIZE = 100
-MP4_TAB_CONCURRENCY = 8  # 同时打开的 twjn.php 标签页数
+MP4_TAB_CONCURRENCY = 3  # 降低并发避免 GitHub Actions 内存超限导致取消
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().strip("'\"")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip().strip("'\"").replace("\n", "").replace("\r", "")
@@ -351,17 +351,17 @@ async def scrape_all():
                         cards = []
                         for cf_retry in range(3):
                             try:
-                                await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                                 try:
-                                    await page.wait_for_selector("div.listn", timeout=20000)
+                                    await page.wait_for_selector("div.listn", timeout=15000)
                                 except Exception:
                                     content = await page.content()
                                     if "challenges.cloudflare.com" in content or "お待ちください" in content:
-                                        wait_sec = 15 + cf_retry * 10
+                                        wait_sec = 8 + cf_retry * 5
                                         log(f"  Cloudflare 挑战 (第{cf_retry+1}次), 等待 {wait_sec}s...")
                                         await asyncio.sleep(wait_sec)
                                         continue  # 重试页面加载
-                                await asyncio.sleep(1.5)
+                                await asyncio.sleep(0.5)
 
                                 raw = await page.evaluate(EXTRACT_CARDS_JS)
                                 cards = [c for c in raw if isinstance(c, dict) and c.get("video_id")]
@@ -370,7 +370,7 @@ async def scrape_all():
                             except Exception as e:
                                 if cf_retry < 2:
                                     log(f"  加载异常 (第{cf_retry+1}次): {str(e)[:60]}, 重试...", "WARN")
-                                    await asyncio.sleep(5)
+                                    await asyncio.sleep(3)
                                 else:
                                     log(f"  加载失败(已重试3次): {str(e)[:80]}", "ERROR")
                                     # 不 raise, 让外层 catch 处理
@@ -402,8 +402,8 @@ async def scrape_all():
                         if len(section_videos) >= MAX_VIDEOS_PER_SECTION:
                             break
 
-                        # 真人浏览间隔
-                        await asyncio.sleep(2)
+                        # 浏览间隔
+                        await asyncio.sleep(1)
 
                     except Exception as page_err:
                         log(f"  第{page_num}页异常: {str(page_err)[:80]}", "WARN")
@@ -433,11 +433,11 @@ async def scrape_all():
             t1 = time.time()
 
             all_mp4 = {}
-            for batch_start in range(0, len(mids), MP4_TAB_CONCURRENCY * 5):
-                batch = mids[batch_start:batch_start + MP4_TAB_CONCURRENCY * 5]
+            for batch_start in range(0, len(mids), MP4_TAB_CONCURRENCY * 3):
+                batch = mids[batch_start:batch_start + MP4_TAB_CONCURRENCY * 3]
                 batch_results = await resolve_mp4_batch(context, batch)
                 all_mp4.update(batch_results)
-                done = min(batch_start + MP4_TAB_CONCURRENCY * 5, len(mids))
+                done = min(batch_start + MP4_TAB_CONCURRENCY * 3, len(mids))
                 log(f"  {done}/{len(mids)} → {len(all_mp4)} MP4 ({time.time()-t1:.0f}s)")
 
             # 合并 MP4
@@ -469,11 +469,11 @@ async def scrape_all():
                 mids = list(to_rescrape.keys())
                 t3 = time.time()
                 all_rescraped_mp4 = {}
-                for batch_start in range(0, len(mids), MP4_TAB_CONCURRENCY * 5):
-                    batch = mids[batch_start:batch_start + MP4_TAB_CONCURRENCY * 5]
+                for batch_start in range(0, len(mids), MP4_TAB_CONCURRENCY * 3):
+                    batch = mids[batch_start:batch_start + MP4_TAB_CONCURRENCY * 3]
                     batch_results = await resolve_mp4_batch(context, batch)
                     all_rescraped_mp4.update(batch_results)
-                    done = min(batch_start + MP4_TAB_CONCURRENCY * 5, len(mids))
+                    done = min(batch_start + MP4_TAB_CONCURRENCY * 3, len(mids))
                     log(f"  回爬 {done}/{len(mids)} → {len(all_rescraped_mp4)} MP4 ({time.time()-t3:.0f}s)")
 
                 # 标记失败的 (无 MP4 的也更新, 避免下轮重复查询)
