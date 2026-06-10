@@ -483,3 +483,163 @@ GRANT EXECUTE ON FUNCTION public.admin_upgrade(TEXT, TEXT, TEXT) TO anon;
 
 -- 5. 刷新网站, 用你的用户名和密码登录
 -- ═══════════════════════════════════════════
+
+-- ═══════════════════════════════════════════
+-- 社交平台 + 管理面板
+-- ═══════════════════════════════════════════
+
+-- 用户档案扩展
+ALTER TABLE public.user_accounts ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT '';
+ALTER TABLE public.user_accounts ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT '';
+ALTER TABLE public.user_accounts ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
+ALTER TABLE public.user_accounts ADD COLUMN IF NOT EXISTS banned BOOLEAN DEFAULT false;
+ALTER TABLE public.user_accounts ADD COLUMN IF NOT EXISTS ban_reason TEXT DEFAULT '';
+
+-- 关注系统
+CREATE TABLE IF NOT EXISTS public.user_follows (
+    follower  TEXT NOT NULL,
+    following TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (follower, following)
+);
+ALTER TABLE public.user_follows ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon 管理关注" ON public.user_follows;
+CREATE POLICY "anon 管理关注" ON public.user_follows FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE INDEX IF NOT EXISTS idx_follows_follower ON public.user_follows(follower);
+CREATE INDEX IF NOT EXISTS idx_follows_following ON public.user_follows(following);
+
+-- 公告系统
+CREATE TABLE IF NOT EXISTS public.announcements (
+    id          SERIAL PRIMARY KEY,
+    title       TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    created_by  TEXT NOT NULL,
+    is_active   BOOLEAN DEFAULT true,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon 读取公告" ON public.announcements;
+DROP POLICY IF EXISTS "anon 管理公告" ON public.announcements;
+CREATE POLICY "anon 读取公告" ON public.announcements FOR SELECT TO anon USING (true);
+CREATE POLICY "anon 管理公告" ON public.announcements FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- 操作日志
+CREATE TABLE IF NOT EXISTS public.admin_log (
+    id          SERIAL PRIMARY KEY,
+    admin_user  TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    target      TEXT DEFAULT '',
+    detail      TEXT DEFAULT '',
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.admin_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon 管理日志" ON public.admin_log;
+CREATE POLICY "anon 管理日志" ON public.admin_log FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- 封禁记录
+CREATE TABLE IF NOT EXISTS public.bans (
+    id          SERIAL PRIMARY KEY,
+    username    TEXT NOT NULL,
+    reason      TEXT DEFAULT '',
+    banned_by   TEXT NOT NULL,
+    banned_at   TIMESTAMPTZ DEFAULT NOW(),
+    unbanned_at TIMESTAMPTZ
+);
+ALTER TABLE public.bans ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "anon 管理封禁" ON public.bans;
+CREATE POLICY "anon 管理封禁" ON public.bans FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- ═══ RPC 函数 ═══
+
+-- 查询用户档案
+DROP FUNCTION IF EXISTS public.get_user_profile(TEXT);
+CREATE OR REPLACE FUNCTION public.get_user_profile(p_username TEXT)
+RETURNS TABLE(username TEXT, display_name TEXT, bio TEXT, verified BOOLEAN,
+              vip_level TEXT, created_at TIMESTAMPTZ, follower_count BIGINT, following_count BIGINT) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT a.username, a.display_name, a.bio, a.verified, a.vip_level, a.created_at,
+    (SELECT COUNT(*) FROM public.user_follows WHERE following = p_username),
+    (SELECT COUNT(*) FROM public.user_follows WHERE follower = p_username)
+  FROM public.user_accounts a WHERE a.username = p_username AND a.banned = false;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+GRANT EXECUTE ON FUNCTION public.get_user_profile(TEXT) TO anon;
+
+-- 用户列表 (管理员)
+DROP FUNCTION IF EXISTS public.list_users(TEXT, INTEGER, INTEGER);
+CREATE OR REPLACE FUNCTION public.list_users(p_admin TEXT, p_offset INTEGER DEFAULT 0, p_limit INTEGER DEFAULT 50)
+RETURNS TABLE(username TEXT, vip_level TEXT, verified BOOLEAN, banned BOOLEAN,
+              created_at TIMESTAMPTZ, last_login TIMESTAMPTZ) AS $$
+DECLARE v_admin RECORD;
+BEGIN
+  SELECT * INTO v_admin FROM public.user_accounts WHERE username = p_admin AND is_admin = true;
+  IF v_admin IS NULL THEN RETURN; END IF;
+  RETURN QUERY SELECT a.username, a.vip_level, a.verified, a.banned, a.created_at, a.last_login
+  FROM public.user_accounts a ORDER BY a.created_at DESC OFFSET p_offset LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.list_users(TEXT, INTEGER, INTEGER) TO anon;
+
+-- 管理员操作封装
+DROP FUNCTION IF EXISTS public.admin_action(TEXT, TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.admin_action(p_admin TEXT, p_action TEXT, p_target TEXT, p_detail TEXT DEFAULT '')
+RETURNS TABLE(success BOOLEAN, message TEXT) AS $$
+DECLARE v_admin RECORD;
+BEGIN
+  SELECT * INTO v_admin FROM public.user_accounts WHERE username = p_admin AND is_admin = true AND banned = false;
+  IF v_admin IS NULL THEN RETURN QUERY SELECT false, '无管理员权限'; RETURN; END IF;
+
+  -- 记录日志
+  INSERT INTO public.admin_log (admin_user, action, target, detail) VALUES (p_admin, p_action, p_target, p_detail);
+
+  -- 执行操作
+  CASE p_action
+    WHEN 'ban' THEN
+      UPDATE public.user_accounts SET banned = true, ban_reason = p_detail WHERE username = p_target AND is_admin = false;
+      INSERT INTO public.bans (username, reason, banned_by) VALUES (p_target, p_detail, p_admin);
+      RETURN QUERY SELECT true, '已封禁 ' || p_target;
+
+    WHEN 'unban' THEN
+      UPDATE public.user_accounts SET banned = false, ban_reason = '' WHERE username = p_target;
+      UPDATE public.bans SET unbanned_at = NOW() WHERE username = p_target AND unbanned_at IS NULL;
+      RETURN QUERY SELECT true, '已解封 ' || p_target;
+
+    WHEN 'verify' THEN
+      UPDATE public.user_accounts SET verified = true WHERE username = p_target;
+      RETURN QUERY SELECT true, '已认证 ' || p_target;
+
+    WHEN 'unverify' THEN
+      UPDATE public.user_accounts SET verified = false WHERE username = p_target AND is_admin = false;
+      RETURN QUERY SELECT true, '已取消认证 ' || p_target;
+
+    WHEN 'set_vip' THEN
+      UPDATE public.user_accounts SET vip_level = p_detail WHERE username = p_target AND is_admin = false;
+      RETURN QUERY SELECT true, '已设置 ' || p_target || ' VIP等级: ' || p_detail;
+
+    WHEN 'delete_video' THEN
+      DELETE FROM public.videos WHERE video_id = p_target;
+      RETURN QUERY SELECT true, '已删除视频 ' || p_target;
+
+    ELSE
+      RETURN QUERY SELECT false, '未知操作: ' || p_action;
+  END CASE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.admin_action(TEXT, TEXT, TEXT, TEXT) TO anon;
+
+
+-- RPC: 注册 (重新启用, 任何人可注册, 默认free)
+DROP FUNCTION IF EXISTS public.register_account(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.register_account(p_username TEXT, p_password_hash TEXT, p_device_id TEXT)
+RETURNS TABLE(success BOOLEAN, message TEXT, vip_level TEXT, is_admin BOOLEAN) AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.user_accounts WHERE username = p_username) THEN
+        RETURN QUERY SELECT false, '用户名已存在', ''::TEXT, false; RETURN;
+    END IF;
+    INSERT INTO public.user_accounts (username, password_hash, device_id, vip_level, is_admin)
+    VALUES (p_username, p_password_hash, p_device_id, 'free', false);
+    RETURN QUERY SELECT true, '注册成功', 'free'::TEXT, false;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.register_account(TEXT, TEXT, TEXT) TO anon;

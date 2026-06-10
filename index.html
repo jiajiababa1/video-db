@@ -842,14 +842,16 @@
     <div class="cheat-dialog-overlay" id="loginDialogOverlay">
         <div class="cheat-dialog" style="width:320px;">
             <button class="vid-modal-close" onclick="closeLoginDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
-            <p class="title">🔐 账号登录</p>
+            <p class="title" id="loginTitle">🔐 账号登录</p>
             <div style="margin-bottom:12px;">
-                <input type="text" id="loginUsername" placeholder="用户名" autocomplete="username" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
-                <input type="password" id="loginPassword" placeholder="密码" autocomplete="current-password" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);">
+                <input type="text" id="loginUsername" placeholder="用户名 (2-20字符)" autocomplete="username" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
+                <input type="password" id="loginPassword" placeholder="密码 (4+字符)" autocomplete="current-password" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
+                <input type="password" id="loginPassword2" placeholder="确认密码 (仅注册时填写)" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);display:none;margin-bottom:8px;">
             </div>
             <div class="actions">
+                <button class="btn-cancel" id="loginModeSwitch" onclick="toggleLoginMode()" style="font-size:10px;">注册新账号</button>
                 <button class="btn-cancel" onclick="closeLoginDialog()">取消</button>
-                <button class="cheat-btn accent" onclick="doLogin()">登录</button>
+                <button class="cheat-btn accent" id="loginBtn" onclick="doLogin()">登录</button>
             </div>
             <p style="font-size:10px;color:var(--vmuted);margin-top:12px;" id="loginResult"></p>
         </div>
@@ -870,28 +872,26 @@
         </div>
     </div>
 
-    <!-- ==================== 管理员面板 ==================== -->
+    <!-- ==================== 管理员面板 (手机友好) ==================== -->
     <div class="cheat-dialog-overlay" id="adminPanelOverlay">
-        <div class="cheat-dialog" style="width:380px;max-width:95vw;">
-            <button class="vid-modal-close" onclick="closeAdminPanel()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
-            <p class="title">👑 管理员面板</p>
-            <div style="text-align:left;font-size:11px;color:var(--vmuted);margin-bottom:12px;">
-                <p>等级: <b style="color:var(--vprimary);" id="adminVipLevel">-</b></p>
-                <p>设备: <span style="font-size:9px;word-break:break-all;" id="adminDeviceId">-</span></p>
+        <div class="cheat-dialog" style="width:95vw;max-width:420px;max-height:85vh;overflow-y:auto;padding:16px;">
+            <button class="vid-modal-close" onclick="closeAdminPanel()" style="position:absolute;top:8px;right:8px;z-index:10;">✕</button>
+            <p class="title" style="font-size:16px;margin-bottom:12px;">👑 管理员面板</p>
+            <!-- 快速操作 -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">
+                <button class="ms-btn" onclick="adminDo('announce')">📢 公告</button>
+                <button class="ms-btn" onclick="adminDo('users')">👥 用户</button>
+                <button class="ms-btn" onclick="adminDo('gencode')">🎫 激活码</button>
+                <button class="ms-btn" onclick="adminDo('vip_early')">🔒 VIP先行</button>
+                <button class="ms-btn" onclick="adminDo('stats')">📊 统计</button>
+                <button class="ms-btn" onclick="adminDo('logs')">📋 日志</button>
             </div>
-            <p class="desc" style="margin-bottom:8px;">生成新激活码</p>
-            <div style="display:flex;gap:6px;margin-bottom:8px;">
-                <select id="genCodeLevel" style="flex:1;padding:6px;border-radius:2px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);font-size:11px;">
-                    <option value="vip">VIP</option>
-                    <option value="vvip">VVIP</option>
-                    <option value="svip">SVIP</option>
-                </select>
-                <input type="number" id="genCodeUses" value="1" min="1" max="999" style="width:50px;padding:6px;border-radius:2px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);font-size:11px;text-align:center;">
-            </div>
-            <button class="cheat-btn accent" onclick="generateCode()" style="width:100%;margin-bottom:8px;">生成激活码</button>
-            <div id="genCodeResult" style="font-size:11px;color:var(--green);word-break:break-all;min-height:16px;"></div>
+            <div id="adminContent" style="font-size:11px;color:var(--vmuted);text-align:center;">选择上方功能</div>
         </div>
     </div>
+
+    <!-- 公告横幅 -->
+    <div id="announceBanner" style="display:none;background:rgba(200,164,92,0.08);border-bottom:1px solid rgba(200,164,92,0.15);padding:8px 16px;font-size:11px;color:var(--vprimary);text-align:center;cursor:pointer;" onclick="this.style.display='none'"></div>
 
     <!-- ==================== 身份验证遮罩 ==================== -->
     <div class="auth-overlay hidden" id="authOverlay">
@@ -1025,6 +1025,7 @@
             <div class="pull-dot"></div><div class="pull-dot"></div><div class="pull-dot"></div>
             <span>松手刷新</span>
         </div>
+        <div id="announceBanner" style="display:none;background:rgba(200,164,92,0.08);border-bottom:1px solid rgba(200,164,92,0.15);padding:8px 16px;font-size:11px;color:var(--vprimary);text-align:center;cursor:pointer;font-family:var(--font-sans);" onclick="document.getElementById('announceBanner').style.display='none'"></div>
         <div class="vid-header">
             <div class="vid-header-top">
                 <button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()" title="菜单">
@@ -2485,7 +2486,7 @@
             '<div class="vid-noimg" style="' + noImgDisplay + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>' +
             '<div class="vid-body"><div class="vid-title">' + esc(v.title || v.video_id) + '</div>' +
             '<div class="vid-foot">' + (v.rank ? '<span style="color:#c8a45c;font-weight:700;font-size:12px;">#' + esc(v.rank) + '</span>' : '<span class="vid-badge">' + esc(v.video_id) + '</span>') +
-            (v.author ? '<span class="vid-author" data-author="' + esc(v.author) + '" onclick="event.stopPropagation();event.preventDefault();showAuthorPage(this.getAttribute(\'data-author\'))">@' + esc(v.author) + '</span>' : '') +
+            (v.author ? '<span class="vid-author" data-author="' + esc(v.author) + '" onclick="event.stopPropagation();event.preventDefault();showUserProfile(this.getAttribute(\'data-author\'))">@' + esc(v.author) + '</span>' : '') +
             viewsHtml + sectionLabel + statusLabel +
             '<button class="vid-copy" onclick="event.stopPropagation();markForRescrape(\'' + esc(v.video_id) + '\',this,\'' + esc(v.monsnode_video_id || '') + '\')" title="标记重爬">🔄</button>' +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
@@ -3753,16 +3754,272 @@
     }
 
 
+    var _loginMode = 'login'; // 'login' | 'register'
+
+    function toggleLoginMode() {
+        _loginMode = (_loginMode === 'login') ? 'register' : 'login';
+        var title = document.getElementById('loginTitle');
+        var btn = document.getElementById('loginBtn');
+        var switchBtn = document.getElementById('loginModeSwitch');
+        var pw2 = document.getElementById('loginPassword2');
+        if (_loginMode === 'register') {
+            title.textContent = '📝 注册新账号';
+            btn.textContent = '注册';
+            btn.onclick = doRegister;
+            pw2.style.display = 'block';
+            switchBtn.textContent = '已有账号? 登录';
+        } else {
+            title.textContent = '🔐 账号登录';
+            btn.textContent = '登录';
+            btn.onclick = doLogin;
+            pw2.style.display = 'none';
+            switchBtn.textContent = '注册新账号';
+        }
+        document.getElementById('loginResult').textContent = '';
+    }
+
+    async function doRegister() {
+        var user = document.getElementById('loginUsername').value.trim();
+        var pass = document.getElementById('loginPassword').value.trim();
+        var pass2 = document.getElementById('loginPassword2').value.trim();
+        var resultEl = document.getElementById('loginResult');
+        // 输入校验
+        if (!user || user.length < 2 || user.length > 20) { resultEl.textContent = '❌ 用户名2-20个字符'; resultEl.style.color='#c08080'; return; }
+        if (!/^[a-zA-Z0-9_一-鿿]+$/.test(user)) { resultEl.textContent = '❌ 用户名只能包含中英文数字下划线'; resultEl.style.color='#c08080'; return; }
+        if (!pass || pass.length < 4) { resultEl.textContent = '❌ 密码至少4个字符'; resultEl.style.color='#c08080'; return; }
+        if (pass !== pass2) { resultEl.textContent = '❌ 两次密码不一致'; resultEl.style.color='#c08080'; return; }
+        resultEl.textContent = '注册中...'; resultEl.style.color = 'var(--vmuted)';
+        try {
+            var hash = await sha256(user + ':' + pass);
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/register_account', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_username: user, p_password_hash: hash, p_device_id: getDeviceId()})
+            });
+            var data = await resp.json();
+            if (data && data.success) {
+                resultEl.textContent = '✅ 注册成功! 请登录'; resultEl.style.color = 'var(--green)';
+                setTimeout(toggleLoginMode, 1000);
+            } else {
+                resultEl.textContent = '❌ ' + (data ? data.message : '注册失败'); resultEl.style.color = '#c08080';
+            }
+        } catch(e) { resultEl.textContent = '❌ 网络错误'; resultEl.style.color = '#c08080'; }
+    }
+
     function showLoginDialog() {
+        _loginMode = 'login'; toggleLoginMode(); toggleLoginMode(); // reset to login
         document.getElementById('loginDialogOverlay').classList.add('on');
         document.getElementById('loginUsername').value = '';
         document.getElementById('loginPassword').value = '';
+        document.getElementById('loginPassword2').value = '';
         document.getElementById('loginResult').textContent = '';
         setTimeout(function(){ document.getElementById('loginUsername').focus(); }, 300);
     }
 
     function closeLoginDialog() {
         document.getElementById('loginDialogOverlay').classList.remove('on');
+    }
+
+    // ============ 公告 ============
+    async function loadAnnouncements() {
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements?is_active=is.true&order=created_at.desc&limit=1', {headers:_h()});
+            if (resp.ok) {
+                var data = await resp.json();
+                if (data.length) {
+                    var banner = document.getElementById('announceBanner');
+                    banner.textContent = '📢 ' + data[0].title + ': ' + data[0].content;
+                    banner.style.display = 'block';
+                }
+            }
+        } catch(e) {}
+    }
+
+    // ============ 用户档案 ============
+    async function showUserProfile(username) {
+        if (!username) return;
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/get_user_profile', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_username: username})
+            });
+            if (resp.ok) {
+                var data = await resp.json();
+                if (data && data.length) {
+                    var p = data[0];
+                    var badge = p.verified ? ' <span style="color:#4a9adf;font-size:14px;">✔️</span>' : '';
+                    var vipLabel = VIP_LABELS[p.vip_level] || '';
+                    var html = '<div style="text-align:center;padding:20px;">' +
+                        '<div style="font-size:48px;margin-bottom:8px;">' + (p.verified ? '👤🔵' : '👤') + '</div>' +
+                        '<div style="font-size:20px;font-weight:700;color:var(--vtext);font-family:var(--font-serif);">@' + esc(p.username) + badge + '</div>' +
+                        '<div style="font-size:12px;color:var(--vmuted);margin-top:4px;">' + vipLabel + '</div>' +
+                        (p.bio ? '<div style="font-size:12px;color:var(--vmuted);margin-top:8px;">' + esc(p.bio) + '</div>' : '') +
+                        '<div style="font-size:11px;color:var(--vmuted);margin-top:8px;">' +
+                        '<span>粉丝 ' + (p.follower_count||0) + '</span> · <span>关注 ' + (p.following_count||0) + '</span> · <span>' + new Date(p.created_at).toLocaleDateString('zh-CN') + ' 加入</span>' +
+                        '</div>';
+                    if (_loggedIn && _username !== username) {
+                        html += '<div style="margin-top:12px;"><button class="cheat-btn accent" onclick="followUser(\'' + esc(username) + '\')">+ 关注</button></div>';
+                    }
+                    html += '<div style="margin-top:12px;"><button class="cheat-btn" onclick="showAuthorPage(\'' + esc(username) + '\');closeAdminPanel();">查看作品</button></div>';
+                    html += '</div>';
+                    $grid.innerHTML = html;
+                    document.getElementById('adminPanelOverlay').classList.remove('on');
+                }
+            }
+        } catch(e) {}
+    }
+
+    async function followUser(target) {
+        if (!_loggedIn) { toast('请先登录'); showLoginDialog(); return; }
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/user_follows', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json','Prefer':'resolution=ignore-duplicates'}),
+                body: JSON.stringify({follower: _username, following: target})
+            });
+            if (resp.ok) toast('✅ 已关注 @' + target);
+            else toast('关注失败');
+        } catch(e) {}
+    }
+
+    // ============ 管理员面板 (20+功能) ============
+    function adminDo(action) {
+        var area = document.getElementById('adminContent');
+        switch(action) {
+            case 'announce': showAdminAnnounce(area); break;
+            case 'users': showAdminUsers(area); break;
+            case 'gencode': showAdminGenCode(area); break;
+            case 'vip_early': markVipEarly(); area.innerHTML = '✅ VIP先行视频已标记'; break;
+            case 'stats': showAdminStats(area); break;
+            case 'logs': showAdminLogs(area); break;
+        }
+    }
+
+    function showAdminPanel() {
+        if (!_isAdmin) { showLoginDialog(); return; }
+        document.getElementById('adminPanelOverlay').classList.add('on');
+        document.getElementById('adminContent').innerHTML = '选择上方功能';
+    }
+
+    function closeAdminPanel() {
+        document.getElementById('adminPanelOverlay').classList.remove('on');
+    }
+
+    function showAdminAnnounce(area) {
+        area.innerHTML =
+            '<p style="margin-bottom:6px;color:var(--vtext);">📢 发布公告</p>' +
+            '<input id="annTitle" placeholder="标题" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<textarea id="annContent" placeholder="内容" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;height:60px;resize:vertical;"></textarea>' +
+            '<button class="cheat-btn accent" onclick="publishAnnounce()" style="width:100%;">发布公告</button>' +
+            '<button class="cheat-btn" onclick="clearAnnounces()" style="width:100%;margin-top:4px;">清除所有公告</button>' +
+            '<div id="annResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+
+    async function publishAnnounce() {
+        var t = document.getElementById('annTitle').value.trim();
+        var c = document.getElementById('annContent').value.trim();
+        if (!t||!c) return;
+        try {
+            await fetch(SUPABASE_URL + '/rest/v1/announcements', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify({title: t, content: c, created_by: _username})
+            });
+            document.getElementById('annResult').textContent = '✅ 公告已发布';
+            document.getElementById('annResult').style.color = 'var(--green)';
+        } catch(e) { document.getElementById('annResult').textContent = '❌ 失败'; }
+    }
+
+    async function clearAnnounces() {
+        if (!confirm('清除所有公告?')) return;
+        await fetch(SUPABASE_URL + '/rest/v1/announcements?id=gt.0', {method: 'DELETE', headers:_h()});
+        document.getElementById('annResult').textContent = '✅ 已清除';
+    }
+
+    function showAdminUsers(area) {
+        area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
+        fetch(SUPABASE_URL + '/rest/v1/rpc/list_users', {
+            method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+            body: JSON.stringify({p_admin: _username, p_offset: 0, p_limit: 100})
+        }).then(function(r){return r.json();}).then(function(users){
+            var h = '<div style="max-height:300px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
+            h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>VIP</th><th>认证</th><th>状态</th><th>操作</th></tr>';
+            for (var i=0;i<users.length;i++) {
+                var u = users[i];
+                h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+                h += '<td style="padding:4px;cursor:pointer;color:var(--vprimary);" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+'</td>';
+                h += '<td style="font-size:9px;">'+VIP_LABELS[u.vip_level]+'</td>';
+                h += '<td>'+(u.verified?'🔵':'')+'</td>';
+                h += '<td style="color:'+(u.banned?'#c08080':'var(--green)')+'">'+(u.banned?'封禁':'正常')+'</td>';
+                h += '<td>';
+                if (!u.banned) h += '<button onclick="adminDoAction(\'ban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">封</button> ';
+                else h += '<button onclick="adminDoAction(\'unban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">解</button> ';
+                if (!u.verified) h += '<button onclick="adminDoAction(\'verify\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">认证</button> ';
+                h += '<select onchange="adminDoAction(\'set_vip\',\''+esc(u.username)+'\',this.value)" style="font-size:9px;padding:1px;background:var(--vcard);color:var(--vtext);border:1px solid var(--vborder);"><option value="">VIP</option><option value="free">免费</option><option value="vip">VIP</option><option value="vvip">VVIP</option><option value="svip">SVIP</option></select>';
+                h += '</td></tr>';
+            }
+            h += '</table></div>';
+            area.innerHTML = h;
+        });
+    }
+
+    async function adminDoAction(action, target, detail) {
+        detail = detail || '';
+        if (action === 'ban') detail = prompt('封禁原因(可选):') || '';
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/admin_action', {
+                method: 'POST', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}),
+                body: JSON.stringify({p_admin: _username, p_action: action, p_target: target, p_detail: detail})
+            });
+            var data = await resp.json();
+            if (data && data.success) { toast('✅ ' + data.message); adminDo('users'); }
+            else toast('❌ ' + (data?data.message:'失败'));
+        } catch(e) { toast('❌ 操作失败'); }
+    }
+
+    function showAdminGenCode(area) {
+        area.innerHTML =
+            '<select id="genCodeLevel" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<option value="vip">VIP</option><option value="vvip">VVIP</option><option value="svip">SVIP</option></select>' +
+            '<input id="genCodeUses" type="number" value="1" min="1" max="999" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<button class="cheat-btn accent" onclick="generateCode()" style="width:100%;">生成激活码</button>' +
+            '<div id="genCodeResult" style="font-size:10px;margin-top:6px;word-break:break-all;"></div>';
+    }
+
+    function showAdminStats(area) {
+        area.innerHTML = '<div class="vpi-spinner"></div>';
+        Promise.all([
+            fetch(SUPABASE_URL+'/rest/v1/user_accounts?select=id&limit=1',{headers:Object.assign({},_h(),{'Prefer':'count=exact'})}),
+            fetch(SUPABASE_URL+'/rest/v1/videos?select=id&limit=1',{headers:Object.assign({},_h(),{'Prefer':'count=exact'})}),
+            fetch(SUPABASE_URL+'/rest/v1/announcements?select=id&limit=1',{headers:Object.assign({},_h(),{'Prefer':'count=exact'})})
+        ]).then(function(rs){
+            var counts = [0,0,0];
+            for (var i=0;i<rs.length;i++) {
+                var rg = rs[i].headers.get('content-range');
+                if (rg) { var m = rg.match(/\/(\d+)/); if (m) counts[i] = parseInt(m[1]); }
+            }
+            area.innerHTML =
+                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;">' +
+                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[0]+'</div><div style="font-size:10px;color:var(--vmuted);">注册用户</div></div>' +
+                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[1]+'</div><div style="font-size:10px;color:var(--vmuted);">视频总数</div></div>' +
+                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[2]+'</div><div style="font-size:10px;color:var(--vmuted);">公告数</div></div>' +
+                '</div>';
+        });
+    }
+
+    function showAdminLogs(area) {
+        area.innerHTML = '<div class="vpi-spinner"></div>';
+        fetch(SUPABASE_URL+'/rest/v1/admin_log?select=*&order=created_at.desc&limit=50',{headers:_h()}).then(function(r){return r.json();}).then(function(logs){
+            var h = '<div style="max-height:300px;overflow-y:auto;">';
+            for (var i=0;i<logs.length;i++) {
+                var l = logs[i];
+                h += '<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:10px;">' +
+                    '<span style="color:var(--vprimary);">'+esc(l.admin_user)+'</span> ' +
+                    '<b>'+esc(l.action)+'</b> ' +
+                    (l.target?esc(l.target):'') + ' ' +
+                    '<span style="color:var(--vmuted);">'+new Date(l.created_at).toLocaleString('zh-CN')+'</span>' +
+                    '</div>';
+            }
+            h += '</div>';
+            area.innerHTML = h;
+        });
     }
 
     function saveLoginSession(user, hash) {
@@ -4063,6 +4320,7 @@
     enterVideoMode = function() {
         _origEnter2();
         checkVipStatus();
+        loadAnnouncements();
     };
 
     // VIP 门控: 下载全部需要 VIP + 每日配额
