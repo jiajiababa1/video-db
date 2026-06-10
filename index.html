@@ -1170,6 +1170,10 @@
     function goBackToGame() {
         document.body.classList.remove('dark-mode');
         document.body.style.overflow = '';
+        // 清洗视频模式状态, 下次进入从首页开始
+        activeSection = ''; activeAuthor = '';
+        window._pendingVideoId = null;
+        try { history.replaceState(null, '', location.pathname); } catch(e) {}
         // 滚动回顶部, 避免游戏视图被偏移
         window.scrollTo({top: 0, behavior: 'instant'});
     }
@@ -1192,7 +1196,6 @@
     // ============================================================
     var SUPABASE_URL='https://fejspvbckgkbmfyoxiub.supabase.co';
     var SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
-    var GITHUB_TOKEN='ghp_'+'zqpv2rKXA4WRnpWHv4A'+'OneSnLqwUHs4fehA4';
     var PAGE_SIZE=24, page=1, total=0, loading=false, hasMore=true;
     var sq='', st=null, sortOrder='desc', activeSection='', activeAuthor='';
     var lastTrigger=0, COOLDOWN=3600000;
@@ -1437,6 +1440,7 @@
         saveHistoryData(list);
     }
     function clearHistory() {
+        if (!confirm('确定要清空全部观看历史吗？此操作不可撤销。')) return;
         localStorage.removeItem('vid_history');
         updateHistBadge();
         if (activeSection === 'history') loadVids(true);
@@ -1832,7 +1836,7 @@
     var $scrapeInfo=document.getElementById('scrapeInfo');
     var $pull=document.getElementById('pullIndicator');
 
-    function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+    function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
     var _toastQueue=[], _toasting=false;
     function toast(msg){
         _toastQueue.push(msg);
@@ -1944,15 +1948,16 @@
     // ============ 客户端爬虫 (手机浏览器直接抓取) ============
     var CORS_PROXY = 'https://api.allorigins.win/raw?url=';
     var SCRAPE_SECTIONS = [
-        // 排名页 (带 period 参数) — 翻页用 page=N
-        {url:'/?ranking=1&period=24h', label:'24h', pages:3, mode:'ranking'},
-        {url:'/?ranking=1&period=3d', label:'3d', pages:3, mode:'ranking'},
-        {url:'/?ranking=1&period=7d', label:'7d', pages:3, mode:'ranking'},
-        {url:'/?ranking=1', label:'ranking', pages:3, mode:'ranking'},
-        // 普通板块 — 翻页用 p=N
-        {url:'/trending', label:'trending', pages:4, mode:'normal'},
-        {url:'/', label:'home', pages:4, mode:'normal'},
-        {url:'/latest', label:'latest', pages:4, mode:'normal'},
+        // 排名页 (带 period 参数)
+        {url:'/?ranking=1&period=24h', label:'24h', pages:5, mode:'ranking'},
+        {url:'/?ranking=1&period=3d', label:'3d', pages:5, mode:'ranking'},
+        {url:'/?ranking=1&period=7d', label:'7d', pages:5, mode:'ranking'},
+        {url:'/?ranking=1&period=30d', label:'30d', pages:5, mode:'ranking'},
+        {url:'/?ranking=1', label:'ranking', pages:5, mode:'ranking'},
+        // 普通板块
+        {url:'/trending', label:'trending', pages:5, mode:'normal'},
+        {url:'/', label:'home', pages:5, mode:'normal'},
+        {url:'/latest', label:'latest', pages:5, mode:'normal'},
     ];
     var BASE = 'https://monsnode.com';
 
@@ -2075,8 +2080,10 @@
             stats.saved += saved;
             toast('已保存: ' + sec.label + ' (' + saved + '个), 正在解析 MP4...');
 
-            // 步骤2: 通过 twjn.php 解析 MP4 直链 (前20个)
-            var toResolve = allVideos.slice(0, 20);
+            // 步骤2: 通过 twjn.php 解析 MP4 直链 (前20个, 跳过已缓存的)
+            var toResolve = allVideos.slice(0, 20).filter(function(v) {
+                return v.monsnode_video_id && !v._hasMp4;  // 跳过服务端已解析的
+            });
             var resolved = 0;
             for (var ri = 0; ri < toResolve.length; ri++) {
                 var v = toResolve[ri];

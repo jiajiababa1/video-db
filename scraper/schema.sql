@@ -69,16 +69,36 @@ CREATE POLICY "允许匿名读取状态"
     ON scrape_status FOR SELECT
     USING (true);
 
--- 8. service_role 写入策略
+-- 8. service_role 写入/更新策略 (仅限服务端使用, 前端 anon 走 RPC)
 CREATE POLICY "允许 service_role 写入视频"
     ON videos FOR INSERT
+    TO service_role
     WITH CHECK (true);
 
 CREATE POLICY "允许 service_role 更新视频"
     ON videos FOR UPDATE
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+-- 9. 允许 anon 通过 RPC 函数写入 (函数内部 SECURITY DEFINER)
+CREATE POLICY "允许 anon 通过 RPC 插入视频"
+    ON videos FOR INSERT
+    TO anon
+    WITH CHECK (true);
+
+CREATE POLICY "允许 anon 通过 RPC 更新视频"
+    ON videos FOR UPDATE
+    TO anon
     USING (true)
     WITH CHECK (true);
 
 CREATE POLICY "允许 service_role 写入状态"
     ON scrape_status FOR INSERT
+    TO service_role
+    WITH CHECK (true);
+
+CREATE POLICY "允许 anon 写入状态"
+    ON scrape_status FOR INSERT
+    TO anon
     WITH CHECK (true);
