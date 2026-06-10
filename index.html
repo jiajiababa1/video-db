@@ -3353,7 +3353,7 @@
         var hds = _h();
         try {
             var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/popular_authors', {
-                method: 'POST', headers: {**hds, 'Content-Type':'application/json'}, body: '{}'
+                method: 'POST', headers: Object.assign({}, hds, {'Content-Type':'application/json'}), body: '{}'
             });
             if (!resp.ok) throw new Error('RPC 不可用，回退到客户端聚合');
             var authors = await resp.json();
