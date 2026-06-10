@@ -38,6 +38,7 @@ BEGIN
       video_id, title, thumbnail_url, video_url, author,
       duration, views, monsnode_video_id,
       source_page, source_section,
+      vote_up, vote_down,
       scraped_at, updated_at,
       has_mp4, needs_rescrape, mp4_checked_at
     ) VALUES (
@@ -51,6 +52,8 @@ BEGIN
       v->>'monsnode_video_id',
       v->>'source_page',
       v->>'source_section',
+      COALESCE((v->>'vote_up')::integer, 0),
+      COALESCE((v->>'vote_down')::integer, 0),
       COALESCE((v->>'scraped_at')::timestamptz, NOW()),
       NOW(),
       COALESCE((v->>'has_mp4')::boolean, false),
@@ -65,6 +68,8 @@ BEGIN
       duration = COALESCE(NULLIF(v->>'duration', ''), videos.duration),
       views = COALESCE(NULLIF(v->>'views', ''), videos.views),
       monsnode_video_id = COALESCE(NULLIF(v->>'monsnode_video_id', ''), videos.monsnode_video_id),
+      vote_up = COALESCE((v->>'vote_up')::integer, videos.vote_up),
+      vote_down = COALESCE((v->>'vote_down')::integer, videos.vote_down),
       source_page = COALESCE(NULLIF(v->>'source_page', ''), videos.source_page),
       -- 拼接 source_section: 新栏目追加到已有栏目后面 (用 | 分隔, 自动去重)
       source_section = CASE
@@ -93,6 +98,13 @@ GRANT EXECUTE ON FUNCTION public.upsert_videos(jsonb) TO service_role;
 -- 5. 重试计数器
 -- ═══════════════════════════════════════════
 ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0;
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS vote_up INTEGER DEFAULT 0;
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS vote_down INTEGER DEFAULT 0;
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS removed BOOLEAN DEFAULT false;
+ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS mp4_url TEXT DEFAULT '';
+
+-- 回填: 从 duration 字段迁移 MP4 URL 到 mp4_url
+UPDATE public.videos SET mp4_url = duration WHERE duration LIKE '%video.twimg.com%' AND (mp4_url IS NULL OR mp4_url = '');
 
 -- 安全递增 retry_count (RPC, 避免 PATCH 覆盖)
 DROP FUNCTION IF EXISTS public.increment_retry(TEXT);
@@ -121,6 +133,24 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.mark_rescrape(TEXT[]) TO anon;
 
 -- ═══════════════════════════════════════════
+-- RPC: 热门作者聚合
+-- ═══════════════════════════════════════════
+DROP FUNCTION IF EXISTS public.popular_authors();
+CREATE OR REPLACE FUNCTION public.popular_authors() RETURNS TABLE(author TEXT, video_count BIGINT, total_views BIGINT) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT v.author, COUNT(*)::BIGINT, COALESCE(SUM(NULLIF(v.views, '')::BIGINT), 0)
+  FROM public.videos v
+  WHERE v.author IS NOT NULL AND v.author != ''
+  GROUP BY v.author
+  ORDER BY COUNT(*) DESC
+  LIMIT 50;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+GRANT EXECUTE ON FUNCTION public.popular_authors() TO anon;
+
+-- ═══════════════════════════════════════════
 -- 7. 修复 upsert: has_mp4 只增不减
 --    (防止客户端/服务端爬虫互相覆盖)
 -- ═══════════════════════════════════════════
@@ -134,6 +164,7 @@ BEGIN
       video_id, title, thumbnail_url, video_url, author,
       duration, views, monsnode_video_id,
       source_page, source_section,
+      vote_up, vote_down,
       scraped_at, updated_at,
       has_mp4, needs_rescrape, mp4_checked_at
     ) VALUES (
@@ -147,6 +178,8 @@ BEGIN
       v->>'monsnode_video_id',
       v->>'source_page',
       v->>'source_section',
+      COALESCE((v->>'vote_up')::integer, 0),
+      COALESCE((v->>'vote_down')::integer, 0),
       COALESCE((v->>'scraped_at')::timestamptz, NOW()),
       NOW(),
       COALESCE((v->>'has_mp4')::boolean, false),
@@ -166,6 +199,8 @@ BEGIN
       END,
       views = COALESCE(NULLIF(v->>'views', ''), videos.views),
       monsnode_video_id = COALESCE(NULLIF(v->>'monsnode_video_id', ''), videos.monsnode_video_id),
+      vote_up = COALESCE((v->>'vote_up')::integer, videos.vote_up),
+      vote_down = COALESCE((v->>'vote_down')::integer, videos.vote_down),
       source_page = COALESCE(NULLIF(v->>'source_page', ''), videos.source_page),
       -- 拼接 source_section (去重)
       source_section = CASE
@@ -181,6 +216,9 @@ BEGIN
       updated_at = NOW(),
       -- has_mp4: 只在新值为 true 时覆盖, 否则保留旧值 (防止客户端/服务端冲突)
       has_mp4 = CASE WHEN (v->>'has_mp4')::boolean THEN true ELSE videos.has_mp4 END,
+      -- mp4_url: 只在新值有效时覆盖
+      mp4_url = CASE WHEN (v->>'has_mp4')::boolean AND NULLIF(v->>'duration', '') IS NOT NULL
+          THEN v->>'duration' ELSE videos.mp4_url END,
       needs_rescrape = COALESCE((v->>'needs_rescrape')::boolean, videos.needs_rescrape),
       mp4_checked_at = COALESCE((v->>'mp4_checked_at')::timestamptz, videos.mp4_checked_at);
   END LOOP;

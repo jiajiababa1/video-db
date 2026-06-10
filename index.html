@@ -721,6 +721,92 @@
         html.ios-standalone .vid-logo { font-size:20px; }
         html.ios-standalone .game-wrapper { padding-top:calc(32px + env(safe-area-inset-top, 0px)); }
 
+        /* ============ 滚动条美化 (暗色模式) ============ */
+        body.dark-mode::-webkit-scrollbar { width:6px; }
+        body.dark-mode::-webkit-scrollbar-track { background:var(--vbg); }
+        body.dark-mode::-webkit-scrollbar-thumb { background:#2a2620; border-radius:3px; }
+        body.dark-mode::-webkit-scrollbar-thumb:hover { background:var(--vprimary); }
+
+        /* ============ 2048 暗色模式 ============ */
+        body.game-dark { background:#0a0a0c; color:#a09487; }
+        body.game-dark .game-logo { color:var(--vprimary); }
+        body.game-dark .board { box-shadow:0 8px 0 #1c1a14,0 10px 24px rgba(0,0,0,0.5); background:#1a1610; }
+        body.game-dark .cell { background:#1c1812; }
+        body.game-dark .cell-2,.cell-4,.cell-8 { color:#c8b896; }
+        body.game-dark .btn { background:var(--vprimary); color:#1a1808; }
+        body.game-dark .score-card { background:#1c1812; color:#c8b896; }
+        body.game-dark .game-subtitle { color:#6b6760; }
+        body.game-dark .game-footer { color:#5a5650; }
+        body.game-dark .shortcuts-panel { background:#0e0e12; color:var(--vtext); border:1px solid var(--vborder); }
+        body.game-dark .shortcuts-panel h3 { color:var(--vtext); }
+        body.game-dark .shortcuts-panel .row { border-bottom-color:var(--vborder); }
+        body.game-dark .game-logo .click-hint { color:#5a5650; }
+        body.game-dark .overlay { background:rgba(10,10,12,0.85); }
+        body.game-dark .overlay .msg { color:var(--vtext); }
+
+        /* ============ 第三档视图 (大图) ============ */
+        .vid-grid.large { grid-template-columns:repeat(auto-fill,minmax(420px,1fr)); gap:24px; }
+        @media (max-width:640px) { .vid-grid.large { grid-template-columns:1fr; gap:16px; } }
+
+        /* ============ 多选模式 ============ */
+        .vid-card.multiselect { cursor:pointer; position:relative; }
+        .vid-card.selected { border-color:var(--vprimary); box-shadow:0 0 0 2px rgba(200,164,92,0.3); }
+        .vid-card .sel-check {
+            position:absolute; top:8px; left:8px; z-index:4;
+            width:22px; height:22px; border-radius:2px; border:2px solid rgba(255,255,255,0.25);
+            background:rgba(0,0,0,0.55); display:none; align-items:center; justify-content:center;
+            font-size:12px; color:var(--vprimary);
+        }
+        .vid-card.multiselect .sel-check { display:flex; }
+        .vid-card.selected .sel-check { border-color:var(--vprimary); background:rgba(200,164,92,0.2); }
+
+        /* ============ 多选工具栏 ============ */
+        .ms-toolbar {
+            position:fixed; bottom:0; left:0; right:0; z-index:70;
+            background:var(--vheader); backdrop-filter:blur(20px);
+            -webkit-backdrop-filter:blur(20px);
+            border-top:1px solid var(--vborder);
+            padding:calc(10px + env(safe-area-inset-bottom, 0px)) 10px 10px;
+            display:none; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center;
+        }
+        .ms-toolbar.on { display:flex; }
+        .ms-toolbar .ms-count { font-size:12px; color:var(--vmuted); font-family:var(--font-mono); }
+        .ms-toolbar .ms-btn {
+            padding:7px 16px; border-radius:2px; border:1px solid var(--vborder);
+            background:var(--vcard); color:var(--vmuted); cursor:pointer; font-size:11px;
+            font-family:var(--font-mono); transition:all 0.25s;
+        }
+        .ms-toolbar .ms-btn:hover { background:#1a1a18; color:var(--vtext); border-color:var(--vprimary); }
+        .ms-toolbar .ms-btn.danger { color:#c08080; border-color:rgba(139,58,58,0.2); }
+        .ms-toolbar .ms-btn.danger:hover { background:rgba(139,58,58,0.1); }
+        .ms-toolbar .ms-close {
+            margin-left:auto; padding:6px 12px; background:transparent; border:none;
+            color:var(--vmuted); cursor:pointer; font-size:14px;
+        }
+
+        /* ============ 连播指示器 ============ */
+        .autoplay-indicator {
+            display:inline-block; width:8px; height:8px; border-radius:50%;
+            background:var(--green); margin-left:4px; animation:pulse 2s infinite;
+        }
+        @keyframes pulse { 0%,100%{opacity:0.3} 50%{opacity:1} }
+
+        /* ============ 统计页 ============ */
+        .stats-panel { max-width:900px; margin:0 auto; padding:20px; }
+        .stats-panel h2 { font-size:18px; color:var(--vtext); margin-bottom:16px; font-family:var(--font-serif); }
+        .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:28px; }
+        .stat-card { background:var(--vcard); border:1px solid var(--vborder); border-radius:2px; padding:20px; text-align:center; }
+        .stat-card .n { font-size:28px; font-weight:700; color:var(--vprimary); font-family:var(--font-serif); }
+        .stat-card .l { font-size:11px; color:var(--vmuted); margin-top:4px; font-family:var(--font-mono); }
+        .author-list-table { width:100%; border-collapse:collapse; font-size:12px; }
+        .author-list-table th { text-align:left; padding:10px 12px; border-bottom:1px solid var(--vborder); color:var(--vmuted); font-size:10px; text-transform:uppercase; letter-spacing:1px; font-family:var(--font-mono); }
+        .author-list-table td { padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.03); color:var(--vtext); }
+        .author-list-table tr:hover td { background:rgba(200,164,92,0.02); }
+        .author-list-table .rank { color:var(--vprimary); font-weight:700; }
+        .author-list-table .author-link { cursor:pointer; color:var(--vprimary); }
+        .author-list-table .author-link:hover { text-decoration:underline; }
+        canvas#statsCanvas { display:block; margin:20px auto; background:var(--vcard); border-radius:2px; border:1px solid var(--vborder); }
+
         @media (max-width:640px) {
             .game-logo { font-size:48px; }
             .board { max-width:320px; gap:8px; padding:8px; }
@@ -897,7 +983,9 @@
                     <button class="s-clear" id="searchClear" onclick="clearSearch()">✕</button>
                 </div>
                 <div class="vid-actions">
-                    <button class="vid-btn ghost" id="viewToggle" onclick="toggleViewMode()" title="切换视图密度">▦</button>
+                    <button class="vid-btn ghost" id="viewToggle" onclick="cycleViewMode()" title="切换视图密度">▦</button>
+                    <button class="vid-btn ghost" id="autoPlayBtn" onclick="toggleAutoPlay()" title="连播模式">▶️</button>
+                    <button class="vid-btn ghost" id="randomBtn" onclick="randomPlay()" title="随机播放">🎲</button>
                     <button class="vid-btn ghost" id="sortBtn" onclick="toggleSort()" title="排序">↓ 最新</button>
                     <button class="vid-btn primary" id="refreshBtn">更新</button>
                     <button class="vid-btn ghost" id="playableFilter" onclick="togglePlayableFilter()" title="筛选可播放/全部">🔇 全部</button>
@@ -955,6 +1043,7 @@
                     <div class="vpi-actions">
                         <button class="vpi-btn" onclick="window.open(this.dataset.url,'_blank')" data-url="" title="在 monsnode 打开">↗️ 原站</button>
                         <button class="vpi-btn" onclick="var a=document.createElement('a');a.href=this.dataset.url;a.download='';a.click()" data-url="" title="下载 MP4">⬇️ 下载</button>
+                        <button class="vpi-btn" onclick="if(document.pictureInPictureElement){document.exitPictureInPicture();}else{var v=this.closest('.vid-player-inline').querySelector('video');if(v)v.requestPictureInPicture().catch(function(){});}" title="画中画">📺 PiP</button>
                         <button class="vpi-btn vpi-close" onclick="closeInlinePlayer()">✕ 收起</button>
                     </div>
                 </div>
@@ -968,6 +1057,13 @@
                 </div>
             </div>
         </template>
+            <!-- 多选工具栏 -->
+            <div class="ms-toolbar" id="msToolbar">
+                <span class="ms-count" id="msCount">已选 0 项</span>
+                <button class="ms-btn" onclick="markSelectedRescrape()">🔄 批量标记</button>
+                <button class="ms-btn" onclick="downloadSelected()">⬇️ 下载</button>
+                <button class="ms-btn danger" onclick="exitMultiselect()">✕ 取消</button>
+            </div>
     </div>
 
     <script>
@@ -3029,7 +3125,409 @@
         });
     };
 
+    // ============ 视图密度三档循环 ============
+    var viewModeIdx = compactView ? 1 : 0; // 0=标准 1=紧凑 2=大图
+    function cycleViewMode() {
+        viewModeIdx = (viewModeIdx + 1) % 3;
+        $grid.classList.remove('compact', 'large');
+        var btn = document.getElementById('viewToggle');
+        btn.classList.remove('active');
+        if (viewModeIdx === 1) { $grid.classList.add('compact'); btn.classList.add('active'); btn.textContent = '▤'; }
+        else if (viewModeIdx === 2) { $grid.classList.add('large'); btn.classList.add('active'); btn.textContent = '◫'; }
+        else { btn.textContent = '▦'; }
+        compactView = (viewModeIdx === 1);
+        savePrefs();
+    }
+
+    // ============ 连播模式 ============
+    var autoPlayOn = false;
+    function toggleAutoPlay() {
+        autoPlayOn = !autoPlayOn;
+        var btn = document.getElementById('autoPlayBtn');
+        btn.classList.toggle('active', autoPlayOn);
+        btn.innerHTML = autoPlayOn ? '▶️<span class="autoplay-indicator"></span>' : '▶️';
+        toast(autoPlayOn ? '连播模式: ON (播完自动下一个)' : '连播模式: OFF');
+    }
+    function playNextVideo() {
+        if (!autoPlayOn || !currentInlineCard) return;
+        // 找当前卡片下一个有 MP4 的卡片
+        var next = currentInlineCard.nextElementSibling;
+        while (next) {
+            if (next.classList.contains('vid-card') && next.classList.contains('has-mp4') &&
+                !next.classList.contains('unplayable') && !next.classList.contains('needs-rescrape')) {
+                showInlinePlayer(currentInlineVideo, next);
+                return;
+            }
+            next = next.nextElementSibling;
+        }
+        toast('已播完当前页所有可播视频');
+    }
+    // Hook: when setting inline video, attach 'ended' listener for auto-play
+    var _origSetInlineVideo = setInlineVideo;
+    setInlineVideo = function(wrap, mp4Url) {
+        _origSetInlineVideo(wrap, mp4Url);
+        var v = wrap.querySelector('video');
+        if (v && autoPlayOn) {
+            v.addEventListener('ended', function() { setTimeout(playNextVideo, 1500); }, {once: true});
+        }
+    };
+
+    // ============ 随机播放 ============
+    async function randomPlay() {
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=*&has_mp4=is.true&order=random()&limit=1', {headers:hds});
+            if (resp.ok) {
+                var data = await resp.json();
+                if (data.length) {
+                    var v = data[0];
+                    // 创建一个临时卡片容器
+                    var tmpCard = document.createElement('div');
+                    tmpCard.className = 'vid-card has-mp4';
+                    $grid.insertBefore(tmpCard, $grid.firstChild);
+                    showInlinePlayer(v, tmpCard);
+                    toast('🎲 随机: ' + (v.title || v.video_id));
+                }
+            }
+        } catch(e) { toast('随机播放失败'); }
+    }
+
+    // ============ 多选模式 ============
+    var multiselectOn = false, selectedIds = {};
+    function enterMultiselect() {
+        multiselectOn = true; selectedIds = {};
+        var cards = $grid.querySelectorAll('.vid-card');
+        for (var i = 0; i < cards.length; i++) cards[i].classList.add('multiselect');
+        document.getElementById('msToolbar').classList.add('on');
+        // 点击卡片切换选中
+        _msClickHandler = function(e) {
+            var card = e.target.closest('.vid-card');
+            if (!card) return;
+            if (e.target.closest('.vid-copy, .vid-fav, .vid-author')) return;
+            e.preventDefault(); e.stopPropagation();
+            toggleCardSelect(card);
+        };
+        $grid.addEventListener('click', _msClickHandler, true);
+        updateMsCount();
+    }
+    var _msClickHandler = null;
+    function exitMultiselect() {
+        multiselectOn = false; selectedIds = {};
+        var cards = $grid.querySelectorAll('.vid-card');
+        for (var i = 0; i < cards.length; i++) { cards[i].classList.remove('multiselect', 'selected'); }
+        document.getElementById('msToolbar').classList.remove('on');
+        if (_msClickHandler) { $grid.removeEventListener('click', _msClickHandler, true); _msClickHandler = null; }
+    }
+    function toggleCardSelect(card) {
+        var vid = card.dataset.vid || '';
+        if (!vid) {
+            // 从 data-vid 属性获取 (需要在 render 时设置)
+            var badge = card.querySelector('.vid-badge');
+            vid = badge ? badge.textContent : '';
+            if (vid) card.dataset.vid = vid;
+        }
+        if (selectedIds[vid]) { delete selectedIds[vid]; card.classList.remove('selected'); }
+        else { selectedIds[vid] = true; card.classList.add('selected'); }
+        updateMsCount();
+    }
+    function updateMsCount() {
+        var count = Object.keys(selectedIds).length;
+        document.getElementById('msCount').textContent = '已选 ' + count + ' 项';
+    }
+    function markSelectedRescrape() {
+        var ids = Object.keys(selectedIds);
+        if (!ids.length) { toast('未选中任何视频'); return; }
+        for (var i = 0; i < ids.length; i++) {
+            addToRescrapeList(ids[i]);
+            try {
+                fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(ids[i]), {
+                    method: 'PATCH', headers: _h(),
+                    body: JSON.stringify({needs_rescrape:true, updated_at:new Date().toISOString()})
+                }).catch(function(){});
+            } catch(e) {}
+        }
+        toast('已标记 ' + ids.length + ' 个视频需要重爬');
+        exitMultiselect();
+    }
+    async function downloadSelected() {
+        var ids = Object.keys(selectedIds);
+        if (!ids.length) { toast('未选中任何视频'); return; }
+        if (ids.length > 10 && !confirm('选中 ' + ids.length + ' 个视频，确定全部下载？')) return;
+        var hds = _h();
+        var idList = ids.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id,duration&video_id=in.('+idList+')&has_mp4=is.true', {headers:hds});
+            var data = await resp.json();
+            var downloaded = 0;
+            for (var i = 0; i < data.length; i++) {
+                var mp4 = data[i].duration || '';
+                if (mp4.indexOf('video.twimg.com') >= 0) {
+                    var a = document.createElement('a'); a.href = mp4; a.download = data[i].video_id + '.mp4';
+                    a.style.display = 'none'; document.body.appendChild(a); a.click();
+                    document.body.removeChild(a); downloaded++;
+                    if (i % 3 === 2) await new Promise(function(r){setTimeout(r, 500);});
+                }
+            }
+            toast('已下载 ' + downloaded + '/' + data.length + ' 个');
+        } catch(e) { toast('下载失败: ' + (e.message || '网络错误')); }
+        exitMultiselect();
+    }
+    // 长按进入多选
+    var _msPressTimer;
+    document.addEventListener('touchstart', function(e) {
+        if (!document.body.classList.contains('dark-mode') || multiselectOn) return;
+        var card = e.target.closest('.vid-card');
+        if (!card) return;
+        _msPressTimer = setTimeout(function() { enterMultiselect(); }, 600);
+    }, {passive: true});
+    document.addEventListener('touchend', function() { clearTimeout(_msPressTimer); });
+    document.addEventListener('touchmove', function() { clearTimeout(_msPressTimer); });
+
+    // ============ 收藏导出/导入 ============
+    function exportFavorites() {
+        var favs = getFavorites();
+        var blob = new Blob([JSON.stringify(favs, null, 2)], {type:'application/json'});
+        var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = 'videodb-favorites-' + new Date().toISOString().slice(0,10) + '.json';
+        a.click(); toast('已导出 ' + favs.length + ' 个收藏');
+    }
+    function importFavorites() {
+        var input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
+        input.onchange = function() {
+            var file = input.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function() {
+                try {
+                    var ids = JSON.parse(reader.result);
+                    if (!Array.isArray(ids)) throw new Error('格式错误');
+                    var existing = getFavorites();
+                    var added = 0;
+                    for (var i = 0; i < ids.length; i++) {
+                        if (typeof ids[i] === 'string' && ids[i].startsWith('v') && existing.indexOf(ids[i]) < 0) {
+                            existing.push(ids[i]); added++;
+                        }
+                    }
+                    saveFavorites(existing);
+                    toast('导入完成: 新增 ' + added + ' 个收藏 (共 ' + existing.length + ' 个)');
+                } catch(e) { toast('导入失败: 文件格式不正确'); }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    }
+
+    // ============ 作者黑名单 ============
+    function getBlockedAuthors() {
+        try { return JSON.parse(localStorage.getItem('blocked_authors') || '[]'); } catch(e) { return []; }
+    }
+    function blockAuthor(author) {
+        if (!author) return;
+        var list = getBlockedAuthors();
+        if (list.indexOf(author) >= 0) { toast('已在黑名单中'); return; }
+        list.push(author);
+        localStorage.setItem('blocked_authors', JSON.stringify(list));
+        toast('已屏蔽 @' + author);
+        loadVids(true);
+    }
+    function unblockAuthor(author) {
+        var list = getBlockedAuthors().filter(function(a){return a !== author;});
+        localStorage.setItem('blocked_authors', JSON.stringify(list));
+        toast('已取消屏蔽 @' + author);
+        loadVids(true);
+    }
+    // 在卡片渲染时过滤黑名单作者 (hook render)
+    var _origRender = render;
+    render = function(vids, append) {
+        var blocked = getBlockedAuthors();
+        if (blocked.length) {
+            vids = vids.filter(function(v){ return blocked.indexOf(v.author) < 0; });
+        }
+        _origRender(vids, append);
+    };
+
+    // ============ 热门作者榜 ============
+    async function showPopularAuthors() {
+        $grid.classList.remove('compact', 'large', 'author-list');
+        $grid.innerHTML = '<div class="vpi-spinner" style="grid-column:1/-1;margin:60px auto;"></div>';
+        var hds = _h();
+        try {
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/popular_authors', {
+                method: 'POST', headers: {**hds, 'Content-Type':'application/json'}, body: '{}'
+            });
+            if (!resp.ok) throw new Error('RPC 不可用，回退到客户端聚合');
+            var authors = await resp.json();
+            renderAuthorRanking(authors);
+        } catch(e) {
+            // 回退: 客户端查询
+            var r2 = await fetch(SUPABASE_URL + '/rest/v1/videos?select=author&author=not.is.null&order=created_at.desc&limit=1000', {headers:hds});
+            var data = await r2.json();
+            var map = {};
+            for (var i = 0; i < data.length; i++) {
+                var a = data[i].author;
+                if (!a) continue;
+                map[a] = (map[a] || 0) + 1;
+            }
+            var arr = Object.keys(map).map(function(k){ return {author:k, count:map[k]}; });
+            arr.sort(function(a,b){return b.count - a.count;});
+            renderAuthorRanking(arr.slice(0, 50));
+        }
+    }
+    function renderAuthorRanking(authors) {
+        var h = '<div class="stats-panel"><h2>🏆 热门作者榜</h2>';
+        h += '<table class="author-list-table"><thead><tr><th>#</th><th>作者</th><th>视频数</th><th>操作</th></tr></thead><tbody>';
+        for (var i = 0; i < authors.length; i++) {
+            var a = authors[i];
+            var blocked = getBlockedAuthors().indexOf(a.author) >= 0;
+            h += '<tr><td class="rank">' + (i+1) + '</td>';
+            h += '<td><span class="author-link" onclick="showAuthorPage(\'' + esc(a.author) + '\')">@' + esc(a.author) + '</span></td>';
+            h += '<td>' + (a.count || a.video_count || '?') + '</td>';
+            h += '<td><button class="cheat-btn" style="font-size:9px;padding:2px 8px;" onclick="' + (blocked ? 'unblockAuthor' : 'blockAuthor') + '(\'' + esc(a.author) + '\')">' + (blocked ? '取消屏蔽' : '屏蔽') + '</button></td>';
+            h += '</tr>';
+        }
+        h += '</tbody></table></div>';
+        $grid.innerHTML = h;
+        $stat.textContent = '热门作者 TOP ' + authors.length;
+    }
+
+    // ============ 统计页 ============
+    async function showStats() {
+        $grid.classList.remove('compact', 'large', 'author-list');
+        $grid.innerHTML = '<div class="vpi-spinner" style="grid-column:1/-1;margin:60px auto;"></div>';
+        var hds = _h();
+        try {
+            var p = [];
+            p.push(fetch(SUPABASE_URL + '/rest/v1/videos?select=id&limit=1', {headers:{...hds,'Prefer':'count=exact'}}));
+            p.push(fetch(SUPABASE_URL + '/rest/v1/videos?select=id&has_mp4=is.true&limit=1', {headers:{...hds,'Prefer':'count=exact'}}));
+            p.push(fetch(SUPABASE_URL + '/rest/v1/videos?select=id&needs_rescrape=is.true&limit=1', {headers:{...hds,'Prefer':'count=exact'}}));
+            var results = await Promise.all(p);
+            var total = 0, playable = 0, needs = 0;
+            for (var ri = 0; ri < results.length; ri++) {
+                var rg = results[ri].headers.get('content-range');
+                if (rg) { var m = rg.match(/\/(\d+)/); if (m) {
+                    if (ri===0) total=parseInt(m[1]); else if (ri===1) playable=parseInt(m[1]); else needs=parseInt(m[1]);
+                }}
+            }
+            // 获取每日爬取量 (从 scrape_status)
+            var ss = await fetch(SUPABASE_URL + '/rest/v1/scrape_status?select=videos_found,last_run&order=last_run.desc&limit=14', {headers:hds});
+            var ssData = await ss.json();
+
+            renderStats(total, playable, needs, ssData);
+        } catch(e) {
+            $grid.innerHTML = '<div class="empty-state"><span class="icon">📊</span><p class="title">统计加载失败</p><p class="desc">' + esc(e.message) + '</p></div>';
+        }
+    }
+    function renderStats(total, playable, needs, ssData) {
+        var rate = total ? (playable / total * 100).toFixed(1) : '0';
+        var h = '<div class="stats-panel"><h2>📊 数据库统计</h2>';
+        h += '<div class="stats-grid">';
+        h += '<div class="stat-card"><div class="n">' + total.toLocaleString() + '</div><div class="l">总视频数</div></div>';
+        h += '<div class="stat-card"><div class="n">' + playable.toLocaleString() + '</div><div class="l">可播放 (✅)</div></div>';
+        h += '<div class="stat-card"><div class="n">' + needs.toLocaleString() + '</div><div class="l">待重爬 (🔄)</div></div>';
+        h += '<div class="stat-card"><div class="n">' + rate + '%</div><div class="l">可播率</div></div>';
+        h += '</div>';
+        // 柱状图
+        if (ssData.length > 1) {
+            h += '<h2 style="font-size:14px;color:var(--vmuted);margin-bottom:12px;">📈 最近爬取量</h2>';
+            h += '<canvas id="statsCanvas" width="780" height="200"></canvas>';
+            $grid.innerHTML = h;
+            setTimeout(function() {
+                var canvas = document.getElementById('statsCanvas');
+                if (!canvas) return;
+                var ctx = canvas.getContext('2d');
+                var W = canvas.parentElement.clientWidth - 40;
+                canvas.width = W;
+                canvas.style.width = W + 'px';
+                var H = 200, padL = 40, padR = 20, padT = 20, padB = 30;
+                var bw = (W - padL - padR) / ssData.length * 0.7;
+                var gap = (W - padL - padR) / ssData.length * 0.3;
+                var maxV = Math.max.apply(null, ssData.map(function(d){return d.videos_found||0;})) || 1;
+                ctx.fillStyle = '#0e0e12'; ctx.fillRect(0, 0, W, H);
+                for (var i = 0; i < ssData.length; i++) {
+                    var val = ssData[i].videos_found || 0;
+                    var barH = (val / maxV) * (H - padT - padB);
+                    var x = padL + i * (bw + gap);
+                    var y = H - padB - barH;
+                    ctx.fillStyle = val > 100 ? '#c8a45c' : '#8a7040';
+                    ctx.fillRect(x, y, bw, barH);
+                    ctx.fillStyle = '#6b6760'; ctx.font = '9px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(val, x + bw/2, y - 4);
+                    // 日期
+                    var d = ssData[i].last_run ? new Date(ssData[i].last_run).toLocaleDateString('zh-CN').slice(5) : '';
+                    ctx.fillText(d, x + bw/2, H - 8);
+                }
+                ctx.strokeStyle = '#1c1a16'; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, H - padB); ctx.stroke();
+            }, 200);
+        } else {
+            $grid.innerHTML = h;
+        }
+        $stat.textContent = '数据库统计';
+    }
+
+    // ============ 2048 暗色模式切换 ============
+    var gameDarkOn = false;
+    function toggleGameDark() {
+        gameDarkOn = !gameDarkOn;
+        document.body.classList.toggle('game-dark', gameDarkOn);
+    }
+    // 键盘快捷键 T 切换游戏暗色
+    var _origKd = document.addEventListener.call ? true : false; // 占位
+    (function() {
+        var origHandler = null;
+        document.addEventListener('keydown', function _wrap(e) {
+            // 在游戏模式下按 T 切换暗色
+            if (!document.body.classList.contains('dark-mode') && !e.target.closest('input,textarea')) {
+                if (e.key === 't' || e.key === 'T') {
+                    e.preventDefault();
+                    toggleGameDark();
+                }
+            }
+        });
+    })();
+
+    // ============ 损坏图片兜底 ============
+    // 全局监听图片加载失败
+    document.addEventListener('error', function(e) {
+        if (e.target.tagName === 'IMG' && !e.target.dataset.fallback) {
+            e.target.dataset.fallback = '1';
+            e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect fill="#0a0a0c" width="320" height="180"/><text x="160" y="96" text-anchor="middle" fill="#3a3630" font-size="14" font-family="sans-serif">NO IMAGE</text></svg>');
+        }
+    }, true);
+
+    // ============ 卡片添加 data-vid 属性 (多选用) ============
+    var _origCard = card;
+    card = function(v) {
+        var c = _origCard(v);
+        c.dataset.vid = v.video_id;
+        return c;
+    };
+
+    // ============ 在侧边栏添加入口 ============
+    // (在 sidebar 初始化后动态添加)
+    function addExtraSidebarItems() {
+        var sidebar = document.getElementById('sidebar');
+        if (!sidebar || document.getElementById('extraSidebar')) return;
+        var div = document.createElement('div');
+        div.id = 'extraSidebar';
+        div.innerHTML =
+            '<div class="sidebar-divider"></div>' +
+            '<div class="sidebar-section">' +
+            '<div class="sidebar-label">工具</div>' +
+            '<button class="sidebar-item" onclick="showPopularAuthors()"><span class="ico">🏆</span>热门作者</button>' +
+            '<button class="sidebar-item" onclick="showStats()"><span class="ico">📊</span>数据库统计</button>' +
+            '<button class="sidebar-item" onclick="enterMultiselect()"><span class="ico">☑️</span>多选模式</button>' +
+            '<button class="sidebar-item" onclick="exportFavorites()"><span class="ico">💾</span>导出收藏</button>' +
+            '<button class="sidebar-item" onclick="importFavorites()"><span class="ico">📥</span>导入收藏</button>' +
+            '<button class="sidebar-item" onclick="toggleGameDark()"><span class="ico">🌙</span>游戏暗色模式</button>' +
+            '</div>';
+        div.querySelector('.sidebar-divider').style.cssText = 'height:1px;background:var(--vborder);margin:8px 0;';
+        sidebar.appendChild(div);
+    }
+
     // ============ 启动 ============
+    addExtraSidebarItems();
     initGame();
     updateFavsBadge();
     updateHistBadge();

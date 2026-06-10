@@ -104,6 +104,13 @@ EXTRACT_CARDS_JS = """
             const rankEl = card.querySelector('.rank, .number');
             if (rankEl) rankNum = rankEl.textContent.replace(/[^0-9]/g, '');
         }
+        // 提取投票数
+        let voteUp = 0, voteDown = 0;
+        const upEl = card.querySelector('.up span, .up i');
+        const downEl = card.querySelector('.down span, .down i');
+        if (upEl) { const m = upEl.textContent.match(/[0-9,]+/); if (m) voteUp = parseInt(m[0].replace(/,/g, '')); }
+        if (downEl) { const m = downEl.textContent.match(/[0-9,]+/); if (m) voteDown = parseInt(m[0].replace(/,/g, '')); }
+
         results.push({
             video_id: vid,
             url: '/v' + id,
@@ -113,7 +120,9 @@ EXTRACT_CARDS_JS = """
             author: author,
             duration: durationLabel,
             views: views,
-            rank: rankNum
+            rank: rankNum,
+            vote_up: voteUp,
+            vote_down: voteDown
         });
     }
     return results;
@@ -281,6 +290,8 @@ def supabase_save(videos: list[dict]) -> int:
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
             "source_page": (v.get("source_page") or "")[:500],
             "source_section": (v.get("source_section") or "")[:100],
+            "vote_up": v.get("vote_up", 0),
+            "vote_down": v.get("vote_down", 0),
             "scraped_at": now,
             "has_mp4": has_mp4,
             "needs_rescrape": not has_mp4,  # 新视频默认需要重爬
@@ -603,20 +614,62 @@ async def scrape_all():
     all_section_videos = []
 
     try:
+        # 阶段 0: 抓取 navi.php 发现隐藏栏目
+        log("阶段0: 探测 navi.php 隐藏分类...")
+        extra_sections = []
+        try:
+            navi_page = await context.new_page()
+            await navi_page.goto(f"{BASE_URL}/navi.php", wait_until="domcontentloaded", timeout=15000)
+            await navi_page.wait_for_selector("a", timeout=5000)
+            navi_data = await navi_page.evaluate("""() => {
+                const links = document.querySelectorAll('a[href]');
+                const results = [];
+                const seen = new Set();
+                for (const a of links) {
+                    const href = a.getAttribute('href') || '';
+                    const text = a.textContent.trim().substring(0, 50);
+                    // 过滤出类似 /?ranking= 或 /category 的内部链接
+                    if (href.startsWith('/') && !href.startsWith('//') && !seen.has(href) &&
+                        !href.includes('redirect') && !href.includes('twjn') && !href.includes('bookmark') &&
+                        !href.startsWith('/v') && href.length > 1 && href.length < 100) {
+                        seen.add(href);
+                        results.push({url: href, label: text || href.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20)});
+                    }
+                }
+                return results;
+            }""")
+            for item in navi_data:
+                url = item.get("url", "")
+                # 排除已有的 section
+                existing_urls = {s[0] for s in TARGET_SECTIONS}
+                if url not in existing_urls and not url.startswith("/v") and "redirect" not in url:
+                    label = "navi_" + (item.get("label", "unknown")[:15])
+                    extra_sections.append((url, label, "normal"))
+                    log(f"  发现新栏目: {url} ({label})")
+            await navi_page.close()
+        except Exception as e:
+            log(f"  navi.php 探测失败 (无影响): {str(e)[:80]}", "WARN")
+
+        # 合并额外栏目
+        all_sections = list(TARGET_SECTIONS) + extra_sections
+        # 限制总数避免超时
+        if len(all_sections) > 12:
+            all_sections = all_sections[:12]
+
         # 阶段 1: 并行抓取所有栏目
-        log(f"开始并行抓取 {len(TARGET_SECTIONS)} 个栏目...")
+        log(f"开始并行抓取 {len(all_sections)} 个栏目...")
         tasks = [scrape_one_section(path, label, mode)
-                 for path, label, mode in TARGET_SECTIONS]
+                 for path, label, mode in all_sections]
         section_results = await asyncio.gather(*tasks, return_exceptions=True)
         for i, result in enumerate(section_results):
             if isinstance(result, list):
                 all_section_videos.extend(result)
-                label = TARGET_SECTIONS[i][1]
+                label = all_sections[i][1]
                 async with section_results_lock:
                     stats["sections_crawled"] += 1
                     stats["videos_found"] += len(result)
             else:
-                log(f"栏目抓取异常 ({TARGET_SECTIONS[i][1]}): {result}", "WARN")
+                log(f"栏目抓取异常 ({all_sections[i][1]}): {result}", "WARN")
 
         total_unique = len({v["video_id"] for v in all_section_videos})
         log(f"\n[阶段1] 总计: {len(all_section_videos)} 条记录, {total_unique} 个唯一视频")
@@ -702,6 +755,88 @@ async def scrape_all():
                 log(f"  回爬完成: 更新 {updated} 条, 其中 {len(all_rescraped_mp4)} 个解析成功 ({time.time()-t3:.0f}s)")
         else:
             log("  无待回爬视频")
+
+        # 阶段 5: 下架检测 (视频超过 3 次爬取周期未出现 → 标记)
+        log("\n[阶段5] 下架检测...")
+        try:
+            all_scraped_ids = {v["video_id"] for v in all_section_videos}
+            if all_scraped_ids:
+                client = httpx.Client(timeout=30)
+                headers = supabase_headers()
+                # 查询最近 3 次爬取都未更新的视频
+                cutoff = datetime.now(timezone.utc).isoformat()
+                resp = client.get(
+                    SUPABASE_URL + "/rest/v1/videos"
+                    + "?select=video_id"
+                    + "&updated_at=lt." + cutoff
+                    + "&order=scraped_at.asc"
+                    + "&limit=500",
+                    headers=headers
+                )
+                if resp.status_code == 200:
+                    old_videos = resp.json()
+                    removed = [v["video_id"] for v in old_videos if v["video_id"] not in all_scraped_ids]
+                    if removed:
+                        log(f"  疑似下架: {len(removed)} 个视频, 标记 removed=true")
+                        # 批量标记 (每次20个)
+                        for j in range(0, len(removed), 20):
+                            batch = removed[j:j+20]
+                            try:
+                                client.patch(
+                                    SUPABASE_URL + "/rest/v1/videos?video_id=in.(" +
+                                    ",".join(f'"{vid}"' for vid in batch) + ")",
+                                    headers={**headers, "Content-Type": "application/json"},
+                                    json={"removed": True, "updated_at": datetime.now(timezone.utc).isoformat()}
+                                )
+                            except Exception:
+                                pass
+                client.close()
+        except Exception as e:
+            log(f"  下架检测异常: {str(e)[:80]}", "WARN")
+
+        # 阶段 6: Discord Webhook 通知 (失败时)
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+        if webhook_url and stats["errors"]:
+            try:
+                import http.client, json as _json
+                payload = {
+                    "content": None,
+                    "embeds": [{
+                        "title": "⚠️ monsnode 爬虫错误",
+                        "description": "\n".join(stats["errors"][:5]),
+                        "color": 0xc08080,
+                        "fields": [
+                            {"name": "发现", "value": str(stats["videos_found"]), "inline": True},
+                            {"name": "保存", "value": str(stats["videos_saved"]), "inline": True},
+                            {"name": "MP4", "value": str(stats["mp4_resolved"]), "inline": True},
+                        ],
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }]
+                }
+                webhook_client = httpx.Client(timeout=10)
+                webhook_client.post(webhook_url, json=payload)
+                webhook_client.close()
+                log("  Discord 通知已发送")
+            except Exception as e:
+                log(f"  Discord 通知失败: {str(e)[:80]}", "WARN")
+
+        # 检查缩略图有效期
+        log("\n[阶段6] 缩略图有效期检查...")
+        try:
+            now_ts = datetime.now(timezone.utc).isoformat()
+            c = httpx.Client(timeout=30)
+            h = supabase_headers()
+            # 标记超过 30 天未更新的缩略图
+            r = c.patch(
+                SUPABASE_URL + "/rest/v1/videos?thumbnail_url=ilike.*twimg.com*&updated_at=lt.2026-05-10",
+                headers={**h, "Content-Type": "application/json"},
+                json={"needs_rescrape": True}
+            )
+            if r.status_code in (200, 204):
+                log(f"  缩略图有效期检查完成")
+            c.close()
+        except Exception as e:
+            log(f"  缩略图检查异常: {str(e)[:80]}", "WARN")
 
     finally:
         await context.close()
