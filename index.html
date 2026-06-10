@@ -878,26 +878,31 @@
         </div>
     </div>
 
-    <!-- ==================== 管理员面板 (手机友好) ==================== -->
+    <!-- ==================== 管理员面板 (20功能 + 全功能) ==================== -->
     <div class="cheat-dialog-overlay" id="adminPanelOverlay">
-        <div class="cheat-dialog" style="width:95vw;max-width:420px;max-height:85vh;overflow-y:auto;padding:16px;">
-            <button class="vid-modal-close" onclick="closeAdminPanel()" style="position:absolute;top:8px;right:8px;z-index:10;">✕</button>
-            <p class="title" style="font-size:16px;margin-bottom:12px;">👑 管理员面板</p>
-            <!-- 快速操作 -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">
+        <div class="cheat-dialog" style="width:95vw;max-width:460px;max-height:85vh;overflow-y:auto;padding:16px;">
+            <button class="vid-modal-close" onclick="closeAdminPanel()" style="position:absolute;top:8px;right:8px;">✕</button>
+            <p class="title" style="font-size:16px;margin-bottom:10px;">👑 管理面板 — kuo</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:10px;">
                 <button class="ms-btn" onclick="adminDo('announce')">📢 公告</button>
                 <button class="ms-btn" onclick="adminDo('users')">👥 用户</button>
                 <button class="ms-btn" onclick="adminDo('gencode')">🎫 激活码</button>
                 <button class="ms-btn" onclick="adminDo('vip_early')">🔒 VIP先行</button>
-                <button class="ms-btn" onclick="adminDo('stats')">📊 统计</button>
-                <button class="ms-btn" onclick="adminDo('logs')">📋 日志</button>
+                <button class="ms-btn" onclick="adminDo('stats')">📊 全站统计</button>
+                <button class="ms-btn" onclick="adminDo('logs')">📋 操作日志</button>
+                <button class="ms-btn" onclick="adminDo('config')">⚙️ 系统设置</button>
+                <button class="ms-btn" onclick="adminDo('search_user')">🔍 搜用户</button>
+                <button class="ms-btn" onclick="adminDo('reset_pwd')">🔑 重置密码</button>
+                <button class="ms-btn" onclick="adminDo('del_video')">🗑️ 删视频</button>
+                <button class="ms-btn" onclick="adminDo('messages')">💬 全站私信</button>
+                <button class="ms-btn" onclick="adminDo('export')">📤 导出数据</button>
+                <button class="ms-btn" onclick="adminDo('friends_all')">👫 好友管理</button>
+                <button class="ms-btn" onclick="adminDo('broadcast')">📨 群发通知</button>
+                <button class="ms-btn" onclick="adminDo('audit')">🛡️ 安全审计</button>
             </div>
             <div id="adminContent" style="font-size:11px;color:var(--vmuted);text-align:center;">选择上方功能</div>
         </div>
     </div>
-
-    <!-- 公告横幅 -->
-    <div id="announceBanner" style="display:none;background:rgba(200,164,92,0.08);border-bottom:1px solid rgba(200,164,92,0.15);padding:8px 16px;font-size:11px;color:var(--vprimary);text-align:center;cursor:pointer;" onclick="this.style.display='none'"></div>
 
     <!-- ==================== 身份验证遮罩 ==================== -->
     <div class="auth-overlay hidden" id="authOverlay">
@@ -1031,7 +1036,10 @@
             <div class="pull-dot"></div><div class="pull-dot"></div><div class="pull-dot"></div>
             <span>松手刷新</span>
         </div>
-        <div id="announceBanner" style="display:none;background:rgba(200,164,92,0.08);border-bottom:1px solid rgba(200,164,92,0.15);padding:8px 16px;font-size:11px;color:var(--vprimary);text-align:center;cursor:pointer;font-family:var(--font-sans);" onclick="document.getElementById('announceBanner').style.display='none'"></div>
+        <div id="announceBanner" style="display:none;background:rgba(200,164,92,0.08);border-bottom:1px solid rgba(200,164,92,0.15);padding:8px 0;font-size:11px;color:var(--vprimary);overflow:hidden;white-space:nowrap;font-family:var(--font-sans);">
+            <span id="announceText" style="display:inline-block;padding-left:100%;animation:marquee 20s linear infinite;"></span>
+        </div>
+        <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
         <div class="vid-header">
             <div class="vid-header-top">
                 <button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()" title="菜单">
@@ -3878,12 +3886,14 @@
     // ============ 公告 ============
     async function loadAnnouncements() {
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements?is_active=is.true&order=created_at.desc&limit=1', {headers:_h()});
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements?is_active=is.true&order=created_at.desc&limit=3', {headers:_h()});
             if (resp.ok) {
                 var data = await resp.json();
                 if (data.length) {
+                    var texts = data.map(function(a){return '📢 ' + a.title + ': ' + a.content;}).join(' ║ ');
                     var banner = document.getElementById('announceBanner');
-                    banner.textContent = '📢 ' + data[0].title + ': ' + data[0].content;
+                    var span = document.getElementById('announceText');
+                    span.textContent = texts + ' ║ ' + texts; // 双倍无缝循环
                     banner.style.display = 'block';
                 }
             }
@@ -3933,16 +3943,112 @@
         } catch(e) {}
     }
 
-    // ============ 管理员面板 (20+功能) ============
+    // ============ 密码修改 ============
+    function showPwdDialog() {
+        document.getElementById('pwdDialogOverlay').classList.add('on');
+        document.getElementById('pwdOld').value = '';
+        document.getElementById('pwdNew').value = '';
+        document.getElementById('pwdResult').textContent = '';
+    }
+    async function doChangePassword() {
+        var oldP = document.getElementById('pwdOld').value.trim();
+        var newP = document.getElementById('pwdNew').value.trim();
+        var r = document.getElementById('pwdResult');
+        if (!oldP || !newP || newP.length < 4) { r.textContent = '新密码至少4个字符'; r.style.color = '#c08080'; return; }
+        var oldHash = await sha256(_username + ':' + oldP);
+        var newHash = await sha256(_username + ':' + newP);
+        var data = await rpcCall('change_password', {p_username: _username, p_old_hash: oldHash, p_new_hash: newHash});
+        if (data && data.success) { r.textContent = '✅ 密码修改成功, 请重新登录'; r.style.color = 'var(--green)'; clearLoginSession(); }
+        else { r.textContent = '❌ ' + (data ? data.message : '原密码错误'); r.style.color = '#c08080'; }
+    }
+
+    // ============ 好友系统 ============
+    async function addFriend(target) {
+        if (!_loggedIn) { toast('请先登录'); showLoginDialog(); return; }
+        var data = await rpcCall('add_friend', {p_from: _username, p_to: target});
+        toast(data && data.success ? '✅ ' + data.message : '❌ ' + (data ? data.message : '失败'));
+    }
+    async function showFriendRequests() {
+        var data = await rpcCall('get_friend_requests', {p_user: _username});
+        var users = Array.isArray(data) ? data : (data ? [data] : []);
+        var h = '<div style="padding:10px;"><b>好友请求</b><br>';
+        if (!users.length) h += '<span style="color:var(--vmuted);">暂无</span>';
+        for (var i = 0; i < users.length; i++) {
+            var u = users[i];
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03);">@'+esc(u.from_user||u)+
+                '<span><button class="cheat-btn accent" style="font-size:9px;padding:2px 6px;" onclick="handleFriend(\''+esc(u.from_user||u)+'\',\'accept\')">接受</button> '+
+                '<button class="cheat-btn" style="font-size:9px;padding:2px 6px;" onclick="handleFriend(\''+esc(u.from_user||u)+'\',\'reject\')">拒绝</button></span></div>';
+        }
+        h += '</div>';
+        document.getElementById('adminContent').innerHTML = h;
+    }
+    async function handleFriend(from, action) {
+        var data = await rpcCall('handle_friend', {p_user: _username, p_from: from, p_action: action});
+        if (data && data.success) { toast('✅ ' + data.message); showFriendRequests(); }
+    }
+
+    // ============ 私信系统 ============
+    var _chatWith = '';
+    async function openChat(username) {
+        _chatWith = username;
+        document.getElementById('chatDialogOverlay').classList.add('on');
+        document.getElementById('chatTitle').textContent = '💬 @' + username;
+        document.getElementById('chatInput').value = '';
+        await refreshMessages();
+    }
+    async function refreshMessages() {
+        if (!_chatWith) return;
+        var data = await rpcCall('get_messages', {p_user: _username, p_with: _chatWith, p_limit: 50});
+        var msgs = Array.isArray(data) ? data : (data ? [data] : []);
+        msgs.reverse(); // 旧→新
+        var h = '';
+        for (var i = 0; i < msgs.length; i++) {
+            var m = msgs[i];
+            var isMe = m.from_user === _username;
+            h += '<div style="margin:4px 0;text-align:'+(isMe?'right':'left')+';">'+
+                '<div style="display:inline-block;max-width:80%;padding:6px 10px;border-radius:4px;font-size:11px;'+
+                (isMe?'background:rgba(200,164,92,0.1);color:var(--vtext);':'background:var(--vcard);color:var(--vtext);')+'">'+
+                esc(m.content)+'</div>'+
+                '<div style="font-size:8px;color:var(--vmuted);">'+new Date(m.created_at).toLocaleTimeString('zh-CN')+'</div></div>';
+        }
+        document.getElementById('chatMessages').innerHTML = h || '<div style="color:var(--vmuted);text-align:center;padding:20px;">暂无消息</div>';
+        document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+    }
+    async function sendChat() {
+        var input = document.getElementById('chatInput');
+        var content = input.value.trim();
+        if (!content || !_chatWith) return;
+        input.value = '';
+        await rpcCall('send_message', {p_from: _username, p_to: _chatWith, p_content: content});
+        await refreshMessages();
+    }
+    async function checkUnread() {
+        if (!_loggedIn) return;
+        var data = await rpcCall('unread_count', {p_user: _username});
+        if (data && data.cnt > 0) {
+            toast('💬 ' + data.cnt + ' 条未读私信');
+        }
+    }
+
+    // ============ 管理员面板 (20功能) ============
     function adminDo(action) {
         var area = document.getElementById('adminContent');
         switch(action) {
             case 'announce': showAdminAnnounce(area); break;
             case 'users': showAdminUsers(area); break;
             case 'gencode': showAdminGenCode(area); break;
-            case 'vip_early': markVipEarly(); area.innerHTML = '✅ VIP先行视频已标记'; break;
+            case 'vip_early': markVipEarly(); area.innerHTML = '✅ VIP先行已标记'; break;
             case 'stats': showAdminStats(area); break;
             case 'logs': showAdminLogs(area); break;
+            case 'config': showAdminConfig(area); break;
+            case 'search_user': showAdminSearch(area); break;
+            case 'reset_pwd': showAdminResetPwd(area); break;
+            case 'del_video': showAdminDelVideo(area); break;
+            case 'messages': showAdminMessages(area); break;
+            case 'export': showAdminExport(area); break;
+            case 'friends_all': showFriendRequests(); break;
+            case 'broadcast': showAdminBroadcast(area); break;
+            case 'audit': showAdminAudit(area); break;
         }
     }
 
@@ -4047,6 +4153,111 @@
                 '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[1]+'</div><div style="font-size:10px;color:var(--vmuted);">视频总数</div></div>' +
                 '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[2]+'</div><div style="font-size:10px;color:var(--vmuted);">公告数</div></div>' +
                 '</div>';
+        });
+    }
+
+    function showAdminConfig(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">⚙️ 系统设置</p>'+
+            '<input id="cfgSiteName" placeholder="站点名称" value="VideoDB" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;">'+
+            '<button class="cheat-btn accent" onclick="saveConfig()" style="width:100%;">保存设置</button>'+
+            '<div id="cfgResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+    async function saveConfig() {
+        var name = document.getElementById('cfgSiteName').value || 'VideoDB';
+        await rpcCall('set_config', {p_admin: _username, p_key: 'site_name', p_value: name});
+        document.getElementById('cfgResult').textContent = '✅ 已保存'; document.getElementById('cfgResult').style.color = 'var(--green)';
+    }
+    function showAdminSearch(area) {
+        area.innerHTML = '<input id="searchUserInput" placeholder="搜索用户名..." style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;" oninput="searchUser(this.value)"><div id="searchUserResult"></div>';
+    }
+    async function searchUser(q) {
+        if (!q.trim()) { document.getElementById('searchUserResult').innerHTML = ''; return; }
+        var data = await rpcCall('search_users', {p_query: q});
+        var users = Array.isArray(data) ? data : (data ? [data] : []);
+        var h = '';
+        for (var i = 0; i < users.length; i++) {
+            var u = users[i];
+            h += '<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03);cursor:pointer;" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+(u.verified?' 🔵':'')+' <span style="font-size:9px;color:var(--vmuted);">'+u.vip_level+'</span></div>';
+        }
+        document.getElementById('searchUserResult').innerHTML = h || '<div style="color:var(--vmuted);">无结果</div>';
+    }
+    function showAdminResetPwd(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">🔑 重置用户密码</p>'+
+            '<input id="resetUser" placeholder="用户名" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;">'+
+            '<input id="resetNewPwd" placeholder="新密码" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;">'+
+            '<button class="cheat-btn accent" onclick="doAdminResetPwd()" style="width:100%;">重置密码</button>'+
+            '<div id="resetPwdResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+    async function doAdminResetPwd() {
+        var u = document.getElementById('resetUser').value.trim();
+        var p = document.getElementById('resetNewPwd').value.trim();
+        var r = document.getElementById('resetPwdResult');
+        if (!u || !p) { r.textContent = '请填写完整'; return; }
+        var hash = await sha256(u + ':' + p);
+        var data = await rpcCall('admin_reset_password', {p_admin: _username, p_target: u, p_new_hash: hash});
+        r.textContent = data && data.success ? '✅ ' + data.message : '❌ ' + (data ? data.message : '失败');
+        r.style.color = data && data.success ? 'var(--green)' : '#c08080';
+    }
+    function showAdminDelVideo(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">🗑️ 删除视频</p>'+
+            '<input id="delVideoId" placeholder="视频ID (如 v123456)" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;">'+
+            '<button class="cheat-btn danger" onclick="doAdminDelVideo()" style="width:100%;">确认删除</button>'+
+            '<div id="delVideoResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+    async function doAdminDelVideo() {
+        var vid = document.getElementById('delVideoId').value.trim();
+        if (!vid) return;
+        if (!confirm('确定删除 ' + vid + ' ?')) return;
+        var data = await rpcCall('admin_action', {p_admin: _username, p_action: 'delete_video', p_target: vid});
+        document.getElementById('delVideoResult').textContent = data && data.success ? '✅ 已删除' : '❌ 失败';
+    }
+    function showAdminMessages(area) {
+        area.innerHTML = '<div class="vpi-spinner"></div>';
+        fetch(SUPABASE_URL+'/rest/v1/messages?select=*&order=created_at.desc&limit=100',{headers:_h()}).then(function(r){return r.json();}).then(function(msgs){
+            var h = '<div style="max-height:300px;overflow-y:auto;">';
+            for (var i=0;i<msgs.length;i++) h += '<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:10px;"><b>'+esc(msgs[i].from_user)+'</b> → '+esc(msgs[i].to_user)+': '+esc(msgs[i].content)+' <span style="color:var(--vmuted);">'+new Date(msgs[i].created_at).toLocaleString('zh-CN')+'</span></div>';
+            h += '</div>';
+            area.innerHTML = h || '<div style="color:var(--vmuted);">无消息</div>';
+        });
+    }
+    function showAdminExport(area) {
+        area.innerHTML = '<button class="cheat-btn accent" onclick="exportAllData()" style="width:100%;">📤 导出全站用户列表(JSON)</button><div id="exportResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+    async function exportAllData() {
+        var r = await fetch(SUPABASE_URL+'/rest/v1/user_accounts?select=username,vip_level,verified,banned,created_at&limit=1000',{headers:_h()});
+        var data = await r.json();
+        var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+        var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'users_export.json'; a.click();
+        document.getElementById('exportResult').textContent = '✅ 已导出 ' + data.length + ' 条';
+    }
+    function showAdminBroadcast(area) {
+        area.innerHTML =
+            '<textarea id="broadcastMsg" placeholder="群发通知内容" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;height:60px;resize:vertical;"></textarea>'+
+            '<button class="cheat-btn accent" onclick="sendBroadcast()" style="width:100%;">📨 群发给所有用户</button><div id="bcResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+    async function sendBroadcast() {
+        var msg = document.getElementById('broadcastMsg').value.trim();
+        if (!msg) return;
+        // 发布为公告即可(所有用户可见)
+        await fetch(SUPABASE_URL+'/rest/v1/announcements',{method:'POST',headers:Object.assign({},_h(),{'Content-Type':'application/json'}),body:JSON.stringify({title:'📨 系统通知',content:msg,created_by:_username})});
+        document.getElementById('bcResult').textContent = '✅ 公告已发布，全站可见';
+    }
+    function showAdminAudit(area) {
+        area.innerHTML = '<div class="vpi-spinner"></div>';
+        Promise.all([
+            fetch(SUPABASE_URL+'/rest/v1/admin_log?select=*&order=created_at.desc&limit=50',{headers:_h()}).then(function(r){return r.json();}),
+            fetch(SUPABASE_URL+'/rest/v1/bans?select=*&order=banned_at.desc&limit=20',{headers:_h()}).then(function(r){return r.json();})
+        ]).then(function(r){
+            var logs = r[0], bans = r[1];
+            var h = '<b>最近操作:</b><div style="max-height:150px;overflow-y:auto;margin-bottom:8px;">';
+            for (var i=0;i<logs.length;i++) h += '<div style="font-size:10px;padding:2px 0;">'+esc(logs[i].admin_user)+' '+esc(logs[i].action)+' '+esc(logs[i].target)+' <span style="color:var(--vmuted);">'+new Date(logs[i].created_at).toLocaleString('zh-CN')+'</span></div>';
+            h += '</div><b>封禁记录:</b><div style="max-height:150px;overflow-y:auto;">';
+            for (var j=0;j<bans.length;j++) h += '<div style="font-size:10px;padding:2px 0;">🚫 '+esc(bans[j].username)+' by '+esc(bans[j].banned_by)+(bans[j].reason?' ('+esc(bans[j].reason)+')':'')+'</div>';
+            h += '</div>';
+            area.innerHTML = h;
         });
     }
 
@@ -4378,6 +4589,10 @@
         if (loginBtn) loginBtn.style.display = _loggedIn ? 'none' : '';
         var logoutBtn = document.getElementById('sideLogout');
         if (logoutBtn) logoutBtn.style.display = _loggedIn ? '' : 'none';
+        var friendsBtn = document.getElementById('sideFriends');
+        if (friendsBtn) friendsBtn.style.display = _loggedIn ? '' : 'none';
+        var pwdBtn = document.getElementById('sidePwd');
+        if (pwdBtn) pwdBtn.style.display = _loggedIn ? '' : 'none';
     }
 
     // Hook enterVideoMode 检查 VIP
@@ -4524,6 +4739,8 @@
             '<div class="sidebar-label">💎 会员中心</div>' +
             '<button class="sidebar-item" id="sideLogin" onclick="showLoginDialog()"><span class="ico">🔐</span>登录/注册</button>' +
             '<button class="sidebar-item" id="sideLogout" style="display:none;" onclick="clearLoginSession()"><span class="ico">🚪</span>退出登录</button>' +
+            '<button class="sidebar-item" id="sideFriends" onclick="showFriendRequests()"><span class="ico">👫</span>好友请求</button>' +
+            '<button class="sidebar-item" id="sidePwd" onclick="showPwdDialog()"><span class="ico">🔑</span>修改密码</button>' +
             '<button class="sidebar-item" onclick="showVipDialog()"><span class="ico">💎</span>升级会员</button>' +
             '<button class="sidebar-item" onclick="syncFavoritesToCloud()"><span class="ico">☁️</span>上传收藏到云端 (VVIP)</button>' +
             '<button class="sidebar-item" onclick="loadFavoritesFromCloud()"><span class="ico">⬇️</span>从云端恢复收藏 (VVIP)</button>' +
