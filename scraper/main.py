@@ -454,16 +454,17 @@ async def scrape_all():
             stats["videos_found"] += len(section_videos)
             elapsed = time.time() - t0
             log(f"[{label}] 共 {len(section_videos)} 个视频 ({elapsed:.0f}s)")
-
-            # 每个栏目立即保存 (不等其他栏目, 确保数据不丢)
-            if section_videos:
-                sv = supabase_save(section_videos)
-                stats["videos_saved"] += sv
-                log(f"  保存 {sv} → {label}")
-
             all_section_videos.extend(section_videos)
 
-        # 阶段 2: 解析有 monsnode_video_id 的视频 MP4 (仅前50个, 限速)
+        # 阶段 2: Python 端合并 + 保存 (同一视频跨多个栏目 → source_section 拼接)
+        if all_section_videos:
+            saved = supabase_save(all_section_videos)
+            stats["videos_saved"] = saved
+            log(f"\n[阶段2] 保存完成: {saved} 条")
+        else:
+            log("\n[阶段2] 无视频可保存")
+
+        # 阶段 3: 解析前 50 个视频的 MP4
         all_targets = {}
         for v in all_section_videos:
             mid = v.get("monsnode_video_id", "").strip()
@@ -473,7 +474,7 @@ async def scrape_all():
         if all_targets:
             # 只解析前 50 个 (避免太慢)
             mids = list(all_targets.keys())[:50]
-            log(f"\n[阶段2] MP4 解析: {len(mids)} 个视频 (多 tab 真实导航)...")
+            log(f"\n[阶段3] MP4 解析: {len(mids)} 个视频 (多 tab 真实导航)...")
             t2 = time.time()
 
             all_mp4 = {}
