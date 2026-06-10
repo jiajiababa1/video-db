@@ -2071,9 +2071,9 @@
             params+='&or=(title.ilike.*'+t+'*,author.ilike.*'+t+'*)';
         }
         // 分类过滤 (非收藏/历史模式)
-        if(activeSection && activeSection !== 'favs' && activeSection !== 'history') params+='&source_section=eq.'+encodeURIComponent(activeSection);
+        if(activeSection && activeSection !== 'favs' && activeSection !== 'history') params+='&source_section=ilike.*'+encodeURIComponent(activeSection)+'*';
         // 作者过滤
-        if(activeAuthor) params+='&author=eq.'+encodeURIComponent(activeAuthor);
+        if(activeAuthor) params+='&author=ilike.'+encodeURIComponent(activeAuthor);
         // 可播放性筛选 (客户端过滤, 因为 has_mp4 列可能不存在)
         // 不添加到 params, 在 render 之前过滤
         // 排序: 有播放量的按播放量排，否则按时间

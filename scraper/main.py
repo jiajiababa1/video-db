@@ -420,7 +420,14 @@ async def scrape_all():
             log(f"[{label}] 共 {len(section_videos)} 个视频 ({elapsed:.0f}s)")
             all_section_videos.extend(section_videos)
 
-        # 阶段 2: 收集所有 monsnode_video_id, 批量解析 MP4 (真实页面导航)
+        # 阶段 2: 先保存元数据到 Supabase (不等 MP4 解析，保证数据不丢)
+        log(f"\n[阶段2] 保存 {len(all_section_videos)} 个视频元数据到 Supabase...")
+        t1 = time.time()
+        saved = supabase_save(all_section_videos)
+        stats["videos_saved"] = saved
+        log(f"保存 {saved} ({time.time()-t1:.0f}s)")
+
+        # 阶段 3: 批量解析 MP4 并更新 (前台后台均可)
         all_targets = {}
         for v in all_section_videos:
             mid = v.get("monsnode_video_id", "").strip()
@@ -429,8 +436,8 @@ async def scrape_all():
 
         if all_targets:
             mids = list(all_targets.keys())
-            log(f"\nMP4 解析: {len(mids)} 个视频 (多 tab 真实导航)...")
-            t1 = time.time()
+            log(f"\n[阶段3] MP4 解析: {len(mids)} 个视频 (多 tab 真实导航)...")
+            t2 = time.time()
 
             all_mp4 = {}
             for batch_start in range(0, len(mids), MP4_TAB_CONCURRENCY * 3):
@@ -438,26 +445,20 @@ async def scrape_all():
                 batch_results = await resolve_mp4_batch(context, batch)
                 all_mp4.update(batch_results)
                 done = min(batch_start + MP4_TAB_CONCURRENCY * 3, len(mids))
-                log(f"  {done}/{len(mids)} → {len(all_mp4)} MP4 ({time.time()-t1:.0f}s)")
+                log(f"  {done}/{len(mids)} → {len(all_mp4)} MP4 ({time.time()-t2:.0f}s)")
 
-            # 合并 MP4
+            # 合并 MP4 并更新 Supabase
+            mp4_updates = {}
             for mid, mp4 in all_mp4.items():
-                v = all_targets[mid]
-                v["duration"] = mp4
+                mp4_updates[mid] = mp4
                 stats["mp4_resolved"] += 1
-
-            log(f"MP4 解析完成: {len(all_mp4)}/{len(mids)} ({time.time()-t1:.0f}s)")
-
-        # 阶段 3: 保存到 Supabase
-        log(f"\n保存 {len(all_section_videos)} 个视频到 Supabase...")
-        t2 = time.time()
-        saved = supabase_save(all_section_videos)
-        stats["videos_saved"] = saved
-        log(f"保存 {saved} ({time.time()-t2:.0f}s)")
+            if mp4_updates:
+                supabase_update_mp4(mp4_updates)
+            log(f"MP4 解析完成: {len(all_mp4)}/{len(mids)} ({time.time()-t2:.0f}s)")
 
         # 阶段 4: 自动回爬 — 修复旧视频中未解析到 MP4 的
         log("\n[阶段4] 查询数据库中未解析 MP4 的旧视频...")
-        failed = supabase_fetch_failed(limit=100)
+        failed = supabase_fetch_failed(limit=200)
         stats["rescrape_candidates"] = len(failed)
         if failed:
             # 排除本轮刚解析过的 mid
