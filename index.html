@@ -3743,12 +3743,14 @@
     // SHA-256 (crypto.subtle优先, 降级到纯JS实现)
     function sha256(str) {
         try {
+            if (!crypto || !crypto.subtle || !crypto.subtle.digest) throw new Error('no crypto');
             var buffer = new TextEncoder().encode(str);
             return crypto.subtle.digest('SHA-256', buffer).then(function(hash) {
                 return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+            }).catch(function() {
+                return sha256_fallback(str);
             });
         } catch(e) {
-            // crypto.subtle 不可用(HTTP等), 降级到纯JS SHA-256
             return Promise.resolve(sha256_fallback(str));
         }
     }
