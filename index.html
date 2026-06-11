@@ -3862,7 +3862,7 @@
             if (check && check.length) { resultEl.textContent = '❌ 用户名已存在'; resultEl.style.color = '#c08080'; return; }
             var ok = await _post(SUPABASE_URL + '/rest/v1/user_accounts', {username: user, password_hash: hash, is_admin: false});
             if (ok !== null) { resultEl.textContent = '✅ 注册成功! 请登录'; resultEl.style.color = 'var(--green)'; setTimeout(toggleLoginMode, 1000); }
-            else { resultEl.textContent = '❌ 注册失败'; resultEl.style.color = '#c08080'; }
+            else { resultEl.textContent = '❌ 注册失败 — 请执行 02_security.sql 开放anon写入权限'; resultEl.style.color = '#c08080'; }
         } catch(e) { resultEl.textContent = '❌ 网络错误'; resultEl.style.color = '#c08080'; }
     }
 
@@ -4724,6 +4724,11 @@
 
     function updateSidebarLogin() {
         updateVipBadge();
+        // 非管理员强制隐藏所有管理入口
+        if (!_isAdmin) {
+            var ap = document.getElementById('adminPanelOverlay');
+            if (ap) ap.classList.remove('on');
+        }
         var adminBtn = document.getElementById('sidebarAdmin');
         if (adminBtn) adminBtn.style.display = _isAdmin ? '' : 'none';
         var loginBtn = document.getElementById('sideLogin');
