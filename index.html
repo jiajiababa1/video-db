@@ -866,8 +866,7 @@
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:10px;">
                 <button class="ms-btn" onclick="adminDo('announce')">📢 公告</button>
                 <button class="ms-btn" onclick="adminDo('users')">👥 用户</button>
-                <button class="ms-btn" onclick="adminDo('gencode')">🎫 激活码</button>
-                <button class="ms-btn" onclick="adminDo('set_admin')">👑 设管理员</button>
+                <button class="ms-btn" onclick="adminDo('set_admin')">👑 用户管理</button>
                 <button class="ms-btn" onclick="adminDo('stats')">📊 全站统计</button>
                 <button class="ms-btn" onclick="adminDo('logs')">📋 操作日志</button>
                 <button class="ms-btn" onclick="adminDo('config')">⚙️ 系统设置</button>
@@ -1057,6 +1056,10 @@
             <span id="announceText" style="display:inline-block;padding-left:100%;animation:marquee 20s linear infinite;"></span>
         </div>
         <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
+        <div id="notificationBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(200,164,92,0.95);color:#1a1808;padding:10px 20px;text-align:center;font-size:13px;font-weight:600;font-family:var(--font-sans);">
+            <span id="notifText"></span>
+            <button onclick="dismissNotification()" style="margin-left:12px;padding:4px 12px;border-radius:2px;border:1px solid #1a1808;background:transparent;color:#1a1808;cursor:pointer;font-weight:600;">确认收到</button>
+        </div>
         <div class="vid-header">
             <div class="vid-header-top">
                 <button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()" title="菜单">
@@ -1698,6 +1701,8 @@
         'https://api.allorigins.win/raw?url=',
         'https://cors.eu.org/',
         'https://api.codetabs.com/v1/proxy?quest=',
+        'https://corsproxy.io/?',
+        'https://thingproxy.freeboard.io/fetch/',
     ];
     var _proxyIdx = 0;
     function getProxy() {
@@ -2152,7 +2157,7 @@
     }
 
     // ============ 客户端爬虫 (手机浏览器直接抓取) ============
-    var CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+    var CORS_PROXY = 'https://api.allorigins.win/raw?url='; var _fetchProxyIdx = 0;
     var SCRAPE_SECTIONS = [
         // 排名页 (带 period 参数)
         {url:'/?ranking=1&period=24h', label:'24h', pages:5, mode:'ranking'},
@@ -2208,7 +2213,7 @@
 
     async function fetchPage(url, retries) {
         retries = retries || 3;
-        var proxyUrl = CORS_PROXY + encodeURIComponent(url);
+        var proxyUrl = CORS_PROXY_LIST[_fetchProxyIdx % CORS_PROXY_LIST.length] + encodeURIComponent(url); _fetchProxyIdx++;
         for (var i = 0; i < retries; i++) {
             try {
                 var resp = await fetch(proxyUrl, {headers:{'Accept':'text/html,*/*'}});
@@ -4098,8 +4103,7 @@
             case 'diag': checkDBStatus(); break;
             case 'announce': showAdminAnnounce(area); break;
             case 'users': showAdminUsers(area); break;
-            case 'gencode': showAdminGenCode(area); break;
-            case 'set_admin': showAdminSetAdmin(area); break;
+            case 'set_admin': showAdminUsers(area); break;
             case 'stats': showAdminStats(area); break;
             case 'logs': showAdminLogs(area); break;
             case 'config': showAdminConfig(area); break;
@@ -4227,59 +4231,63 @@
 
     function showAdminUsers(area) {
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
-        _get(SUPABASE_URL + '/rest/v1/user_accounts?select=username,vip_level,verified,banned,created_at,last_login&order=created_at.desc&limit=100').then(function(users){
-            var h = '';
+        _get(SUPABASE_URL + '/rest/v1/user_accounts?select=username,is_admin,created_at,last_login&order=created_at.desc&limit=100').then(function(users){
+            var h = '<div style="max-height:350px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
+            h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>角色</th><th>注册时间</th><th>操作</th></tr>';
             if (!users || users.length === 0) {
-                h = '<div style="color:#c08080;text-align:center;padding:20px;">❌ 无数据<br><span style="font-size:10px;">可能原因: RPC不存在或你不是管理员<br>请确认已执行migrate.sql并用kuo账号登录</span></div>';
+                h += '<tr><td colspan="4" style="padding:20px;text-align:center;color:#c08080;">暂无用户数据</td></tr>';
             } else {
-                h += '<div style="max-height:300px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
-                h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>VIP</th><th>认证</th><th>状态</th><th>操作</th></tr>';
                 for (var i=0;i<users.length;i++) {
                     var u = users[i];
+                    var role = u.is_admin ? '<span style="color:#c8a45c;">管理员</span>' : '<span style="color:var(--vmuted);">用户</span>';
+                    var date = u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '?';
                     h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
                     h += '<td style="padding:4px;cursor:pointer;color:var(--vprimary);" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+'</td>';
-                    h += '<td style="font-size:9px;">'+(u.vip_level||'free')+'</td>';
-                    h += '<td>'+(u.verified?'🔵':'')+'</td>';
-                    h += '<td style="color:'+(u.banned?'#c08080':'var(--green)')+'">'+(u.banned?'封禁':'正常')+'</td>';
+                    h += '<td style="font-size:9px;">'+role+'</td>';
+                    h += '<td style="font-size:9px;color:var(--vmuted);">'+date+'</td>';
                     h += '<td>';
-                    if (!u.banned) h += '<button onclick="adminDoAction(\'ban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">封</button> ';
-                    else h += '<button onclick="adminDoAction(\'unban\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">解</button> ';
-                    if (!u.verified) h += '<button onclick="adminDoAction(\'verify\',\''+esc(u.username)+'\')" style="font-size:9px;padding:2px 4px;">认证</button> ';
-                    h += '<select onchange="adminDoAction(\'set_vip\',\''+esc(u.username)+'\',this.value)" style="font-size:9px;padding:1px;background:var(--vcard);color:var(--vtext);border:1px solid var(--vborder);"><option value="">VIP改</option><option value="free">免费</option><option value="vip">VIP</option><option value="vvip">VVIP</option><option value="svip">SVIP</option></select>';
+                    if (!u.is_admin) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',true,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,164,92,0.3);color:#c8a45c;border-radius:2px;cursor:pointer;">升管理</button> ';
+                    if (u.is_admin && u.username !== _username) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',false,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,100,100,0.3);color:#c08080;border-radius:2px;cursor:pointer;">降级</button> ';
+                    h += '<button onclick="delUserAccount(\''+esc(u.username)+'\',this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,80,80,0.3);color:#c08080;border-radius:2px;cursor:pointer;">删除</button>';
                     h += '</td></tr>';
                 }
-                h += '</table></div>';
             }
+            h += '</table></div>';
             area.innerHTML = h;
         }).catch(function(e){
-            area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">❌ 加载失败: '+esc(e.message)+'<br>请确认 01_tables.sql 已执行且你以管理员身份登录</div>';
+            area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">加载失败: '+esc(e.message)+'</div>';
         });
     }
 
-    async function adminDoAction(action, target, detail) {
-        detail = detail || '';
-        if (action === 'ban') detail = prompt('封禁原因(可选):') || '';
-        try {
-            var ok = false;
-            if (action === 'ban') ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {banned: true, ban_reason: detail});
-            else if (action === 'unban') ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {banned: false, ban_reason: ''});
-            else if (action === 'verify') ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target), {verified: true});
-            else if (action === 'set_vip' && detail) ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(target) + '&is_admin=eq.false', {vip_level: detail});
-            if (ok) await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: target, detail: detail});
-            if (ok) { toast('✅ 操作成功'); adminDo('users'); }
-            else if (!_serviceKey) toast('❌ 需要 service_role 密钥 — 点「🔑 设置管理员密钥」');
-            else toast('❌ 操作失败 (检查密钥是否正确)');
-        } catch(e) { toast('❌ 操作失败'); }
+    function doSetAdminQuick(username, makeAdmin, btn) {
+        if (btn) btn.textContent = '...';
+        _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(username), {is_admin: makeAdmin}).then(function(ok){
+            if (ok) {
+                _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: makeAdmin?'promote_admin':'demote_admin', target: username});
+                toast((makeAdmin ? '已升为管理员: @' : '已取消管理员: @') + username);
+                adminDo('set_admin');
+            } else {
+                if (btn) btn.textContent = '失败';
+                toast('需要执行 02_security.sql');
+            }
+        });
     }
 
-    function showAdminGenCode(area) {
-        area.innerHTML =
-            '<select id="genCodeLevel" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
-            '<option value="vip">VIP</option><option value="vvip">VVIP</option><option value="svip">SVIP</option></select>' +
-            '<input id="genCodeUses" type="number" value="1" min="1" max="999" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
-            '<button class="cheat-btn accent" onclick="generateCode()" style="width:100%;">生成激活码</button>' +
-            '<div id="genCodeResult" style="font-size:10px;margin-top:6px;word-break:break-all;"></div>';
+    function delUserAccount(username, btn) {
+        if (!confirm('确定删除用户 @'+username+' ？此操作不可撤销！')) return;
+        if (btn) btn.textContent = '...';
+        fetch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(username), {method: 'DELETE', headers: _h()}).then(function(r){
+            if (r.ok) {
+                _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'delete_user', target: username});
+                toast('已删除 @'+username);
+                adminDo('set_admin');
+            } else {
+                if (btn) btn.textContent = '失败';
+                toast('需要执行 02_security.sql');
+            }
+        });
     }
+
 
     function showAdminStats(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
@@ -4360,11 +4368,31 @@
         if (!vid) return;
         if (!confirm('确定删除 ' + vid + ' ?')) return;
         var ok = await _delete(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(vid));
+        var r = document.getElementById('delVideoResult');
         if (ok) {
             await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'delete_video', target: vid});
+            r.textContent = '已删除 ' + vid; r.style.color = 'var(--green)';
+            loadVids(true);
+        } else {
+            r.textContent = '需执行 02_security.sql'; r.style.color = '#c08080';
         }
-        document.getElementById('delVideoResult').textContent = ok ? '✅ 已删除' : '❌ 失败 (需要 service_role 密钥)';
-        document.getElementById('delVideoResult').style.color = ok ? 'var(--green)' : '#c08080';
+    }
+
+    async function doAdminDelVideoBatch() {
+        var input = document.getElementById('delVideoId').value.replace(/[\n\s]+/g, ',').replace(/,+/g, ',');
+        var ids = input.split(',').map(function(s){return s.trim();}).filter(function(s){return s;});
+        var r = document.getElementById('delVideoResult');
+        if (!ids.length) { r.textContent = '请输入视频ID'; return; }
+        if (!confirm('确定批量删除 ' + ids.length + ' 个视频？此操作不可撤销！')) return;
+        r.textContent = '删除中...'; r.style.color = 'var(--vmuted)';
+        var deleted = 0;
+        for (var i=0;i<ids.length;i++) {
+            var ok = await _delete(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(ids[i]));
+            if (ok) deleted++;
+        }
+        await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'batch_delete_video', detail: deleted+'/'+ids.length});
+        r.textContent = '已删除 ' + deleted + '/' + ids.length; r.style.color = 'var(--green)';
+        loadVids(true);
     }
     function showAdminMessages(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
@@ -4387,15 +4415,25 @@
     }
     function showAdminBroadcast(area) {
         area.innerHTML =
-            '<textarea id="broadcastMsg" placeholder="群发通知内容" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;height:60px;resize:vertical;"></textarea>'+
-            '<button class="cheat-btn accent" onclick="sendBroadcast()" style="width:100%;">📨 群发给所有用户</button><div id="bcResult" style="font-size:10px;margin-top:6px;"></div>';
+            '<p style="color:var(--vtext);margin-bottom:6px;">📨 发送全站通知(用户需点确认)</p>' +
+            '<textarea id="broadcastMsg" placeholder="通知内容" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;height:60px;resize:vertical;"></textarea>'+
+            '<div style="display:flex;gap:6px;">' +
+            '<button class="cheat-btn accent" onclick="sendBroadcast()" style="flex:1;">发布全站公告</button>' +
+            '<button class="cheat-btn" onclick="sendLocalNotification()" style="flex:1;">仅弹窗提示</button>' +
+            '</div><div id="bcResult" style="font-size:10px;margin-top:6px;"></div>';
     }
     async function sendBroadcast() {
         var msg = document.getElementById('broadcastMsg').value.trim();
         if (!msg) return;
-        // 发布为公告即可(所有用户可见)
-        await _adminPost(SUPABASE_URL+'/rest/v1/announcements',{title:'📨 系统通知',content:msg,created_by:_username,is_active:true});
-        document.getElementById('bcResult').textContent = '✅ 公告已发布，全站可见';
+        await _adminPost(SUPABASE_URL+'/rest/v1/announcements',{title:'📢 系统通知',content:msg,created_by:_username,is_active:true});
+        showNotification('📢 管理员通知: ' + msg);
+        document.getElementById('bcResult').textContent = '✅ 公告已发布 + 弹窗通知已弹出';
+    }
+    function sendLocalNotification() {
+        var msg = document.getElementById('broadcastMsg').value.trim();
+        if (!msg) return;
+        showNotification('📢 管理员通知: ' + msg);
+        document.getElementById('bcResult').textContent = '✅ 通知已弹出';
     }
     function showAdminAudit(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
@@ -4433,34 +4471,6 @@
 
     // ============ 新增管理功能 ============
 
-    function showAdminSetAdmin(area) {
-        area.innerHTML =
-            '<p style="color:var(--vtext);margin-bottom:6px;">👑 设置/取消管理员</p>' +
-            '<input id="setAdminUser" placeholder="用户名" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
-            '<div style="display:flex;gap:6px;">' +
-            '<button class="cheat-btn accent" onclick="doSetAdmin(true)" style="flex:1;">升为管理员</button>' +
-            '<button class="cheat-btn danger" onclick="doSetAdmin(false)" style="flex:1;">取消管理员</button>' +
-            '</div>' +
-            '<div id="setAdminResult" style="font-size:10px;margin-top:6px;"></div>';
-    }
-
-    async function doSetAdmin(makeAdmin) {
-        var user = document.getElementById('setAdminUser').value.trim();
-        var r = document.getElementById('setAdminResult');
-        if (!user) { r.textContent = '请输入用户名'; return; }
-        if (user === _username && !makeAdmin) { r.textContent = '不能取消自己的管理员权限'; r.style.color = '#c08080'; return; }
-        r.textContent = '处理中...'; r.style.color = 'var(--vmuted)';
-        var ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user) + '&is_admin=eq.' + !makeAdmin, {is_admin: makeAdmin});
-        if (ok) {
-            await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: makeAdmin ? 'promote_admin' : 'demote_admin', target: user});
-            r.textContent = '✅ ' + user + (makeAdmin ? ' 已升为管理员' : ' 已取消管理员');
-            r.style.color = 'var(--green)';
-        } else {
-            r.textContent = '❌ 需要 service_role 密钥 — 请先设置';
-            r.style.color = '#c08080';
-        }
-    }
-
     function showAdminVideoMgmt(area) {
         area.innerHTML =
             '<p style="color:var(--vtext);margin-bottom:6px;">🎬 批量视频管理</p>' +
@@ -4476,67 +4486,70 @@
             '<div id="videoMgmtResult" style="font-size:10px;margin-top:6px;"></div>';
     }
 
-    async function doVideoMgmt() {
-        var action = document.getElementById('videoMgmtAction').value;
+    async function doVideoMgmtQuick(action) {
         var param = document.getElementById('videoMgmtParam').value.trim();
         var r = document.getElementById('videoMgmtResult');
         r.textContent = '处理中...'; r.style.color = 'var(--vmuted)';
-
+        var url = SUPABASE_URL + '/rest/v1/videos?';
+        var method = 'PATCH';
+        var body = {};
+        var confirmMsg = '';
+        var limit = '&limit=500';
+        switch(action) {
+            case 'rescrape_all':
+                url += 'needs_rescrape=is.false' + limit;
+                body = {needs_rescrape: true, updated_at: new Date().toISOString()};
+                confirmMsg = '确定标记所有未标记的视频为重爬？';
+                break;
+            case 'clear_all':
+                url += 'needs_rescrape=is.true' + limit;
+                body = {needs_rescrape: false, updated_at: new Date().toISOString()};
+                confirmMsg = '确定清除所有重爬标记？';
+                break;
+            case 'del_no_mp4':
+                url += 'has_mp4=is.false&needs_rescrape=is.true' + limit;
+                method = 'DELETE';
+                confirmMsg = '确定删除所有无法播放且待重爬的视频？此操作不可撤销！';
+                break;
+            case 'del_old_30d':
+                var cutoff = new Date(Date.now() - 30*86400000).toISOString();
+                url += 'updated_at=lt.' + cutoff + '&has_mp4=is.false' + limit;
+                method = 'DELETE';
+                confirmMsg = '确定删除30天前未更新且无法播放的视频？此操作不可撤销！';
+                break;
+            case 'rescrape_section':
+                if (!param) { r.textContent = '请输入栏目名'; return; }
+                url += 'source_section=ilike.*'+encodeURIComponent(param)+'*' + limit;
+                body = {needs_rescrape: true, updated_at: new Date().toISOString()};
+                confirmMsg = '确定标记栏目 "' + param + '" 所有视频为重爬？';
+                break;
+            case 'del_section':
+                if (!param) { r.textContent = '请输入栏目名'; return; }
+                url += 'source_section=ilike.*'+encodeURIComponent(param)+'*' + limit;
+                method = 'DELETE';
+                confirmMsg = '确定删除栏目 "' + param + '" 的所有视频？此操作不可撤销！';
+                break;
+            default:
+                r.textContent = '未知操作'; return;
+        }
+        if (!confirm(confirmMsg)) { r.textContent = '已取消'; r.style.color = 'var(--vmuted)'; return; }
         try {
-            var url = SUPABASE_URL + '/rest/v1/videos?';
-            var method = 'PATCH';
-            var body = {};
-            var confirmMsg = '';
-
-            switch(action) {
-                case 'rescrape':
-                    url += 'needs_rescrape=is.false&limit=500';
-                    body = {needs_rescrape: true, updated_at: new Date().toISOString()};
-                    confirmMsg = '确定标记所有可播放视频为重爬？';
-                    break;
-                case 'clear_rescrape':
-                    url += 'needs_rescrape=is.true&limit=500';
-                    body = {needs_rescrape: false, updated_at: new Date().toISOString()};
-                    confirmMsg = '确定清除所有重爬标记？';
-                    break;
-                case 'del_section':
-                    if (!param) { r.textContent = '请输入栏目名'; return; }
-                    url += 'source_section=eq.' + encodeURIComponent(param) + '&limit=500';
-                    method = 'DELETE';
-                    confirmMsg = '确定删除栏目 "' + param + '" 的所有视频？此操作不可撤销！';
-                    break;
-                case 'del_author':
-                    if (!param) { r.textContent = '请输入作者名'; return; }
-                    url += 'author=eq.' + encodeURIComponent(param) + '&limit=500';
-                    method = 'DELETE';
-                    confirmMsg = '确定删除作者 "' + param + '" 的所有视频？此操作不可撤销！';
-                    break;
-                case 'del_old':
-                    var cutoff = new Date(Date.now() - 30*86400000).toISOString();
-                    url += 'updated_at=lt.' + cutoff + '&limit=500';
-                    method = 'DELETE';
-                    confirmMsg = '确定删除30天前未更新的视频？此操作不可撤销！';
-                    break;
-            }
-
-            if (!confirm(confirmMsg)) { r.textContent = '已取消'; r.style.color = 'var(--vmuted)'; return; }
-
             var resp;
             if (method === 'DELETE') {
-                resp = await fetch(url, {method: 'DELETE', headers: getServiceHeaders()});
+                resp = await fetch(url, {method: 'DELETE', headers: _h()});
             } else {
-                resp = await fetch(url, {method: 'PATCH', headers: getServiceHeaders(), body: JSON.stringify(body)});
+                resp = await fetch(url, {method: 'PATCH', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}), body: JSON.stringify(body)});
             }
             if (resp.ok) {
-                await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: param, detail: '批量操作'});
-                r.textContent = '✅ 操作成功'; r.style.color = 'var(--green)';
-                if (action.indexOf('del') === 0) loadVids(true);
+                await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: param, detail: '批量操作'});
+                r.textContent = '操作成功'; r.style.color = 'var(--green)';
+                loadVids(true);
             } else {
-                r.textContent = '❌ HTTP ' + resp.status + ' — 可能需要 service_role 密钥';
+                r.textContent = 'HTTP ' + resp.status + ' — 需执行 02_security.sql';
                 r.style.color = '#c08080';
             }
         } catch(e) {
-            r.textContent = '❌ ' + (e.message || '网络错误');
+            r.textContent = (e.message || '网络错误');
             r.style.color = '#c08080';
         }
     }
@@ -4614,6 +4627,27 @@
         var svcKey = sessionStorage.getItem('svc_key');
         if (svcKey) sessionStorage.setItem('svc_key', svcKey);
         toast('🧹 缓存已清理 (保留了登录和收藏)');
+    }
+
+    // ============ 通知系统 ============
+    var _notifQueue = [], _notifShowing = false;
+    function showNotification(msg) {
+        _notifQueue.push(msg);
+        if (!_notifShowing) _showNextNotif();
+    }
+    function _showNextNotif() {
+        if (!_notifQueue.length) { _notifShowing = false; return; }
+        _notifShowing = true;
+        var msg = _notifQueue.shift();
+        var bar = document.getElementById('notificationBar');
+        var text = document.getElementById('notifText');
+        text.textContent = msg;
+        bar.style.display = 'block';
+    }
+    function dismissNotification() {
+        document.getElementById('notificationBar').style.display = 'none';
+        _notifShowing = false;
+        setTimeout(function() { _showNextNotif(); }, 300);
     }
 
     function saveLoginSession(user, hash, remember) {

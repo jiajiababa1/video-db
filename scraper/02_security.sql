@@ -121,3 +121,11 @@ CREATE POLICY "anon_all_follows" ON public.user_follows FOR ALL TO anon USING (t
 DROP POLICY IF EXISTS "anon 写入状态" ON public.scrape_status;
 DROP POLICY IF EXISTS "anon_insert_scrape" ON public.scrape_status;
 CREATE POLICY "anon_insert_scrape" ON public.scrape_status FOR INSERT TO anon WITH CHECK (true);
+
+-- user_accounts: 允许删除(管理员清理用户)
+DROP POLICY IF EXISTS "anon_delete_users" ON public.user_accounts;
+CREATE POLICY "anon_delete_users" ON public.user_accounts FOR DELETE TO anon USING (true);
+
+-- activation_codes: 允许删除(清理无用激活码)
+DROP POLICY IF EXISTS "anon_delete_codes" ON public.activation_codes;
+CREATE POLICY "anon_delete_codes" ON public.activation_codes FOR DELETE TO anon USING (true);
