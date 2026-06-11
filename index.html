@@ -2483,6 +2483,11 @@
         var c=document.createElement('div');c.className='vid-card';
         // 可播放性标记
         var hasMp4 = v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0);
+        // 数据库已可播放 → 自动从本地重爬列表移除 (避免本地缓存永久覆盖DB状态)
+        if (hasMp4 && isInRescrapeList(v.video_id)) {
+            var rl = getRescrapeList().filter(function(id) { return id !== v.video_id; });
+            localStorage.setItem('vid_rescrape', JSON.stringify(rl));
+        }
         var needsRescrape = v.needs_rescrape === true || isInRescrapeList(v.video_id);
         if(!hasMp4) c.classList.add('unplayable');
         if(needsRescrape && !hasMp4) c.classList.add('needs-rescrape');
