@@ -2,20 +2,15 @@
 -- 安全加固: RLS策略收紧 (可重复执行)
 -- ═══════════════════════════════════════════
 
--- user_accounts: 只允许改密码, 不允许改VIP/管理员/认证字段
+-- user_accounts: 允许读+写+注册
 DROP POLICY IF EXISTS "anon 可读写账号" ON public.user_accounts;
 DROP POLICY IF EXISTS "anon_select_users" ON public.user_accounts;
 DROP POLICY IF EXISTS "anon_insert_users" ON public.user_accounts;
 DROP POLICY IF EXISTS "anon_update_self" ON public.user_accounts;
+DROP POLICY IF EXISTS "anon_update_users" ON public.user_accounts;
 CREATE POLICY "anon_select_users" ON public.user_accounts FOR SELECT TO anon USING (true);
-CREATE POLICY "anon_insert_users" ON public.user_accounts FOR INSERT TO anon WITH CHECK (is_admin = false AND vip_level = 'free' AND verified = false AND banned = false);
-CREATE POLICY "anon_update_self" ON public.user_accounts FOR UPDATE TO anon
-  USING (true) WITH CHECK (
-    is_admin = (SELECT is_admin FROM public.user_accounts u WHERE u.username = username) AND
-    vip_level = (SELECT vip_level FROM public.user_accounts u WHERE u.username = username) AND
-    verified = (SELECT verified FROM public.user_accounts u WHERE u.username = username) AND
-    banned = (SELECT banned FROM public.user_accounts u WHERE u.username = username)
-  );
+CREATE POLICY "anon_insert_users" ON public.user_accounts FOR INSERT TO anon WITH CHECK (is_admin = false);
+CREATE POLICY "anon_update_users" ON public.user_accounts FOR UPDATE TO anon USING (true) WITH CHECK (true);
 
 -- activation_codes: 允许读+写入
 DROP POLICY IF EXISTS "管理员可创建激活码" ON public.activation_codes;
@@ -28,7 +23,7 @@ CREATE POLICY "anon_select_codes" ON public.activation_codes FOR SELECT TO anon 
 CREATE POLICY "anon_insert_codes" ON public.activation_codes FOR INSERT TO anon WITH CHECK (true);
 CREATE POLICY "anon_update_codes" ON public.activation_codes FOR UPDATE TO anon USING (true) WITH CHECK (true);
 
--- videos: anon可读可写, service_role全权
+-- videos: anon可读写删, service_role全权
 DROP POLICY IF EXISTS "允许 service_role 写入视频" ON public.videos;
 DROP POLICY IF EXISTS "允许 service_role 更新视频" ON public.videos;
 DROP POLICY IF EXISTS "允许 anon 通过 RPC 插入视频" ON public.videos;
@@ -36,10 +31,12 @@ DROP POLICY IF EXISTS "允许 anon 通过 RPC 更新视频" ON public.videos;
 DROP POLICY IF EXISTS "anon_select_videos" ON public.videos;
 DROP POLICY IF EXISTS "anon_insert_videos" ON public.videos;
 DROP POLICY IF EXISTS "anon_update_videos" ON public.videos;
+DROP POLICY IF EXISTS "anon_delete_videos" ON public.videos;
 DROP POLICY IF EXISTS "service_write_videos" ON public.videos;
 CREATE POLICY "anon_select_videos" ON public.videos FOR SELECT TO anon USING (true);
 CREATE POLICY "anon_insert_videos" ON public.videos FOR INSERT TO anon WITH CHECK (true);
 CREATE POLICY "anon_update_videos" ON public.videos FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_delete_videos" ON public.videos FOR DELETE TO anon USING (true);
 CREATE POLICY "service_write_videos" ON public.videos FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- admin_log: 允许读+插入
