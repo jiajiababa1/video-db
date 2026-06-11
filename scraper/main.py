@@ -278,9 +278,29 @@ def supabase_save(videos: list[dict]) -> int:
         log(f"  示例: {examples}")
 
     records = []
+    # 查询数据库中已有MP4的视频, 避免needs_rescrape被覆盖
+    existing_mp4 = set()
+    try:
+        mp4_client = httpx.Client(timeout=30)
+        mp4_headers = supabase_headers()
+        mp4_resp = mp4_client.get(
+            SUPABASE_URL + "/rest/v1/videos?select=video_id&has_mp4=is.true&limit=10000",
+            headers=mp4_headers
+        )
+        if mp4_resp.status_code == 200:
+            existing_mp4 = {v["video_id"] for v in mp4_resp.json()}
+        mp4_client.close()
+        if existing_mp4:
+            log(f"  数据库中已有 {len(existing_mp4)} 个视频有MP4, 保护不被覆盖")
+    except Exception as e:
+        log(f"  查询已有MP4失败(无影响): {e}", "WARN")
+
     for vid, v in merged.items():
         mp4 = v.get("duration", "") or ""
         has_mp4 = bool(mp4 and mp4.startswith("http") and "video.twimg.com" in mp4)
+        # 关键修复: 已有MP4的视频, 强制needs_rescrape=false(永不覆盖)
+        already_has_mp4 = vid in existing_mp4
+        force_needs_rescrape = True if (already_has_mp4 or has_mp4) else (not has_mp4)
         records.append({
             "video_id": vid,
             "title": (v.get("title") or "")[:500],
@@ -295,8 +315,8 @@ def supabase_save(videos: list[dict]) -> int:
             "vote_up": v.get("vote_up", 0),
             "vote_down": v.get("vote_down", 0),
             "scraped_at": now,
-            "has_mp4": has_mp4,
-            "needs_rescrape": not has_mp4,  # 新视频默认需要重爬
+            "has_mp4": has_mp4 or already_has_mp4,
+            "needs_rescrape": not has_mp4 and not already_has_mp4,
             "mp4_checked_at": now,
         })
 
@@ -337,16 +357,27 @@ def supabase_save_status(stats: dict):
         "videos_found": stats.get("videos_found", 0),
         "videos_saved": stats.get("videos_saved", 0),
         "pages_crawled": stats.get("pages_crawled", 0),
-        "mp4_resolved": stats.get("mp4_resolved", 0),
         "errors": "\n".join(stats.get("errors", [])[:10]),
     }
+    # mp4_resolved 列可能不存在, 尝试添加
+    try:
+        key = "mp4_resolved"
+        record[key] = stats.get(key, 0)
+    except Exception:
+        pass
     try:
         client = httpx.Client(timeout=15)
         resp = client.post(SUPABASE_URL + "/rest/v1/scrape_status", headers=headers, json=record)
         if resp.status_code in (200, 201, 204):
             log("爬虫状态已记录")
         else:
-            log(f"状态记录失败: {resp.status_code}", "WARN")
+            # 可能mp4_resolved列不存在, 重试不包含该列
+            record.pop("mp4_resolved", None)
+            resp2 = client.post(SUPABASE_URL + "/rest/v1/scrape_status", headers=headers, json=record)
+            if resp2.status_code in (200, 201, 204):
+                log("爬虫状态已记录(不含mp4_resolved)")
+            else:
+                log(f"状态记录失败: {resp.status_code}/{resp2.status_code}", "WARN")
         client.close()
     except Exception as e:
         log(f"状态记录异常: {e}", "WARN")
