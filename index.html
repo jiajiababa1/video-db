@@ -4765,14 +4765,14 @@
         // Upsert: try insert first, if conflict, update
         _post(SUPABASE_URL + '/rest/v1/site_pages', record).then(function(result){
             if (result !== null) {
-                r.textContent = '页面已保存! 访问: #/page/' + slug; r.style.color = 'var(--green)';
-                var link = location.origin + location.pathname + '#/page/' + slug;
-                r.innerHTML += '<br><a href="'+link+'" target="_blank" style="color:var(--vprimary);">在新标签打开</a>';
+                var fullLink = location.origin + location.pathname + '#/page/' + slug;
+                r.innerHTML = '页面已保存!<br>完整链接: <b style=\"color:var(--vprimary);user-select:all;\">' + fullLink + '</b><br><a href=\"'+fullLink+'\" target=\"_blank\" style=\"color:var(--vprimary);\">在新标签打开</a>';
             } else {
                 // Try update (slug already exists)
                 _patch(SUPABASE_URL + '/rest/v1/site_pages?slug=eq.' + escUrl(slug), {title: title, content: safeHTML, updated_at: new Date().toISOString()}).then(function(ok){
                     if (ok) {
-                        r.textContent = '页面已更新! 访问: #/page/' + slug; r.style.color = 'var(--green)';
+                        var fullLink2 = location.origin + location.pathname + '#/page/' + slug;
+                        r.innerHTML = '页面已更新!<br>完整链接: <b style=\"color:var(--vprimary);user-select:all;\">' + fullLink2 + '</b>';
                     } else {
                         r.textContent = '保存失败 — 需执行 02_security.sql'; r.style.color = '#c08080';
                     }
