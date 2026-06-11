@@ -860,28 +860,32 @@
 
     <!-- ==================== 管理员面板 (20功能 + 全功能) ==================== -->
     <div class="cheat-dialog-overlay" id="adminPanelOverlay">
-        <div class="cheat-dialog" style="width:95vw;max-width:460px;max-height:85vh;overflow-y:auto;padding:16px;">
+        <div class="cheat-dialog" style="width:95vw;max-width:560px;max-height:85vh;overflow-y:auto;padding:16px;">
             <button class="vid-modal-close" onclick="closeAdminPanel()" style="position:absolute;top:8px;right:8px;">✕</button>
             <p class="title" style="font-size:16px;margin-bottom:10px;">👑 管理面板</p>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:10px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:10px;">
                 <button class="ms-btn" onclick="adminDo('announce')">📢 公告</button>
                 <button class="ms-btn" onclick="adminDo('users')">👥 用户</button>
                 <button class="ms-btn" onclick="adminDo('gencode')">🎫 激活码</button>
-                
+                <button class="ms-btn" onclick="adminDo('set_admin')">👑 设管理员</button>
                 <button class="ms-btn" onclick="adminDo('stats')">📊 全站统计</button>
                 <button class="ms-btn" onclick="adminDo('logs')">📋 操作日志</button>
                 <button class="ms-btn" onclick="adminDo('config')">⚙️ 系统设置</button>
                 <button class="ms-btn" onclick="adminDo('search_user')">🔍 搜用户</button>
                 <button class="ms-btn" onclick="adminDo('reset_pwd')">🔑 重置密码</button>
                 <button class="ms-btn" onclick="adminDo('del_video')">🗑️ 删视频</button>
+                <button class="ms-btn" onclick="adminDo('video_mgmt')">🎬 视频管理</button>
+                <button class="ms-btn" onclick="adminDo('edit_video')">📝 编辑视频</button>
                 <button class="ms-btn" onclick="adminDo('messages')">💬 全站私信</button>
                 <button class="ms-btn" onclick="adminDo('export')">📤 导出数据</button>
                 <button class="ms-btn" onclick="adminDo('friends_all')">👫 好友管理</button>
                 <button class="ms-btn" onclick="adminDo('broadcast')">📨 群发通知</button>
                 <button class="ms-btn" onclick="adminDo('audit')">🛡️ 安全审计</button>
                 <button class="ms-btn" onclick="adminDo('diag')" style="background:rgba(200,164,92,0.1);color:var(--vprimary);">🔧 检测数据库</button>
+                <button class="ms-btn" onclick="adminDo('scraper_run')" style="background:rgba(100,160,200,0.1);color:#4a9adf;">🔄 手动爬虫</button>
+                <button class="ms-btn" onclick="adminDo('clear_cache')" style="background:rgba(200,100,100,0.1);color:#c08080;">🧹 清理缓存</button>
             </div>
-            <div id="adminContent" style="font-size:11px;color:var(--vmuted);text-align:center;">选择上方功能</div>
+            <div id="adminContent" style="font-size:11px;color:var(--vmuted);text-align:center;">选择上方功能<br><small style="color:var(--vmuted);">管理员: 全部功能可用 | 需要 service_role 密钥的操作会有提示</small></div>
         </div>
     </div>
 
@@ -4095,18 +4099,22 @@
             case 'announce': showAdminAnnounce(area); break;
             case 'users': showAdminUsers(area); break;
             case 'gencode': showAdminGenCode(area); break;
-            
+            case 'set_admin': showAdminSetAdmin(area); break;
             case 'stats': showAdminStats(area); break;
             case 'logs': showAdminLogs(area); break;
             case 'config': showAdminConfig(area); break;
             case 'search_user': showAdminSearch(area); break;
             case 'reset_pwd': showAdminResetPwd(area); break;
             case 'del_video': showAdminDelVideo(area); break;
+            case 'video_mgmt': showAdminVideoMgmt(area); break;
+            case 'edit_video': showAdminEditVideo(area); break;
             case 'messages': showAdminMessages(area); break;
             case 'export': showAdminExport(area); break;
             case 'friends_all': showFriendRequests(); break;
             case 'broadcast': showAdminBroadcast(area); break;
             case 'audit': showAdminAudit(area); break;
+            case 'scraper_run': showAdminScraper(area); break;
+            case 'clear_cache': clearAppCache(); area.innerHTML = '✅ 缓存已清理，刷新页面生效'; break;
         }
     }
 
@@ -4421,6 +4429,191 @@
             h += '</div>';
             area.innerHTML = h;
         });
+    }
+
+    // ============ 新增管理功能 ============
+
+    function showAdminSetAdmin(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">👑 设置/取消管理员</p>' +
+            '<input id="setAdminUser" placeholder="用户名" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<div style="display:flex;gap:6px;">' +
+            '<button class="cheat-btn accent" onclick="doSetAdmin(true)" style="flex:1;">升为管理员</button>' +
+            '<button class="cheat-btn danger" onclick="doSetAdmin(false)" style="flex:1;">取消管理员</button>' +
+            '</div>' +
+            '<div id="setAdminResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+
+    async function doSetAdmin(makeAdmin) {
+        var user = document.getElementById('setAdminUser').value.trim();
+        var r = document.getElementById('setAdminResult');
+        if (!user) { r.textContent = '请输入用户名'; return; }
+        if (user === _username && !makeAdmin) { r.textContent = '不能取消自己的管理员权限'; r.style.color = '#c08080'; return; }
+        r.textContent = '处理中...'; r.style.color = 'var(--vmuted)';
+        var ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user) + '&is_admin=eq.' + !makeAdmin, {is_admin: makeAdmin});
+        if (ok) {
+            await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: makeAdmin ? 'promote_admin' : 'demote_admin', target: user});
+            r.textContent = '✅ ' + user + (makeAdmin ? ' 已升为管理员' : ' 已取消管理员');
+            r.style.color = 'var(--green)';
+        } else {
+            r.textContent = '❌ 需要 service_role 密钥 — 请先设置';
+            r.style.color = '#c08080';
+        }
+    }
+
+    function showAdminVideoMgmt(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">🎬 批量视频管理</p>' +
+            '<select id="videoMgmtAction" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<option value="rescrape">标记全部重爬 (needs_rescrape=true)</option>' +
+            '<option value="clear_rescrape">清除重爬标记 (needs_rescrape=false)</option>' +
+            '<option value="del_section">按栏目批量删除</option>' +
+            '<option value="del_author">按作者批量删除</option>' +
+            '<option value="del_old">删除30天前的视频</option>' +
+            '</select>' +
+            '<input id="videoMgmtParam" placeholder="栏目名或作者名 (如 trending / @作者)" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<button class="cheat-btn danger" onclick="doVideoMgmt()" style="width:100%;">确认执行</button>' +
+            '<div id="videoMgmtResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+
+    async function doVideoMgmt() {
+        var action = document.getElementById('videoMgmtAction').value;
+        var param = document.getElementById('videoMgmtParam').value.trim();
+        var r = document.getElementById('videoMgmtResult');
+        r.textContent = '处理中...'; r.style.color = 'var(--vmuted)';
+
+        try {
+            var url = SUPABASE_URL + '/rest/v1/videos?';
+            var method = 'PATCH';
+            var body = {};
+            var confirmMsg = '';
+
+            switch(action) {
+                case 'rescrape':
+                    url += 'needs_rescrape=is.false&limit=500';
+                    body = {needs_rescrape: true, updated_at: new Date().toISOString()};
+                    confirmMsg = '确定标记所有可播放视频为重爬？';
+                    break;
+                case 'clear_rescrape':
+                    url += 'needs_rescrape=is.true&limit=500';
+                    body = {needs_rescrape: false, updated_at: new Date().toISOString()};
+                    confirmMsg = '确定清除所有重爬标记？';
+                    break;
+                case 'del_section':
+                    if (!param) { r.textContent = '请输入栏目名'; return; }
+                    url += 'source_section=eq.' + encodeURIComponent(param) + '&limit=500';
+                    method = 'DELETE';
+                    confirmMsg = '确定删除栏目 "' + param + '" 的所有视频？此操作不可撤销！';
+                    break;
+                case 'del_author':
+                    if (!param) { r.textContent = '请输入作者名'; return; }
+                    url += 'author=eq.' + encodeURIComponent(param) + '&limit=500';
+                    method = 'DELETE';
+                    confirmMsg = '确定删除作者 "' + param + '" 的所有视频？此操作不可撤销！';
+                    break;
+                case 'del_old':
+                    var cutoff = new Date(Date.now() - 30*86400000).toISOString();
+                    url += 'updated_at=lt.' + cutoff + '&limit=500';
+                    method = 'DELETE';
+                    confirmMsg = '确定删除30天前未更新的视频？此操作不可撤销！';
+                    break;
+            }
+
+            if (!confirm(confirmMsg)) { r.textContent = '已取消'; r.style.color = 'var(--vmuted)'; return; }
+
+            var resp;
+            if (method === 'DELETE') {
+                resp = await fetch(url, {method: 'DELETE', headers: getServiceHeaders()});
+            } else {
+                resp = await fetch(url, {method: 'PATCH', headers: getServiceHeaders(), body: JSON.stringify(body)});
+            }
+            if (resp.ok) {
+                await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: param, detail: '批量操作'});
+                r.textContent = '✅ 操作成功'; r.style.color = 'var(--green)';
+                if (action.indexOf('del') === 0) loadVids(true);
+            } else {
+                r.textContent = '❌ HTTP ' + resp.status + ' — 可能需要 service_role 密钥';
+                r.style.color = '#c08080';
+            }
+        } catch(e) {
+            r.textContent = '❌ ' + (e.message || '网络错误');
+            r.style.color = '#c08080';
+        }
+    }
+
+    function showAdminEditVideo(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">📝 编辑视频元数据</p>' +
+            '<input id="editVidId" placeholder="视频ID (如 v123456)" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<button class="cheat-btn" onclick="loadVideoForEdit()" style="width:100%;margin-bottom:6px;">加载视频信息</button>' +
+            '<div id="editVidForm" style="display:none;">' +
+            '<input id="editVidTitle" placeholder="标题" style="width:100%;padding:8px;margin-bottom:4px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<input id="editVidAuthor" placeholder="作者" style="width:100%;padding:8px;margin-bottom:4px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<input id="editVidThumb" placeholder="缩略图URL" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<button class="cheat-btn accent" onclick="doEditVideo()" style="width:100%;">保存修改</button>' +
+            '</div>' +
+            '<div id="editVidResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+
+    async function loadVideoForEdit() {
+        var vid = document.getElementById('editVidId').value.trim();
+        var r = document.getElementById('editVidResult');
+        if (!vid) { r.textContent = '请输入视频ID'; return; }
+        r.textContent = '加载中...'; r.style.color = 'var(--vmuted)';
+        try {
+            var data = await _get(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(vid) + '&select=title,author,thumbnail_url&limit=1');
+            if (data && data.length) {
+                var v = data[0];
+                document.getElementById('editVidTitle').value = v.title || '';
+                document.getElementById('editVidAuthor').value = v.author || '';
+                document.getElementById('editVidThumb').value = v.thumbnail_url || '';
+                document.getElementById('editVidForm').style.display = 'block';
+                r.textContent = '已加载，可编辑'; r.style.color = 'var(--green)';
+            } else {
+                r.textContent = '视频不存在'; r.style.color = '#c08080';
+            }
+        } catch(e) { r.textContent = '❌ 加载失败'; r.style.color = '#c08080'; }
+    }
+
+    async function doEditVideo() {
+        var vid = document.getElementById('editVidId').value.trim();
+        var title = document.getElementById('editVidTitle').value.trim();
+        var author = document.getElementById('editVidAuthor').value.trim();
+        var thumb = document.getElementById('editVidThumb').value.trim();
+        var r = document.getElementById('editVidResult');
+        if (!vid) return;
+        r.textContent = '保存中...'; r.style.color = 'var(--vmuted)';
+        var ok = await _adminPatch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(vid), {title: title, author: author, thumbnail_url: thumb, updated_at: new Date().toISOString()});
+        if (ok) {
+            await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'edit_video', target: vid, detail: title});
+            r.textContent = '✅ 已保存'; r.style.color = 'var(--green)';
+            loadVids(true);
+        } else {
+            r.textContent = '❌ 需要 service_role 密钥'; r.style.color = '#c08080';
+        }
+    }
+
+    function showAdminScraper(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">🔄 手动触发爬虫</p>' +
+            '<p style="font-size:10px;color:var(--vmuted);margin-bottom:8px;">触发客户端爬虫抓取 monsnode 最新视频</p>' +
+            '<button class="cheat-btn accent" onclick="triggerScraper();closeAdminPanel();" style="width:100%;">🚀 立即抓取</button>' +
+            '<p style="font-size:10px;color:var(--vmuted);margin-top:6px;">GitHub Actions 每2小时自动运行服务端爬虫</p>';
+    }
+
+    function clearAppCache() {
+        // 清理本地存储的缓存数据 (保留登录状态和收藏)
+        var keep = ['login_user', 'login_hash', 'login_time', 'login_remember', 'auth_expiry', 'vid_prefs', 'vid_favs', 'best2048'];
+        var allKeys = [];
+        for (var i = 0; i < localStorage.length; i++) allKeys.push(localStorage.key(i));
+        for (var j = 0; j < allKeys.length; j++) {
+            if (keep.indexOf(allKeys[j]) < 0) localStorage.removeItem(allKeys[j]);
+        }
+        sessionStorage.clear();
+        // 保留 service_role 密钥
+        var svcKey = sessionStorage.getItem('svc_key');
+        if (svcKey) sessionStorage.setItem('svc_key', svcKey);
+        toast('🧹 缓存已清理 (保留了登录和收藏)');
     }
 
     function saveLoginSession(user, hash, remember) {
