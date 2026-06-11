@@ -106,3 +106,15 @@ CREATE TABLE IF NOT EXISTS public.site_pages (
 );
 DROP POLICY IF EXISTS "anon_all_pages" ON public.site_pages;
 CREATE POLICY "anon_all_pages" ON public.site_pages FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- ============ scraped_videos: 内置浏览器抓取的视频 ============
+CREATE TABLE IF NOT EXISTS public.scraped_videos (
+    id BIGSERIAL PRIMARY KEY,
+    url TEXT DEFAULT '',
+    type TEXT DEFAULT 'mp4',
+    title TEXT DEFAULT '',
+    source_page TEXT DEFAULT '',
+    found_at TIMESTAMPTZ DEFAULT NOW()
+);
+DROP POLICY IF EXISTS "anon_all_scraped" ON public.scraped_videos;
+CREATE POLICY "anon_all_scraped" ON public.scraped_videos FOR ALL TO anon USING (true) WITH CHECK (true);

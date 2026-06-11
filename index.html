@@ -882,6 +882,7 @@
                 <button class="ms-btn" onclick="adminDo('audit')">🛡️ 安全审计</button>
                 <button class="ms-btn" onclick="adminDo('diag')" style="background:rgba(200,164,92,0.1);color:var(--vprimary);">🔧 检测数据库</button>
                 <button class="ms-btn" onclick="adminDo('pages')" style="background:rgba(200,164,92,0.1);color:#c8a45c;">📄 站点页面</button>
+                <button class="ms-btn" onclick="openBrowser()" style="background:rgba(100,200,100,0.1);color:#5a9a5a;">🌐 内置浏览器</button>
                 <button class="ms-btn" onclick="adminDo('scraper_run')" style="background:rgba(100,160,200,0.1);color:#4a9adf;">🔄 手动爬虫</button>
                 <button class="ms-btn" onclick="adminDo('clear_cache')" style="background:rgba(200,100,100,0.1);color:#c08080;">🧹 清理缓存</button>
             </div>
@@ -918,6 +919,23 @@
                 <input type="text" id="chatInput" placeholder="输入消息..." onkeydown="if(event.key==='Enter')sendChat()" style="flex:1;padding:8px;border-radius:2px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);font-size:12px;outline:none;font-family:var(--font-sans);">
                 <button class="cheat-btn accent" onclick="sendChat()" style="font-size:11px;padding:6px 14px;">发送</button>
             </div>
+        </div>
+    </div>
+
+    <!-- ==================== 内置浏览器 ==================== -->
+    <div class="cheat-dialog-overlay" id="browserOverlay">
+        <div class="cheat-dialog" style="width:95vw;max-width:1100px;max-height:90vh;display:flex;flex-direction:column;padding:8px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <button class="vid-btn ghost" onclick="browserBack()" style="font-size:16px;padding:4px 8px;" title="后退">◀</button>
+                <button class="vid-btn ghost" onclick="browserForward()" style="font-size:16px;padding:4px 8px;" title="前进">▶</button>
+                <button class="vid-btn ghost" onclick="browserRefresh()" style="font-size:14px;padding:4px 8px;" title="刷新">↻</button>
+                <input type="text" id="browserUrl" placeholder="输入网址..." onkeydown="if(event.key==='Enter')browserNavigate()" style="flex:1;padding:6px 10px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;font-family:monospace;">
+                <button class="cheat-btn accent" onclick="browserNavigate()" style="font-size:11px;padding:4px 12px;">前往</button>
+                <button class="cheat-btn" onclick="scrapeBrowserPage()" style="font-size:11px;padding:4px 12px;background:rgba(200,164,92,0.1);color:#c8a45c;">📥 抓取视频</button>
+                <button class="vid-modal-close" onclick="closeBrowser()" style="position:static;">✕</button>
+            </div>
+            <div id="browserStatus" style="font-size:10px;color:var(--vmuted);margin-bottom:4px;"></div>
+            <iframe id="browserFrame" sandbox="allow-scripts allow-same-origin" style="flex:1;width:100%;min-height:500px;border:1px solid var(--vborder);border-radius:2px;background:#fff;"></iframe>
         </div>
     </div>
 
@@ -4123,6 +4141,7 @@
             case 'scraper_run': showAdminScraper(area); break;
             case 'pages': showAdminPages(area); break;
             case 'page_new': showAdminPageNew(area); break;
+            case 'scraped_vids': showAdminScrapedVids(area); break;
             case 'clear_cache': clearAppCache(); area.innerHTML = '✅ 缓存已清理，刷新页面生效'; break;
         }
     }
@@ -4667,7 +4686,8 @@
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
         _get(SUPABASE_URL + '/rest/v1/site_pages?select=*&order=updated_at.desc&limit=50').then(function(pages){
             var h = '<b>📄 站点页面管理</b> ';
-            h += '<button class="cheat-btn accent" onclick="adminDo(\'page_new\')" style="font-size:9px;padding:2px 8px;">+ 新建页面</button><br><br>';
+            h += '<button class="cheat-btn accent" onclick="adminDo(\'page_new\')" style="font-size:9px;padding:2px 8px;">+ 新建页面</button> ';
+            h += '<button class="cheat-btn" onclick="adminDo(\'scraped_vids\')" style="font-size:9px;padding:2px 8px;">📥 抓取的视频</button><br><br>';
             if (!pages || !pages.length) {
                 h += '<div style="color:var(--vmuted);">暂无页面，点击上方新建</div>';
             } else {
@@ -4841,6 +4861,123 @@
         }
         return _origParseHash();
     };
+
+    // ============ 内置浏览器 + 视频抓取 ============
+    var _browserHistory = [], _browserIdx = -1;
+
+    function openBrowser(url) {
+        document.getElementById('browserOverlay').classList.add('on');
+        if (url) { document.getElementById('browserUrl').value = url; browserNavigate(); }
+    }
+    function closeBrowser() {
+        document.getElementById('browserOverlay').classList.remove('on');
+    }
+
+    function browserNavigate() {
+        var url = document.getElementById('browserUrl').value.trim();
+        if (!url) return;
+        if (!/^https?:\/\//.test(url)) url = 'https://' + url;
+        document.getElementById('browserUrl').value = url;
+        document.getElementById('browserStatus').textContent = '加载中...';
+        document.getElementById('browserFrame').src = url;
+        _browserIdx++;
+        _browserHistory = _browserHistory.slice(0, _browserIdx);
+        _browserHistory.push(url);
+        document.getElementById('browserStatus').textContent = '已加载: ' + url;
+    }
+
+    function browserBack() {
+        if (_browserIdx > 0) {
+            _browserIdx--;
+            var url = _browserHistory[_browserIdx];
+            document.getElementById('browserUrl').value = url;
+            document.getElementById('browserFrame').src = url;
+        }
+    }
+
+    function browserForward() {
+        if (_browserIdx < _browserHistory.length - 1) {
+            _browserIdx++;
+            var url = _browserHistory[_browserIdx];
+            document.getElementById('browserUrl').value = url;
+            document.getElementById('browserFrame').src = url;
+        }
+    }
+
+    function browserRefresh() {
+        var url = _browserHistory[_browserIdx] || document.getElementById('browserUrl').value;
+        document.getElementById('browserFrame').src = url;
+    }
+
+    async function scrapeBrowserPage() {
+        var url = _browserHistory[_browserIdx] || document.getElementById('browserUrl').value.trim();
+        if (!url) { toast('请先加载页面'); return; }
+        document.getElementById('browserStatus').textContent = '正在抓取视频...';
+        toast('抓取中: ' + url);
+        try {
+            var proxy = CORS_PROXY_LIST[_fetchProxyIdx % CORS_PROXY_LIST.length]; _fetchProxyIdx++;
+            var resp = await fetch(proxy + encodeURIComponent(url), {headers:{'Accept':'text/html,*/*'}});
+            if (!resp.ok) { document.getElementById('browserStatus').textContent = '抓取失败: HTTP ' + resp.status; return; }
+            var html = await resp.text();
+            var mp4s = html.match(/https?:\/\/[^"'\s<>]+\.mp4[^"'\s<>]*/gi) || [];
+            var m3u8s = html.match(/https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*/gi) || [];
+            var twimg = html.match(/https?:\/\/video\.twimg\.com\/[^"'\s<>]+/gi) || [];
+            var tweets = html.match(/https?:\/\/(x\.com|twitter\.com)\/[^"'\s<>]+\/status\/\d+/gi) || [];
+            var allUrls = [].concat(mp4s, m3u8s, twimg, tweets);
+            var seen = {}, videos = [];
+            for (var i=0;i<allUrls.length;i++) {
+                var u = allUrls[i]; if (seen[u]) continue; seen[u] = true;
+                videos.push({url: u, type: u.indexOf('.mp4')>=0?'mp4':u.indexOf('twimg')>=0?'twitter':'tweet', source_page: url, found_at: new Date().toISOString()});
+            }
+            if (videos.length > 0) {
+                for (var j=0;j<videos.length;j+=50) {
+                    await fetch(SUPABASE_URL + '/rest/v1/scraped_videos', {method:'POST', headers:_H(), body:JSON.stringify(videos.slice(j,j+50))});
+                }
+            }
+            document.getElementById('browserStatus').textContent = '发现 ' + videos.length + ' 个视频';
+            toast('抓取完成: ' + videos.length + ' 个');
+        } catch(e) {
+            document.getElementById('browserStatus').textContent = '抓取失败';
+            toast('抓取失败');
+        }
+    }
+
+    function showAdminScrapedVids(area) {
+        area.innerHTML = '<div class="vpi-spinner"></div>';
+        _get(SUPABASE_URL + '/rest/v1/scraped_videos?select=*&order=found_at.desc&limit=100').then(function(data){
+            var vids = Array.isArray(data) ? data : [];
+            var h = '<b>📥 抓取的视频 ('+vids.length+')</b> ';
+            h += '<button class="cheat-btn danger" onclick="clearScrapedVids()" style="font-size:9px;padding:2px 6px;">清空全部</button><br>';
+            if (!vids.length) { h += '<div style="color:var(--vmuted);">暂无</div>'; }
+            else {
+                h += '<div style="max-height:300px;overflow-y:auto;">';
+                for (var i=0;i<vids.length;i++) {
+                    var v = vids[i];
+                    h += '<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:10px;">';
+                    h += '<span style="color:var(--vprimary);">'+(v.type||'?')+'</span> ';
+                    h += '<a href="'+esc(v.url)+'" target="_blank" style="color:var(--vmuted);">'+esc((v.url||'').substring(0,80))+'</a>';
+                    h += ' <button onclick="delScrapedVid('+v.id+',this)" style="font-size:9px;padding:1px 4px;background:transparent;border:1px solid rgba(200,80,80,0.3);color:#c08080;border-radius:2px;cursor:pointer;">删</button>';
+                    h += '</div>';
+                }
+                h += '</div>';
+            }
+            area.innerHTML = h;
+        }).catch(function(){ area.innerHTML = 'scraped_videos表不存在 — 需执行SQL建表'; });
+    }
+
+    function clearScrapedVids() {
+        if (!confirm('确定清空所有抓取的视频？')) return;
+        fetch(SUPABASE_URL + '/rest/v1/scraped_videos?id=gt.0', {method:'DELETE', headers:_h()}).then(function(){
+            toast('已清空'); adminDo('scraped_vids');
+        });
+    }
+
+    function delScrapedVid(id, btn) {
+        if (btn) btn.textContent = '...';
+        _delete(SUPABASE_URL + '/rest/v1/scraped_videos?id=eq.' + id).then(function(ok){
+            if (ok) { adminDo('scraped_vids'); } else { if(btn) btn.textContent = 'x'; }
+        });
+    }
 
 function saveLoginSession(user, hash, remember) {
         var store = remember ? localStorage : sessionStorage;
