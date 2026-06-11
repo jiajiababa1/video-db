@@ -94,3 +94,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.increment_retry(TEXT) TO anon;
+
+-- ============ site_pages: 自定义页面(站主管理) ============
+CREATE TABLE IF NOT EXISTS public.site_pages (
+    slug TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    content TEXT DEFAULT '',
+    created_by TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+DROP POLICY IF EXISTS "anon_all_pages" ON public.site_pages;
+CREATE POLICY "anon_all_pages" ON public.site_pages FOR ALL TO anon USING (true) WITH CHECK (true);

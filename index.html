@@ -881,6 +881,7 @@
                 <button class="ms-btn" onclick="adminDo('broadcast')">📨 群发通知</button>
                 <button class="ms-btn" onclick="adminDo('audit')">🛡️ 安全审计</button>
                 <button class="ms-btn" onclick="adminDo('diag')" style="background:rgba(200,164,92,0.1);color:var(--vprimary);">🔧 检测数据库</button>
+                <button class="ms-btn" onclick="adminDo('pages')" style="background:rgba(200,164,92,0.1);color:#c8a45c;">📄 站点页面</button>
                 <button class="ms-btn" onclick="adminDo('scraper_run')" style="background:rgba(100,160,200,0.1);color:#4a9adf;">🔄 手动爬虫</button>
                 <button class="ms-btn" onclick="adminDo('clear_cache')" style="background:rgba(200,100,100,0.1);color:#c08080;">🧹 清理缓存</button>
             </div>
@@ -4118,6 +4119,8 @@
             case 'broadcast': showAdminBroadcast(area); break;
             case 'audit': showAdminAudit(area); break;
             case 'scraper_run': showAdminScraper(area); break;
+            case 'pages': showAdminPages(area); break;
+            case 'page_new': showAdminPageNew(area); break;
             case 'clear_cache': clearAppCache(); area.innerHTML = '✅ 缓存已清理，刷新页面生效'; break;
         }
     }
@@ -4133,8 +4136,23 @@
 
     function showAdminPanel() {
         if (!_isAdmin) { showLoginDialog(); return; }
-        document.getElementById('adminPanelOverlay').classList.add('on');
-        document.getElementById('adminContent').innerHTML = '选择上方功能';
+        // 重新从数据库验证管理员身份(防止被降级后仍能访问)
+        _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username) + '&select=is_admin&limit=1').then(function(data){
+            if (!data || !data.length || !data[0].is_admin) {
+                _isAdmin = false;
+                updateVipBadge(); updateSidebarLogin();
+                clearLoginSession();
+                showLoginDialog();
+                toast('您的管理员权限已被撤销，请重新登录');
+                return;
+            }
+            document.getElementById('adminPanelOverlay').classList.add('on');
+            var isOwner = (_username === SITE_OWNER);
+            document.getElementById('adminContent').innerHTML = '选择上方功能' + (isOwner ? '<br><small style="color:#e04040;">站主模式 — 全部功能可用</small>' : '<br><small style="color:var(--vmuted);">管理员模式 — 部分功能受限</small>');
+        }).catch(function(){
+            document.getElementById('adminPanelOverlay').classList.add('on');
+            document.getElementById('adminContent').innerHTML = '选择上方功能';
+        });
     }
 
     function closeAdminPanel() {
@@ -4234,8 +4252,8 @@
                     h += '<td style="font-size:9px;color:var(--vmuted);">'+date+'</td>';
                     h += '<td>';
                     if (!u.is_admin) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',true,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,164,92,0.3);color:#c8a45c;border-radius:2px;cursor:pointer;">升管理</button> ';
-                    if (u.is_admin && u.username !== _username) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',false,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,100,100,0.3);color:#c08080;border-radius:2px;cursor:pointer;">降级</button> ';
-                    h += '<button onclick="delUserAccount(\''+esc(u.username)+'\',this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,80,80,0.3);color:#c08080;border-radius:2px;cursor:pointer;">删除</button>';
+                    if (u.is_admin && _username === SITE_OWNER && u.username !== _username) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',false,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,100,100,0.3);color:#c08080;border-radius:2px;cursor:pointer;">降级</button> ';
+                    if (_username === SITE_OWNER) h += '<button onclick="delUserAccount(\''+esc(u.username)+'\',this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,80,80,0.3);color:#c08080;border-radius:2px;cursor:pointer;">删除</button>';
                     h += '</td></tr>';
                 }
             }
@@ -4247,11 +4265,16 @@
     }
 
     function doSetAdminQuick(username, makeAdmin, btn) {
+        if (username === SITE_OWNER) { toast('站主不可降级或删除'); return; }
+        if (!makeAdmin && _username !== SITE_OWNER && _username !== username) {
+            toast('只有站主可以取消其他管理员');
+            return;
+        }
         if (btn) btn.textContent = '...';
         _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(username), {is_admin: makeAdmin}).then(function(ok){
             if (ok) {
                 _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: makeAdmin?'promote_admin':'demote_admin', target: username});
-                toast((makeAdmin ? '已升为管理员: @' : '已取消管理员: @') + username);
+                toast((makeAdmin ? '已升为管理员: @' : '已取消管理员: @') + username + (makeAdmin ? '' : ' — 该用户需重新登录生效'));
                 adminDo('set_admin');
             } else {
                 if (btn) btn.textContent = '失败';
@@ -4261,6 +4284,7 @@
     }
 
     function delUserAccount(username, btn) {
+        if (username === SITE_OWNER) { toast('站主不可删除'); return; }
         if (!confirm('确定删除用户 @'+username+' ？此操作不可撤销！')) return;
         if (btn) btn.textContent = '...';
         fetch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(username), {method: 'DELETE', headers: _h()}).then(function(r){
@@ -4595,10 +4619,11 @@
 
     function showAdminScraper(area) {
         area.innerHTML =
-            '<p style="color:var(--vtext);margin-bottom:6px;">🔄 手动触发爬虫</p>' +
-            '<p style="font-size:10px;color:var(--vmuted);margin-bottom:8px;">触发客户端爬虫抓取 monsnode 最新视频</p>' +
-            '<button class="cheat-btn accent" onclick="triggerScraper();closeAdminPanel();" style="width:100%;">🚀 立即抓取</button>' +
-            '<p style="font-size:10px;color:var(--vmuted);margin-top:6px;">GitHub Actions 每2小时自动运行服务端爬虫</p>';
+            '<p style="color:var(--vtext);margin-bottom:6px;">🔄 爬虫控制</p>' +
+            '<button class="cheat-btn accent" onclick="triggerScraper();closeAdminPanel();" style="width:100%;margin-bottom:6px;">🚀 客户端抓取(当前浏览器)</button>' +
+            '<a href="https://github.com/jiajiababa1/video-db/actions/workflows/scraper.yml" target="_blank" style="text-decoration:none;">' +
+            '<button class="cheat-btn" style="width:100%;margin-bottom:6px;background:rgba(100,160,200,0.1);color:#4a9adf;">⚡ 触发GitHub Actions服务端抓取</button></a>' +
+            '<p style="font-size:10px;color:var(--vmuted);">自动: 每30分钟MP4解析 | 每2小时完整抓取</p>';
     }
 
     function clearAppCache() {
@@ -4634,7 +4659,188 @@
         setTimeout(function() { _showNextNotif(); }, 300);
     }
 
-    function saveLoginSession(user, hash, remember) {
+    
+    // ============ 自定义页面系统(站主专属) ============
+    function showAdminPages(area) {
+        area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
+        _get(SUPABASE_URL + '/rest/v1/site_pages?select=*&order=updated_at.desc&limit=50').then(function(pages){
+            var h = '<b>📄 站点页面管理</b> ';
+            h += '<button class="cheat-btn accent" onclick="adminDo('page_new')" style="font-size:9px;padding:2px 8px;">+ 新建页面</button><br><br>';
+            if (!pages || !pages.length) {
+                h += '<div style="color:var(--vmuted);">暂无页面，点击上方新建</div>';
+            } else {
+                h += '<div style="max-height:300px;overflow-y:auto;">';
+                for (var i=0;i<pages.length;i++) {
+                    var p = pages[i];
+                    var slug = p.slug || '';
+                    var title = p.title || slug;
+                    h += '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;justify-content:space-between;align-items:center;">';
+                    h += '<div><a href="#" onclick="openSitePage(\''+esc(slug)+'\');closeAdminPanel();return false;" style="color:var(--vprimary);">📄 '+esc(title)+'</a>';
+                    h += ' <span style="font-size:9px;color:var(--vmuted);">/'+esc(slug)+'</span></div>';
+                    h += '<div>';
+                    h += '<button onclick="editSitePage(\''+esc(slug)+'\')" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid rgba(200,164,92,0.3);color:#c8a45c;border-radius:2px;cursor:pointer;">编辑</button> ';
+                    h += '<button onclick="deleteSitePage(\''+esc(slug)+'\',this)" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid rgba(200,80,80,0.3);color:#c08080;border-radius:2px;cursor:pointer;">删除</button>';
+                    h += '</div></div>';
+                }
+                h += '</div>';
+            }
+            area.innerHTML = h;
+        }).catch(function(e){
+            area.innerHTML = '<div style="color:#c08080;">加载失败: '+esc(e.message)+'<br>确认已执行 02_security.sql (含site_pages表)</div>';
+        });
+    }
+
+    function showAdminPageNew(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">📝 新建/编辑页面</p>' +
+            '<input id="pageSlug" placeholder="页面路径 (如 links / gallery / about)" style="width:100%;padding:8px;margin-bottom:4px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<input id="pageTitle" placeholder="页面标题" style="width:100%;padding:8px;margin-bottom:4px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+            '<textarea id="pageContent" placeholder="页面内容 (支持HTML)" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;height:200px;resize:vertical;font-family:monospace;"></textarea>' +
+            '<div style="margin-bottom:6px;font-size:10px;color:var(--vmuted);">可用标签: b i u a img br p div h1-h4 button span style(table/tr/td) ul/ol/li pre code blockquote hr</div>' +
+            '<button class="cheat-btn accent" onclick="saveSitePage()" style="width:100%;">保存页面</button>' +
+            '<div id="pageSaveResult" style="font-size:10px;margin-top:6px;"></div>';
+    }
+
+    function sanitizeHTML(html) {
+        // 只允许安全标签，移除script/iframe/object/embed等危险元素
+        var allowed = ['b','i','u','a','img','br','p','div','h1','h2','h3','h4',
+                       'button','span','table','tr','td','th','thead','tbody',
+                       'ul','ol','li','pre','code','blockquote','hr','em','strong',
+                       'small','sub','sup','del','ins','mark','details','summary'];
+        var div = document.createElement('div');
+        div.innerHTML = html;
+        function clean(node) {
+            var children = Array.from(node.childNodes);
+            for (var i=0;i<children.length;i++) {
+                var child = children[i];
+                if (child.nodeType === 1) { // Element
+                    var tag = child.tagName.toLowerCase();
+                    if (allowed.indexOf(tag) < 0) {
+                        // Replace dangerous element with its text content
+                        var text = document.createTextNode(child.textContent || '');
+                        node.replaceChild(text, child);
+                    } else {
+                        // Remove dangerous attributes
+                        var attrs = Array.from(child.attributes || []);
+                        for (var j=0;j<attrs.length;j++) {
+                            var name = attrs[j].name.toLowerCase();
+                            if (name.indexOf('on') === 0) { child.removeAttribute(name); }
+                        }
+                        // Only allow href/src/style/class/target on specific tags
+                        if (tag === 'a') {
+                            var href = child.getAttribute('href') || '';
+                            if (href && !/^(https?:|mailto:|#|\/)/.test(href)) {
+                                child.setAttribute('href', '#'); // Block dangerous URLs
+                            }
+                            child.setAttribute('target', '_blank');
+                            child.setAttribute('rel', 'noopener noreferrer');
+                        }
+                        if (tag === 'img') {
+                            var src = child.getAttribute('src') || '';
+                            if (src && !/^https?:/.test(src)) {
+                                child.removeAttribute('src');
+                            }
+                        }
+                        clean(child);
+                    }
+                }
+            }
+        }
+        clean(div);
+        return div.innerHTML;
+    }
+
+    function saveSitePage() {
+        var slug = document.getElementById('pageSlug').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
+        var title = document.getElementById('pageTitle').value.trim();
+        var content = document.getElementById('pageContent').value.trim();
+        var r = document.getElementById('pageSaveResult');
+        if (!slug || !title) { r.textContent = '请填写路径和标题'; r.style.color = '#c08080'; return; }
+        if (_username !== SITE_OWNER) { r.textContent = '只有站主可以创建/编辑页面'; r.style.color = '#c08080'; return; }
+        r.textContent = '保存中...'; r.style.color = 'var(--vmuted)';
+        var safeHTML = sanitizeHTML(content);
+        var record = {slug: slug, title: title, content: safeHTML, created_by: _username, updated_at: new Date().toISOString()};
+        // Upsert: try insert first, if conflict, update
+        _post(SUPABASE_URL + '/rest/v1/site_pages', record).then(function(result){
+            if (result !== null) {
+                r.textContent = '页面已保存! 访问: #/page/' + slug; r.style.color = 'var(--green)';
+                var link = location.origin + location.pathname + '#/page/' + slug;
+                r.innerHTML += '<br><a href="'+link+'" target="_blank" style="color:var(--vprimary);">在新标签打开</a>';
+            } else {
+                // Try update (slug already exists)
+                _patch(SUPABASE_URL + '/rest/v1/site_pages?slug=eq.' + escUrl(slug), {title: title, content: safeHTML, updated_at: new Date().toISOString()}).then(function(ok){
+                    if (ok) {
+                        r.textContent = '页面已更新! 访问: #/page/' + slug; r.style.color = 'var(--green)';
+                    } else {
+                        r.textContent = '保存失败 — 需执行 02_security.sql'; r.style.color = '#c08080';
+                    }
+                });
+            }
+        }).catch(function(){
+            r.textContent = '保存失败 — 检查site_pages表是否存在'; r.style.color = '#c08080';
+        });
+    }
+
+    function editSitePage(slug) {
+        _get(SUPABASE_URL + '/rest/v1/site_pages?slug=eq.' + escUrl(slug) + '&select=*&limit=1').then(function(data){
+            if (data && data.length) {
+                var p = data[0];
+                var area = document.getElementById('adminContent');
+                area.innerHTML =
+                    '<p style="color:var(--vtext);margin-bottom:6px;">📝 编辑: /'+esc(slug)+'</p>' +
+                    '<input id="pageSlug" value="'+esc(slug)+'" readonly style="width:100%;padding:8px;margin-bottom:4px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vmuted);border-radius:2px;font-size:12px;">' +
+                    '<input id="pageTitle" value="'+esc(p.title||'')+'" style="width:100%;padding:8px;margin-bottom:4px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
+                    '<textarea id="pageContent" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;height:200px;resize:vertical;font-family:monospace;">'+esc(p.content||'')+'</textarea>' +
+                    '<button class="cheat-btn accent" onclick="saveSitePage()" style="width:100%;">保存修改</button>' +
+                    '<div id="pageSaveResult" style="font-size:10px;margin-top:6px;"></div>';
+            }
+        });
+    }
+
+    function deleteSitePage(slug, btn) {
+        if (_username !== SITE_OWNER) { toast('只有站主可以删除页面'); return; }
+        if (!confirm('确定删除页面 /'+slug+' ？')) return;
+        if (btn) btn.textContent = '...';
+        _delete(SUPABASE_URL + '/rest/v1/site_pages?slug=eq.' + escUrl(slug)).then(function(ok){
+            if (ok) { toast('已删除 /'+slug); adminDo('pages'); }
+            else { if (btn) btn.textContent = '失败'; toast('删除失败'); }
+        });
+    }
+
+    function openSitePage(slug) {
+        if (!slug) return;
+        _get(SUPABASE_URL + '/rest/v1/site_pages?slug=eq.' + escUrl(slug) + '&select=*&limit=1').then(function(data){
+            if (data && data.length) {
+                var p = data[0];
+                var h = '<div class="site-page" style="max-width:800px;margin:0 auto;padding:20px;">';
+                h += '<h1 style="color:var(--vtext);font-family:var(--font-serif);margin-bottom:16px;">'+esc(p.title)+'</h1>';
+                h += '<div class="site-page-content" style="color:var(--vtext);line-height:1.8;">';
+                h += sanitizeHTML(p.content || '');
+                h += '</div>';
+                h += '<div style="margin-top:24px;padding-top:12px;border-top:1px solid var(--vborder);font-size:10px;color:var(--vmuted);">';
+                h += '创建者: @'+esc(p.created_by||'')+' | 更新: '+new Date(p.updated_at).toLocaleString('zh-CN');
+                h += '</div></div>';
+                $grid.innerHTML = h;
+                $grid.classList.remove('compact', 'large', 'author-list');
+                window.scrollTo({top:0,behavior:'smooth'});
+            }
+        });
+    }
+
+    // Hash路由支持: #/page/slug
+    var _origParseHash = parseHash;
+    parseHash = function() {
+        var h = location.hash.replace(/^#\/?/, '');
+        if (!h) return _origParseHash();
+        var parts = h.split('/');
+        if (parts[0] === 'page' && parts[1]) {
+            openSitePage(decodeURIComponent(parts[1]));
+            return;
+        }
+        return _origParseHash();
+    };
+
+function saveLoginSession(user, hash, remember) {
         var store = remember ? localStorage : sessionStorage;
         store.setItem('login_user', user);
         store.setItem('login_hash', hash);
@@ -4680,15 +4886,16 @@
         var badge = document.getElementById('vipBadge');
         if (!badge) return;
         if (_loggedIn) {
-            badge.textContent = (_isAdmin ? '👑 管理员: ' : '👤 ') + _username;
-            badge.style.color = _isAdmin ? '#c8a45c' : 'var(--vtext)';
+            var isOwner = (_username === SITE_OWNER);
+            badge.textContent = (isOwner ? '👑 站主: ' : (_isAdmin ? '👑 管理: ' : '👤 ')) + _username;
+            badge.style.color = isOwner ? '#e04040' : (_isAdmin ? '#c8a45c' : 'var(--vtext)');
         } else {
             badge.textContent = '🔐 未登录';
             badge.style.color = 'var(--vmuted)';
         }
         badge.style.cursor = 'pointer';
         if (_isAdmin) {
-            badge.title = '管理员: ' + _username + ' — 点击管理';
+            badge.title = _username + ' — 点击管理';
             badge.onclick = function(e) { e.stopPropagation(); showAdminPanel(); };
         } else if (_loggedIn) {
             badge.title = '点击切换账号';
