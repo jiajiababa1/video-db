@@ -8,7 +8,7 @@ monsnode 爬虫 v9 — 全自动闭环 + 无限滚动 + 智能重爬
   - 客户端/服务端爬虫互不冲突 (has_mp4 只增不删)
 """
 import os, sys, time, asyncio, re, base64, json, random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin
 import httpx
 
@@ -164,6 +164,7 @@ def supabase_fetch_failed(limit: int = 100) -> list[dict]:
             + "?select=video_id,monsnode_video_id"
             + "&needs_rescrape=is.true"
             + "&monsnode_video_id=not.is.null"
+            + "&retry_count=lt." + str(MAX_RETRY_COUNT)
             + "&order=created_at.desc"
             + "&limit=" + str(limit)
         )
@@ -210,23 +211,26 @@ def supabase_update_mp4(updates: dict[str, tuple[str, str | None]]) -> int:
                 json={"vid": video_id},
             )
             if rpc_resp.status_code not in (200, 201, 204):
-                # RPC 不支持则直接用 PATCH
-                resp = client.patch(
-                    SUPABASE_URL + "/rest/v1/videos?video_id=eq." + video_id,
-                    headers=headers,
-                    json=patch,
-                )
-                if resp.status_code in (200, 204):
-                    saved += 1
-            else:
-                # 再 PATCH 其他字段
-                resp = client.patch(
-                    SUPABASE_URL + "/rest/v1/videos?video_id=eq." + video_id,
-                    headers=headers,
-                    json=patch,
-                )
-                if resp.status_code in (200, 204):
-                    saved += 1
+                # RPC 不支持则直接在 patch 中递增 (先查当前值)
+                try:
+                    get_resp = client.get(
+                        SUPABASE_URL + "/rest/v1/videos?select=retry_count&video_id=eq." + video_id,
+                        headers=headers,
+                    )
+                    if get_resp.status_code == 200:
+                        data = get_resp.json()
+                        current_retry = (data[0].get("retry_count") or 0) if data else 0
+                        patch["retry_count"] = current_retry + 1
+                except Exception:
+                    patch["retry_count"] = 1
+            # PATCH 其他字段
+            resp = client.patch(
+                SUPABASE_URL + "/rest/v1/videos?video_id=eq." + video_id,
+                headers=headers,
+                json=patch,
+            )
+            if resp.status_code in (200, 204):
+                saved += 1
         except Exception:
             pass
     client.close()
@@ -756,19 +760,20 @@ async def scrape_all():
         else:
             log("  无待回爬视频")
 
-        # 阶段 5: 下架检测 (视频超过 3 次爬取周期未出现 → 标记)
+        # 阶段 5: 下架检测 (视频超过 3 天未更新 → 标记)
         log("\n[阶段5] 下架检测...")
         try:
             all_scraped_ids = {v["video_id"] for v in all_section_videos}
             if all_scraped_ids:
                 client = httpx.Client(timeout=30)
                 headers = supabase_headers()
-                # 查询最近 3 次爬取都未更新的视频
-                cutoff = datetime.now(timezone.utc).isoformat()
+                # 查询最近 3 天未更新的视频 (非本次抓到的)
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
                 resp = client.get(
                     SUPABASE_URL + "/rest/v1/videos"
                     + "?select=video_id"
                     + "&updated_at=lt." + cutoff
+                    + "&removed=is.false"
                     + "&order=scraped_at.asc"
                     + "&limit=500",
                     headers=headers
@@ -823,12 +828,12 @@ async def scrape_all():
         # 检查缩略图有效期
         log("\n[阶段6] 缩略图有效期检查...")
         try:
-            now_ts = datetime.now(timezone.utc).isoformat()
             c = httpx.Client(timeout=30)
             h = supabase_headers()
             # 标记超过 30 天未更新的缩略图
+            thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
             r = c.patch(
-                SUPABASE_URL + "/rest/v1/videos?thumbnail_url=ilike.*twimg.com*&updated_at=lt.2026-05-10",
+                SUPABASE_URL + "/rest/v1/videos?thumbnail_url=ilike.*twimg.com*&updated_at=lt." + thirty_days_ago,
                 headers={**h, "Content-Type": "application/json"},
                 json={"needs_rescrape": True}
             )

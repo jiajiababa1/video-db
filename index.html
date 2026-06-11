@@ -906,6 +906,38 @@
         </div>
     </div>
 
+    <!-- ==================== 密码修改对话框 ==================== -->
+    <div class="cheat-dialog-overlay" id="pwdDialogOverlay">
+        <div class="cheat-dialog" style="width:320px;">
+            <button class="vid-modal-close" onclick="document.getElementById('pwdDialogOverlay').classList.remove('on')" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
+            <p class="title">🔑 修改密码</p>
+            <div style="margin-bottom:12px;">
+                <input type="password" id="pwdOld" placeholder="原密码" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
+                <input type="password" id="pwdNew" placeholder="新密码 (4+字符)" style="width:100%;padding:10px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);margin-bottom:8px;">
+            </div>
+            <div class="actions">
+                <button class="btn-cancel" onclick="document.getElementById('pwdDialogOverlay').classList.remove('on')">取消</button>
+                <button class="cheat-btn accent" onclick="doChangePassword()">确认修改</button>
+            </div>
+            <p style="font-size:10px;color:var(--vmuted);margin-top:12px;" id="pwdResult"></p>
+        </div>
+    </div>
+
+    <!-- ==================== 私信对话框 ==================== -->
+    <div class="cheat-dialog-overlay" id="chatDialogOverlay">
+        <div class="cheat-dialog" style="width:360px;max-height:80vh;display:flex;flex-direction:column;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--vborder);">
+                <span style="font-weight:600;color:var(--vtext);font-family:var(--font-serif);" id="chatTitle">💬 私信</span>
+                <button class="vid-modal-close" onclick="document.getElementById('chatDialogOverlay').classList.remove('on');_chatWith='';" style="position:static;">✕</button>
+            </div>
+            <div id="chatMessages" style="flex:1;overflow-y:auto;padding:12px;min-height:200px;max-height:400px;"></div>
+            <div style="display:flex;gap:8px;padding:12px;border-top:1px solid var(--vborder);">
+                <input type="text" id="chatInput" placeholder="输入消息..." onkeydown="if(event.key==='Enter')sendChat()" style="flex:1;padding:8px;border-radius:2px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);font-size:12px;outline:none;font-family:var(--font-sans);">
+                <button class="cheat-btn accent" onclick="sendChat()" style="font-size:11px;padding:6px 14px;">发送</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ==================== 身份验证遮罩 ==================== -->
     <div class="auth-overlay hidden" id="authOverlay">
         <div class="auth-box">
@@ -2396,8 +2428,8 @@
             var t2=encodeURIComponent(q.trim());
             countParams+='&or=(title.ilike.*'+t2+'*,author.ilike.*'+t2+'*)';
         }
-        if(activeSection && activeSection !== 'favs' && activeSection !== 'history') countParams+='&source_section=eq.'+encodeURIComponent(activeSection);
-        if(activeAuthor) countParams+='&author=eq.'+encodeURIComponent(activeAuthor);
+        if(activeSection && activeSection !== 'favs' && activeSection !== 'history') countParams+='&source_section=ilike.*'+encodeURIComponent(activeSection)+'*';
+        if(activeAuthor) countParams+='&author=ilike.*'+encodeURIComponent(activeAuthor.trim())+'*';
         // 可播放性筛选: 客户端过滤 (has_mp4 列可能不存在)
         countParams+='&limit=1';
         var cp=fetch(SUPABASE_URL+'/rest/v1/videos?'+countParams,{method:'GET',headers:ch});
@@ -3316,6 +3348,14 @@
                     $grid.insertBefore(tmpCard, $grid.firstChild);
                     autoPlayOn = true;
                     showInlinePlayer(v, tmpCard);
+                    // 播放器关闭时自动清理临时卡片
+                    var cleanedUp = false;
+                    var origClose = closeInlinePlayer;
+                    closeInlinePlayer = function() {
+                        if (!cleanedUp) { cleanedUp = true; if (tmpCard.parentNode) tmpCard.parentNode.removeChild(tmpCard); }
+                        closeInlinePlayer = origClose;
+                        origClose();
+                    };
                     toast('🍀 手气不错: ' + (v.title || v.video_id));
                 }
             }
@@ -3362,6 +3402,14 @@
                     tmpCard.className = 'vid-card has-mp4';
                     $grid.insertBefore(tmpCard, $grid.firstChild);
                     showInlinePlayer(v, tmpCard);
+                    // 播放器关闭时自动清理临时卡片
+                    var cleanedUp = false;
+                    var origClose = closeInlinePlayer;
+                    closeInlinePlayer = function() {
+                        if (!cleanedUp) { cleanedUp = true; if (tmpCard.parentNode) tmpCard.parentNode.removeChild(tmpCard); }
+                        closeInlinePlayer = origClose;
+                        origClose();
+                    };
                     toast('🎲 随机: ' + (v.title || v.video_id));
                 }
             }
@@ -3528,11 +3576,6 @@
         $grid.innerHTML = '<div class="vpi-spinner" style="grid-column:1/-1;margin:60px auto;"></div>';
         var hds = _h();
         try {
-            var authors = null;
-            if (!authors) throw new Error('RPC 不可用，回退到客户端聚合');
-            renderAuthorRanking(authors);
-        } catch(e) {
-            // 回退: 客户端查询
             var r2 = await fetch(SUPABASE_URL + '/rest/v1/videos?select=author&author=not.is.null&order=created_at.desc&limit=1000', {headers:hds});
             var data = await r2.json();
             var map = {};
@@ -3544,6 +3587,8 @@
             var arr = Object.keys(map).map(function(k){ return {author:k, count:map[k]}; });
             arr.sort(function(a,b){return b.count - a.count;});
             renderAuthorRanking(arr.slice(0, 50));
+        } catch(e) {
+            $grid.innerHTML = '<div class="empty-state"><span class="icon">🏆</span><p class="title">加载失败</p><p class="desc">' + esc(e.message) + '</p></div>';
         }
     }
     function renderAuthorRanking(authors) {
@@ -3807,6 +3852,7 @@
             saveLoginSession(user, hash, remember);
             _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user), {device_id: getDeviceId(), last_login: new Date().toISOString()});
             updateVipBadge(); updateSidebarForVip();
+            checkUnread();
             document.getElementById('loginResult').textContent = '✅ 欢迎, ' + user + '! (' + VIP_LABELS[_vipLevel] + ')';
             document.getElementById('loginResult').style.color = 'var(--green)';
             setTimeout(closeLoginDialog, 800);
@@ -3918,7 +3964,8 @@
                     html += '<div style="margin-top:12px;"><button class="cheat-btn" onclick="showAuthorPage(\'' + esc(username) + '\');closeAdminPanel();">查看作品</button></div>';
                     html += '</div>';
                     $grid.innerHTML = html;
-                    document.getElementById('adminPanelOverlay').classList.remove('on');
+                    var overlay = document.getElementById('adminPanelOverlay');
+                    if (overlay) overlay.classList.remove('on');
                 }
             }
         } catch(e) {}
@@ -3979,9 +4026,10 @@
         if (!users.length) h += '<span style="color:var(--vmuted);">暂无</span>';
         for (var i = 0; i < users.length; i++) {
             var u = users[i];
-            h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03);">@'+esc(u.from_user||u)+
-                '<span><button class="cheat-btn accent" style="font-size:9px;padding:2px 6px;" onclick="handleFriend(\''+esc(u.from_user||u)+'\',\'accept\')">接受</button> '+
-                '<button class="cheat-btn" style="font-size:9px;padding:2px 6px;" onclick="handleFriend(\''+esc(u.from_user||u)+'\',\'reject\')">拒绝</button></span></div>';
+            var fromUser = u.user1 || '';
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03);">@'+esc(fromUser)+
+                '<span><button class="cheat-btn accent" style="font-size:9px;padding:2px 6px;" onclick="handleFriend(\''+esc(fromUser)+'\',\'accept\')">接受</button> '+
+                '<button class="cheat-btn" style="font-size:9px;padding:2px 6px;" onclick="handleFriend(\''+esc(fromUser)+'\',\'reject\')">拒绝</button></span></div>';
         }
         h += '</div>';
         document.getElementById('adminContent').innerHTML = h;
@@ -4035,8 +4083,8 @@
     async function checkUnread() {
         if (!_loggedIn) return;
         var data = await _get(SUPABASE_URL + '/rest/v1/messages?to_user=eq.'+escUrl(_username)+'&is_read=eq.false&select=id');
-        if (data && data.cnt > 0) {
-            if (data && data.length > 0) toast('💬 ' + data.length + ' 条未读私信');
+        if (data && data.length > 0) {
+            toast('💬 ' + data.length + ' 条未读私信');
         }
     }
 
@@ -4247,7 +4295,7 @@
             }
             area.innerHTML = h;
         }).catch(function(e){
-            area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">❌ 加载失败: '+esc(e.message)+'<br>确认已执行migrate.sql</div>';
+            area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">❌ 加载失败: '+esc(e.message)+'<br>请确认 01_tables.sql 已执行且你以管理员身份登录</div>';
         });
     }
 
@@ -4341,7 +4389,7 @@
         var hash = await sha256(u + ':' + p);
         var ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(u)+'&is_admin=eq.false', {password_hash: hash});
         r.textContent = ok ? '✅ 已重置密码' : '❌ 用户不存在或为管理员';
-        r.style.color = data && data.success ? 'var(--green)' : '#c08080';
+        r.style.color = ok ? 'var(--green)' : '#c08080';
     }
     function showAdminDelVideo(area) {
         area.innerHTML =
@@ -4354,8 +4402,12 @@
         var vid = document.getElementById('delVideoId').value.trim();
         if (!vid) return;
         if (!confirm('确定删除 ' + vid + ' ?')) return;
-        var data = await rpcCall('admin_action', {p_admin: _username, p_action: 'delete_video', p_target: vid});
-        document.getElementById('delVideoResult').textContent = data && data.success ? '✅ 已删除' : '❌ 失败';
+        var ok = await _delete(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(vid));
+        if (ok) {
+            await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'delete_video', target: vid});
+        }
+        document.getElementById('delVideoResult').textContent = ok ? '✅ 已删除' : '❌ 失败 (需要 service_role 密钥)';
+        document.getElementById('delVideoResult').style.color = ok ? 'var(--green)' : '#c08080';
     }
     function showAdminMessages(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
@@ -4453,6 +4505,7 @@
             _username = savedUser; _loggedIn = true;
             _vipLevel = acc.vip_level; _isAdmin = acc.is_admin;
             saveLoginSession(savedUser, savedHash);
+            checkUnread();
             return true;
         } catch(e) { clearLoginSession(); return false; }
     }
@@ -4579,8 +4632,9 @@
             var codeData = await _get(SUPABASE_URL + '/rest/v1/activation_codes?code=eq.' + escUrl(code) + '&select=*&limit=1');
             if (codeData && codeData.length) {
                 var cd = codeData[0];
-                if (cd.max_uses > 0 && cd.used_count >= cd.max_uses) { resultEl.textContent = '❌ 激活码已用完'; resultEl.style.color = '#c08080'; }
-                else {
+                if (cd.max_uses > 0 && cd.used_count >= cd.max_uses) {
+                    resultEl.textContent = '❌ 激活码已用完'; resultEl.style.color = '#c08080';
+                } else {
                     await _patch(SUPABASE_URL + '/rest/v1/activation_codes?code=eq.'+escUrl(code), {used_count: (cd.used_count||0)+1});
                     await _post(SUPABASE_URL + '/rest/v1/user_vips', {device_id: getDeviceId(), vip_level: cd.vip_level, activated_at: new Date().toISOString()});
                     _vipLevel = cd.vip_level;
@@ -4588,7 +4642,7 @@
                     resultEl.textContent = '✅ 升级成功! ' + cd.vip_level; resultEl.style.color = 'var(--green)';
                 }
             } else {
-                resultEl.textContent = '❌ 网络错误';
+                resultEl.textContent = '❌ 激活码不存在';
                 resultEl.style.color = '#c08080';
             }
         } catch(e) {
