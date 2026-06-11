@@ -4665,7 +4665,7 @@
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
         _get(SUPABASE_URL + '/rest/v1/site_pages?select=*&order=updated_at.desc&limit=50').then(function(pages){
             var h = '<b>📄 站点页面管理</b> ';
-            h += '<button class="cheat-btn accent" onclick="adminDo('page_new')" style="font-size:9px;padding:2px 8px;">+ 新建页面</button><br><br>';
+            h += '<button class="cheat-btn accent" onclick="adminDo(\'page_new\')" style="font-size:9px;padding:2px 8px;">+ 新建页面</button><br><br>';
             if (!pages || !pages.length) {
                 h += '<div style="color:var(--vmuted);">暂无页面，点击上方新建</div>';
             } else {
