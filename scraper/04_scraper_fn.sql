@@ -36,7 +36,11 @@ BEGIN
       scraped_at = COALESCE((v->>'scraped_at')::timestamptz, videos.scraped_at),
       updated_at = NOW(),
       has_mp4 = CASE WHEN (v->>'has_mp4')::boolean THEN true ELSE videos.has_mp4 END,
-      needs_rescrape = COALESCE((v->>'needs_rescrape')::boolean, videos.needs_rescrape),
+      needs_rescrape = CASE
+        WHEN videos.has_mp4 THEN false
+        WHEN (v->>'has_mp4')::boolean THEN false
+        ELSE COALESCE((v->>'needs_rescrape')::boolean, true)
+      END,
       mp4_checked_at = COALESCE((v->>'mp4_checked_at')::timestamptz, videos.mp4_checked_at);
   END LOOP;
 END;

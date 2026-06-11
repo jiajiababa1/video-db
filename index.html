@@ -858,37 +858,16 @@
         </div>
     </div>
 
-    <!-- ==================== VIP 激活/升级/付款 ==================== -->
-    <div class="cheat-dialog-overlay" id="vipDialogOverlay">
-        <div class="cheat-dialog" style="max-height:80vh;overflow-y:auto;">
-            <button class="vid-modal-close" onclick="closeVipDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
-            <p class="title">💎 会员中心</p>
-            <p class="desc" id="vipDialogDesc"></p>
-            <!-- 付费选项 -->
-            <div style="display:grid;gap:8px;margin:12px 0;" id="vipPriceList"></div>
-            <!-- 激活码输入 -->
-            <div id="vipCodeSection" style="display:none;">
-                <input type="text" id="vipCodeInput" placeholder="输入激活码" autocomplete="off" style="width:100%;padding:8px;border-radius:2px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:13px;margin-top:8px;">
-                <button class="cheat-btn accent" onclick="redeemVipCode()" style="width:100%;margin-top:8px;">确认激活</button>
-            </div>
-            <div class="actions" style="margin-top:8px;">
-                <button class="btn-cancel" onclick="closeVipDialog()">关闭</button>
-                <button class="btn-cancel" onclick="document.getElementById('vipCodeSection').style.display='block';this.style.display='none';" id="vipShowCodeBtn">有激活码</button>
-            </div>
-            <p style="font-size:10px;color:var(--vmuted);margin-top:8px;" id="vipResult"></p>
-        </div>
-    </div>
-
     <!-- ==================== 管理员面板 (20功能 + 全功能) ==================== -->
     <div class="cheat-dialog-overlay" id="adminPanelOverlay">
         <div class="cheat-dialog" style="width:95vw;max-width:460px;max-height:85vh;overflow-y:auto;padding:16px;">
             <button class="vid-modal-close" onclick="closeAdminPanel()" style="position:absolute;top:8px;right:8px;">✕</button>
-            <p class="title" style="font-size:16px;margin-bottom:10px;">👑 管理面板 — kuo</p>
+            <p class="title" style="font-size:16px;margin-bottom:10px;">👑 管理面板</p>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:10px;">
                 <button class="ms-btn" onclick="adminDo('announce')">📢 公告</button>
                 <button class="ms-btn" onclick="adminDo('users')">👥 用户</button>
                 <button class="ms-btn" onclick="adminDo('gencode')">🎫 激活码</button>
-                <button class="ms-btn" onclick="adminDo('vip_early')">🔒 VIP先行</button>
+                
                 <button class="ms-btn" onclick="adminDo('stats')">📊 全站统计</button>
                 <button class="ms-btn" onclick="adminDo('logs')">📋 操作日志</button>
                 <button class="ms-btn" onclick="adminDo('config')">⚙️ 系统设置</button>
@@ -1103,7 +1082,7 @@
             <span class="sep"></span>
             <span>排序: <b id="sortLabel">最新优先</b></span>
             <span class="sep"></span>
-            <span id="vipBadge" style="cursor:pointer;font-weight:600;" onclick="showVipDialog()" title="点击升级会员">🆓 免费</span>
+            <span id="vipBadge" style="cursor:pointer;font-weight:600;">🔐 未登录</span>
             <span class="sep"></span>
             <span style="font-size:11px;color:#6b6760;" id="pageIndicator"></span>
             <button class="vid-btn ghost" style="font-size:10px;padding:3px 6px;margin-left:auto;" id="prevPageBtn" onclick="page--;loadVids(true);window.scrollTo({top:0,behavior:'smooth'});" disabled>◀</button>
@@ -2334,8 +2313,6 @@
 
     // ============ 爬虫触发入口 ============
     function triggerScraper(){
-        // VIP 门控
-        if (!checkDailyLimit('scrape')) return;
         var now = Date.now();
         if (now - lastTrigger < COOLDOWN) {
             toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastTrigger))/60000) + ' 分钟后可再触发');
@@ -2972,7 +2949,6 @@
     var resolveRunning = false;
     async function batchResolveMp4() {
         if (resolveRunning) { toast('正在解析中, 请稍后...'); return; }
-        if (!checkDailyLimit('resolve')) return;
         resolveRunning = true;
         var btn = document.getElementById('resolveBtn');
         btn.disabled = true;
@@ -3737,41 +3713,9 @@
     }
 
     // ============================================================
-    // VIP 会员系统
-    // ============================================================
-    var VIP_LEVELS = { free: 0, vip: 1, vvip: 2, svip: 3, ultimate: 4 };
-    var VIP_LABELS = { free: '🆓 免费', vip: '💎 VIP', vvip: '💎💎 VVIP', svip: '👑 SVIP', ultimate: '⚡ 终极VIP' };
-    var VIP_COLORS = { free: 'var(--vmuted)', vip: '#7a9a7a', vvip: '#4a9adf', svip: '#c8a45c', ultimate: '#e04040' };
-
-    // 各等级每日限制
-    var VIP_LIMITS = {
-        free:    { favs:100,  history:50,  scrape:0,  batchDl:0,  resolve:5,  cooldown:0 },
-        vip:     { favs:500,  history:200, scrape:1,  batchDl:1,  resolve:20, cooldown:0 },
-        vvip:    { favs:2000, history:999, scrape:3,  batchDl:10, resolve:50, cooldown:0 },
-        svip:    { favs:9999, history:999, scrape:10, batchDl:50, resolve:200,cooldown:0 },
-        ultimate:{ favs:99999,history:999, scrape:999,batchDl:999,resolve:999,cooldown:0 },
-    };
-    var VIP_FEATURES = {
-        free:    '浏览 搜索 播放 收藏(' + VIP_LIMITS.free.favs + '个)  新视频需等待24h',
-        vip:     '🔓即时观看 下载单个 连播 速度调节 收藏(' + VIP_LIMITS.vip.favs + ') 抓取' + VIP_LIMITS.vip.scrape + '次/天',
-        vvip:    '☁️云端同步收藏 批量下载 多选 随机 黑名单 抓取' + VIP_LIMITS.vvip.scrape + '次/天 解析' + VIP_LIMITS.vvip.resolve + '次/天',
-        svip:    '🤖智能推荐 无限收藏 导出导入 优先解析 抓取' + VIP_LIMITS.svip.scrape + '次/天 解析' + VIP_LIMITS.svip.resolve + '次/天',
-        ultimate:'👑 全部功能 + 管理面板 + 生成激活码 + 无限制',
-    };
-    var _deviceId = '';
-    var _vipLevel = 'free';
+    
     var _isAdmin = false;
 
-    function getDeviceId() {
-        if (_deviceId) return _deviceId;
-        var stored = localStorage.getItem('device_uid');
-        if (!stored) {
-            stored = 'dev_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 8);
-            localStorage.setItem('device_uid', stored);
-        }
-        _deviceId = stored;
-        return stored;
-    }
 
     // ============ 账号登录系统 ============
     var _username = '';
@@ -3852,13 +3796,13 @@
                 document.getElementById('loginResult').style.color = '#c08080'; return;
             }
             _username = user; _loggedIn = true;
-            _vipLevel = acc.vip_level; _isAdmin = acc.is_admin;
+            _isAdmin = acc.is_admin;
             var remember = document.getElementById('loginRemember').checked;
             saveLoginSession(user, hash, remember);
-            _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user), {device_id: getDeviceId(), last_login: new Date().toISOString()});
-            updateVipBadge(); updateSidebarForVip();
+            _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user), {last_login: new Date().toISOString()});
+            updateVipBadge(); updateSidebarLogin();
             checkUnread();
-            document.getElementById('loginResult').textContent = '✅ 欢迎, ' + user + '! (' + VIP_LABELS[_vipLevel] + ')';
+            document.getElementById('loginResult').textContent = '✅ 欢迎, ' + user + '!' + (_isAdmin ? ' (管理员)' : '');
             document.getElementById('loginResult').style.color = 'var(--green)';
             setTimeout(closeLoginDialog, 800);
         } catch(e) {
@@ -3907,7 +3851,7 @@
             var hash = await sha256(user + ':' + pass);
             var check = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user) + '&select=username&limit=1');
             if (check && check.length) { resultEl.textContent = '❌ 用户名已存在'; resultEl.style.color = '#c08080'; return; }
-            var ok = await _post(SUPABASE_URL + '/rest/v1/user_accounts', {username: user, password_hash: hash, device_id: getDeviceId(), vip_level: 'free', is_admin: false});
+            var ok = await _post(SUPABASE_URL + '/rest/v1/user_accounts', {username: user, password_hash: hash, is_admin: false});
             if (ok !== null) { resultEl.textContent = '✅ 注册成功! 请登录'; resultEl.style.color = 'var(--green)'; setTimeout(toggleLoginMode, 1000); }
             else { resultEl.textContent = '❌ 注册失败'; resultEl.style.color = '#c08080'; }
         } catch(e) { resultEl.textContent = '❌ 网络错误'; resultEl.style.color = '#c08080'; }
@@ -3954,7 +3898,7 @@
                 if (data && data.length) {
                     var p = data[0];
                     var badge = p.verified ? ' <span style="color:#4a9adf;font-size:14px;">✔️</span>' : '';
-                    var vipLabel = VIP_LABELS[p.vip_level] || '';
+                    var vipLabel = '';
                     var html = '<div style="text-align:center;padding:20px;">' +
                         '<div style="font-size:48px;margin-bottom:8px;">' + (p.verified ? '👤🔵' : '👤') + '</div>' +
                         '<div style="font-size:20px;font-weight:700;color:var(--vtext);font-family:var(--font-serif);">@' + esc(p.username) + badge + '</div>' +
@@ -4151,7 +4095,7 @@
             case 'announce': showAdminAnnounce(area); break;
             case 'users': showAdminUsers(area); break;
             case 'gencode': showAdminGenCode(area); break;
-            case 'vip_early': markVipEarly(); area.innerHTML = '✅ VIP先行已标记'; break;
+            
             case 'stats': showAdminStats(area); break;
             case 'logs': showAdminLogs(area); break;
             case 'config': showAdminConfig(area); break;
@@ -4286,7 +4230,7 @@
                     var u = users[i];
                     h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
                     h += '<td style="padding:4px;cursor:pointer;color:var(--vprimary);" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+'</td>';
-                    h += '<td style="font-size:9px;">'+(VIP_LABELS[u.vip_level]||u.vip_level)+'</td>';
+                    h += '<td style="font-size:9px;">'+(u.vip_level||'free')+'</td>';
                     h += '<td>'+(u.verified?'🔵':'')+'</td>';
                     h += '<td style="color:'+(u.banned?'#c08080':'var(--green)')+'">'+(u.banned?'封禁':'正常')+'</td>';
                     h += '<td>';
@@ -4494,8 +4438,8 @@
         });
         localStorage.removeItem('login_remember');
         _username = ''; _loggedIn = false;
-        _vipLevel = 'free'; _isAdmin = false;
-        updateVipBadge(); updateSidebarForVip();
+        _isAdmin = false;
+        updateVipBadge(); updateSidebarLogin();
     }
 
     async function autoLogin() {
@@ -4508,26 +4452,16 @@
             var acc = data[0];
             if (acc.banned || acc.password_hash !== savedHash) { clearLoginSession(); return false; }
             _username = savedUser; _loggedIn = true;
-            _vipLevel = acc.vip_level; _isAdmin = acc.is_admin;
+            _isAdmin = acc.is_admin;
             saveLoginSession(savedUser, savedHash);
             checkUnread();
             return true;
         } catch(e) { clearLoginSession(); return false; }
     }
 
-    async function checkVipStatus() {
+    async function checkLogin() {
         if (_loggedIn) { updateVipBadge(); return; }
-        var ok = await autoLogin();
-        if (!ok) {
-            // 回退到 device-based VIP (兼容旧数据)
-            try {
-                var resp = await fetch(SUPABASE_URL + '/rest/v1/user_vips?device_id=eq.' + encodeURIComponent(getDeviceId()) + '&limit=1', {headers:_h()});
-                if (resp.ok) {
-                    var data = await resp.json();
-                    if (data.length) { _vipLevel = data[0].vip_level || 'free'; _isAdmin = data[0].is_admin === true; }
-                }
-            } catch(e) {}
-        }
+        await autoLogin();
         updateVipBadge();
     }
 
@@ -4535,129 +4469,24 @@
         var badge = document.getElementById('vipBadge');
         if (!badge) return;
         if (_loggedIn) {
-            badge.textContent = (_isAdmin ? '👑 ' : '') + _username + ' ' + (VIP_LABELS[_vipLevel] || '');
+            badge.textContent = (_isAdmin ? '👑 管理员: ' : '👤 ') + _username;
+            badge.style.color = _isAdmin ? '#c8a45c' : 'var(--vtext)';
         } else {
             badge.textContent = '🔐 未登录';
+            badge.style.color = 'var(--vmuted)';
         }
-        badge.style.color = VIP_COLORS[_vipLevel] || VIP_COLORS.free;
         badge.style.cursor = 'pointer';
         if (_isAdmin) {
             badge.title = '管理员: ' + _username + ' — 点击管理';
             badge.onclick = function(e) { e.stopPropagation(); showAdminPanel(); };
         } else if (_loggedIn) {
-            badge.title = _username + ' (' + VIP_LABELS[_vipLevel] + ') — 升级/切换账号';
-            badge.onclick = function(e) { e.stopPropagation(); showVipDialog(); };
+            badge.title = '点击切换账号';
+            badge.onclick = function(e) { e.stopPropagation(); showLoginDialog(); };
         } else {
             badge.title = '点击登录';
             badge.onclick = function(e) { e.stopPropagation(); showLoginDialog(); };
         }
     }
-
-    // 管理员激活入口 (手机友好): 在侧边栏会员中心连续点5次升级按钮
-    function onVipUpgradeTap() { showVipDialog(); }
-
-
-
-    function restoreVipDialog() {
-        var btn = document.querySelector('#vipDialogOverlay .cheat-btn.accent');
-        if (btn) { btn.textContent = '确认激活'; btn.onclick = redeemVipCode; }
-        document.getElementById('vipDialogDesc').textContent = '输入激活码升级会员等级';
-        document.getElementById('vipCodeInput').placeholder = '输入激活码';
-    }
-
-    function showVipDialog() {
-        if (_isAdmin) { showAdminPanel(); return; }
-        document.getElementById('vipDialogOverlay').classList.add('on');
-        document.getElementById('vipCodeInput').value = '';
-        document.getElementById('vipResult').textContent = '';
-        document.getElementById('vipCodeSection').style.display = 'none';
-        var showCodeBtn = document.getElementById('vipShowCodeBtn');
-        if (showCodeBtn) showCodeBtn.style.display = '';
-
-        // 套餐列表
-        var prices = [
-            {level:'vip', label:'💎 VIP', price:'¥9.9/月', desc:VIP_FEATURES.vip},
-            {level:'vvip', label:'💎💎 VVIP', price:'¥19.9/月', desc:VIP_FEATURES.vvip},
-            {level:'svip', label:'👑 SVIP', price:'¥29.9/月', desc:VIP_FEATURES.svip},
-        ];
-        if (_vipLevel === 'ultimate') prices = [];
-        var html = '';
-        for (var i=0;i<prices.length;i++) {
-            var p = prices[i];
-            var isCurrent = _vipLevel === p.level;
-            html += '<div style="background:var(--vcard);border:1px solid '+(isCurrent?'var(--vprimary)':'var(--vborder)')+';border-radius:2px;padding:12px;display:flex;justify-content:space-between;align-items:center;">';
-            html += '<div><div style="font-size:13px;color:var(--vtext);font-weight:600;">'+p.label+'</div><div style="font-size:10px;color:var(--vmuted);">'+p.desc+'</div></div>';
-            html += '<div style="text-align:right;"><div style="font-size:14px;color:var(--vprimary);font-weight:700;">'+p.price+'</div>';
-            html += isCurrent ? '<div style="font-size:9px;color:var(--green);">当前等级</div>' : '<button class="cheat-btn accent" style="font-size:9px;padding:4px 10px;margin-top:4px;" onclick="purchaseVip(\''+p.level+'\')">购买</button>';
-            html += '</div></div>';
-        }
-        document.getElementById('vipPriceList').innerHTML = html;
-        document.getElementById('vipDialogDesc').textContent = '当前: ' + VIP_LABELS[_vipLevel] + ' | 剩余: 抓取' + getRemainingDaily('scrape') + '次 解析' + getRemainingDaily('resolve') + '次';
-    }
-
-    function purchaseVip(level) {
-        closeVipDialog();
-        // 模拟支付确认
-        var price = {vip:'9.9', vvip:'19.9', svip:'29.9'}[level] || '?';
-        if (!confirm('💳 确认购买 ' + level.toUpperCase() + ' (' + price + '元)?\n\n(演示: 点击确定模拟付款成功)')) return;
-        // 模拟付款成功 → 服务器生成激活码 → 自动兑换
-        // purchase via direct activation code
-        var code = level.toUpperCase() + '_BUY_' + Date.now().toString(36).toUpperCase() + randomStr(3);
-        _post(SUPABASE_URL + '/rest/v1/activation_codes', {code: code, vip_level: level, max_uses: 1, created_by: 'kuo'}).then(function(ok){
-            if (ok !== null) {
-                toast('✅ 付款成功! 激活码: ' + code);
-                // 自动兑换
-                return _post(SUPABASE_URL + '/rest/v1/user_vips', {device_id: getDeviceId(), vip_level: level, activated_at: new Date().toISOString()});
-            } else {
-                toast('❌ 生成激活码失败，请联系管理员');
-            }
-        }).then(function(rd) {
-            if (rd && rd.success) {
-                _vipLevel = rd.vip_level;
-                updateVipBadge(); updateSidebarForVip();
-                toast('🎉 升级成功! ' + VIP_LABELS[_vipLevel]);
-            }
-        }).catch(function(){ toast('❌ 网络错误'); });
-    }
-
-    function closeVipDialog() {
-        document.getElementById('vipDialogOverlay').classList.remove('on');
-        restoreVipDialog();
-    }
-
-    async function redeemVipCode() {
-        var code = document.getElementById('vipCodeInput').value.trim().toUpperCase();
-        if (!code) return;
-        var resultEl = document.getElementById('vipResult');
-        resultEl.textContent = '验证中...';
-        resultEl.style.color = 'var(--vmuted)';
-
-        var hds = _h();
-        try {
-            var codeData = await _get(SUPABASE_URL + '/rest/v1/activation_codes?code=eq.' + escUrl(code) + '&select=*&limit=1');
-            if (codeData && codeData.length) {
-                var cd = codeData[0];
-                if (cd.max_uses > 0 && cd.used_count >= cd.max_uses) {
-                    resultEl.textContent = '❌ 激活码已用完'; resultEl.style.color = '#c08080';
-                } else {
-                    await _patch(SUPABASE_URL + '/rest/v1/activation_codes?code=eq.'+escUrl(code), {used_count: (cd.used_count||0)+1});
-                    await _post(SUPABASE_URL + '/rest/v1/user_vips', {device_id: getDeviceId(), vip_level: cd.vip_level, activated_at: new Date().toISOString()});
-                    _vipLevel = cd.vip_level;
-                    updateVipBadge(); updateSidebarForVip();
-                    resultEl.textContent = '✅ 升级成功! ' + cd.vip_level; resultEl.style.color = 'var(--green)';
-                }
-            } else {
-                resultEl.textContent = '❌ 激活码不存在';
-                resultEl.style.color = '#c08080';
-            }
-        } catch(e) {
-            resultEl.textContent = '❌ ' + (e.message || '网络错误');
-            resultEl.style.color = '#c08080';
-        }
-    }
-
-    // ============ 管理员功能 ============
-    var ADMIN_MASTER_KEY = 'admin2026ultimate'; // ← 改成你自己的管理员密码
 
     async function generateCode() {
         var level = document.getElementById('genCodeLevel').value;
@@ -4682,96 +4511,10 @@
         return s;
     }
 
-    // 管理员激活 (仅第一次使用, 输入 master key)
-    async function adminSetup(masterKey) {
-        if (!masterKey) {
-            masterKey = prompt('输入管理员主密钥激活终极VIP:');
-            if (!masterKey) return;
-        }
-        var hds = _h();
-        try {
-            var data = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username), {vip_level: 'ultimate', is_admin: true, verified: true});
-            if (data) {
-                    _vipLevel = 'ultimate';
-                    _isAdmin = true;
-                    updateVipBadge();
-                    updateSidebarForVip();
-                    toast('⚡ 终极VIP管理员已激活!');
-                } else {
-                    toast('❌ ' + (data ? data.message : '激活失败'));
-                }
-        } catch(e) { toast('❌ 网络错误'); }
-    }
-
-    // ============ VIP 专属功能 ============
-    function isVipOrHigher(minLevel) {
-        return (VIP_LEVELS[_vipLevel] || 0) >= (VIP_LEVELS[minLevel] || 0);
-    }
-
-    // ============ 每日配额 ============
-    function getDailyKey(key) {
-        return 'daily_' + key + '_' + new Date().toISOString().slice(0,10);
-    }
-    function getDailyCount(key) {
-        return parseInt(localStorage.getItem(getDailyKey(key)) || '0');
-    }
-    function incDailyCount(key) {
-        var k = getDailyKey(key);
-        var v = (parseInt(localStorage.getItem(k) || '0')) + 1;
-        localStorage.setItem(k, v.toString());
-        return v;
-    }
-    function getDailyLimit(key) {
-        var limits = VIP_LIMITS[_vipLevel] || VIP_LIMITS.free;
-        return limits[key] || 0;
-    }
-    function checkDailyLimit(key) {
-        var limit = getDailyLimit(key);
-        if (limit >= 999) return true; // 无限制
-        var used = getDailyCount(key);
-        if (used >= limit) {
-            var labels = { scrape: '客户端抓取', resolve: 'MP4解析', batchDl: '批量下载' };
-            toast('🚫 今日' + (labels[key] || key) + '已达上限(' + limit + '次), 请升级VIP');
-            return false;
-        }
-        incDailyCount(key);
-        return true;
-    }
-    function getRemainingDaily(key) {
-        var limit = getDailyLimit(key);
-        if (limit >= 999) return '∞';
-        return Math.max(0, limit - getDailyCount(key));
-    }
-
-    // Hook 收藏功能限制数量
-    var _origToggleFav = toggleFavorite;
-    toggleFavorite = function(videoId, btn) {
-        if (getFavorites().length >= getDailyLimit('favs') && !isFavorited(videoId)) {
-            toast('🚫 收藏已达上限(' + getDailyLimit('favs') + '), 请升级VIP');
-            return;
-        }
-        _origToggleFav(videoId, btn);
-    };
-
-    // Hook 历史记录限制
-    var _origAddHistory = addToHistory;
-    addToHistory = function(vid) {
-        var limit = getDailyLimit('history');
-        var hist = getHistory();
-        if (hist.length >= limit && hist.indexOf(vid) < 0) {
-            // 移除最旧的
-            hist = hist.slice(0, limit - 1);
-            saveHistoryData(hist);
-        }
-        _origAddHistory(vid);
-    };
-
-    function updateSidebarForVip() {
+    function updateSidebarLogin() {
         updateVipBadge();
         var adminBtn = document.getElementById('sidebarAdmin');
         if (adminBtn) adminBtn.style.display = _isAdmin ? '' : 'none';
-        var earlyBtn = document.getElementById('sidebarVipEarly');
-        if (earlyBtn) earlyBtn.style.display = _isAdmin ? '' : 'none';
         var loginBtn = document.getElementById('sideLogin');
         if (loginBtn) loginBtn.style.display = _loggedIn ? 'none' : '';
         var logoutBtn = document.getElementById('sideLogout');
@@ -4782,140 +4525,22 @@
         if (pwdBtn) pwdBtn.style.display = _loggedIn ? '' : 'none';
     }
 
-    // Hook enterVideoMode 检查 VIP
+    // Hook enterVideoMode
     var _origEnter2 = enterVideoMode;
     enterVideoMode = function() {
         _origEnter2();
-        checkVipStatus();
+        autoLogin().then(function() { updateVipBadge(); updateSidebarLogin(); });
         loadAnnouncements();
     };
 
-    // VIP 门控: 下载全部需要 VIP + 每日配额
-    var _origDownloadSelected = downloadSelected;
-    downloadSelected = function() {
-        if (!isVipOrHigher('vip')) {
-            toast('💎 批量下载需要 VIP 会员，点击顶部会员标识升级');
-            return;
-        }
-        if (!checkDailyLimit('batchDl')) return;
-        _origDownloadSelected();
-    };
-
-    // VIP 门控: 导出收藏需要 SVIP+
-    var _origExportFav = exportFavorites;
-    exportFavorites = function() {
-        if (!isVipOrHigher('svip')) {
-            toast('👑 导出收藏需要 SVIP 会员');
-            return;
-        }
-        _origExportFav();
-    };
-
-    // VIP 门控: 随机播放需要 VVIP+
-    var _origRandomPlay = randomPlay;
-    randomPlay = function() {
-        if (!isVipOrHigher('vvip')) {
-            toast('💎💎 随机播放需要 VVIP 会员');
-            return;
-        }
-        _origRandomPlay();
-    };
-
-    // ============ 云端收藏同步 (VVIP+) ============
-    async function syncFavoritesToCloud() {
-        if (!isVipOrHigher('vvip')) {
-            toast('💎💎 云端同步需要 VVIP 会员 — 换设备收藏不丢失');
-            return;
-        }
-        var favs = getFavorites();
-        var hds = _h();
-        try {
-            await _delete(SUPABASE_URL + '/rest/v1/cloud_favorites?device_id=eq.'+escUrl(getDeviceId()));
-            var ok = favs.length > 0 ? await _post(SUPABASE_URL + '/rest/v1/cloud_favorites', favs.map(function(id){ return {device_id: getDeviceId(), video_id: id}; })) : true;
-            toast(ok !== null ? '☁️ 云端同步完成 (' + favs.length + ' 个收藏)' : '同步失败');
-
-        } catch(e) { toast('☁️ 同步失败: ' + (e.message || '网络错误')); }
-    }
-
-    async function loadFavoritesFromCloud() {
-        if (!isVipOrHigher('vvip')) {
-            toast('💎💎 云端加载需要 VVIP 会员');
-            return;
-        }
-        var hds = _h();
-        try {
-            var data = await _get(SUPABASE_URL + '/rest/v1/cloud_favorites?device_id=eq.'+escUrl(getDeviceId())+'&select=video_id&order=created_at.desc');
-            if (data) {
-                var ids = data.map(function(r){return r.video_id;});
-                var existing = getFavorites();
-                var added = 0;
-                for (var i = 0; i < ids.length; i++) {
-                    if (existing.indexOf(ids[i]) < 0) { existing.push(ids[i]); added++; }
-                }
-                saveFavorites(existing);
-                toast('☁️ 已加载 ' + ids.length + ' 个云端收藏 (新增' + added + ')');
-                if (activeSection === 'favs') loadVids(true);
-            }
-        } catch(e) { toast('加载失败'); }
-    }
-
-    // ============ VIP 先行看: 新视频免费用户锁 ============
-    function cardVipLock(v) {
-        // VIP+ 用户无限制
-        if (isVipOrHigher('vip')) return '';
-        // 检查是否是最近24h的视频 (vip_early标记或scraped_at在24h内)
-        var isNew = v.vip_early === true;
-        if (!isNew && v.scraped_at) {
-            var age = Date.now() - new Date(v.scraped_at).getTime();
-            isNew = age < 24 * 3600 * 1000;
-        }
-        if (!isNew) return '';
-        // VVIP+ 也能看
-        return '<div class="vid-vip-lock" style="position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);cursor:pointer;" onclick="event.stopPropagation();event.preventDefault();showVipDialog();"><div style="font-size:28px;">🔒</div><div style="font-size:10px;color:var(--vprimary);margin-top:4px;font-weight:600;">VIP 先行</div><div style="font-size:9px;color:var(--vmuted);">开通VIP立即观看</div></div>';
-    }
-
-    // Hook card 渲染, 添加 VIP 锁
-    var _origCardVip = card;
-    card = function(v) {
-        var c = _origCardVip(v);
-        c.dataset.vid = v.video_id;
-        // 免费用户看新视频加锁
-        var lockHtml = cardVipLock(v);
-        if (lockHtml) {
-            var thumb = c.querySelector('.vid-thumb');
-            if (thumb) { thumb.insertAdjacentHTML('beforeend', lockHtml); }
-            c.style.cursor = 'default';
-            c.onclick = function(e) {
-                if (e.target.closest('.vid-vip-lock')) { showVipDialog(); return; }
-                if (e.target.closest('.vid-copy') || e.target.closest('.vid-fav') || e.target.closest('.vid-author')) return;
-                showVipDialog();
-            };
-        }
-        return c;
-    };
-
-    // VIP+ 自动标记新视频为先行
-    async function markVipEarly() {
-        if (!_isAdmin) return;
-        var hds = _h();
-        try {
-            // 管理员触发: 标记最近24h爬取的视频为VIP先行
-            await fetch(SUPABASE_URL + '/rest/v1/videos?vip_early=is.false&scraped_at=gt.' + new Date(Date.now()-86400000).toISOString(), {
-                method: 'PATCH', headers: Object.assign({}, hds, {'Content-Type':'application/json'}),
-                body: JSON.stringify({vip_early: true})
-            });
-            toast('✅ VIP先行视频已标记');
-        } catch(e) {}
-    }
-
-    // ============ VIP 初始化 + 启动 ============
+    // ============ 初始化 + 启动 ============
     addExtraSidebarItems();
     initGame();
     updateFavsBadge();
     updateHistBadge();
     applyPrefsUI();
-    checkVipStatus();
-    // 给 sidebar 打补丁添加 VIP 入口
+    autoLogin().then(function() { updateVipBadge(); updateSidebarLogin(); });
+    // 给 sidebar 打补丁添加登录入口
     (function() {
         var sidebar = document.getElementById('sidebar');
         if (!sidebar || document.getElementById('vipSidebar')) return;
@@ -4924,25 +4549,20 @@
         div.innerHTML =
             '<div class="sidebar-divider" style="height:1px;background:var(--vborder);margin:8px 0;"></div>' +
             '<div class="sidebar-section">' +
-            '<div class="sidebar-label">💎 会员中心</div>' +
-            '<button class="sidebar-item" id="sideLogin" onclick="showLoginDialog()"><span class="ico">🔐</span>登录/注册</button>' +
-            '<button class="sidebar-item" id="sideLogout" style="display:none;" onclick="clearLoginSession()"><span class="ico">🚪</span>退出登录</button>' +
-            '<button class="sidebar-item" id="sideFriends" onclick="showFriendRequests()"><span class="ico">👫</span>好友请求</button>' +
-            '<button class="sidebar-item" id="sidePwd" onclick="showPwdDialog()"><span class="ico">🔑</span>修改密码</button>' +
-            '<button class="sidebar-item" onclick="showVipDialog()"><span class="ico">💎</span>升级会员</button>' +
-            '<button class="sidebar-item" onclick="syncFavoritesToCloud()"><span class="ico">☁️</span>上传收藏到云端 (VVIP)</button>' +
-            '<button class="sidebar-item" onclick="loadFavoritesFromCloud()"><span class="ico">⬇️</span>从云端恢复收藏 (VVIP)</button>' +
-            '<button class="sidebar-item" id="sidebarAdmin" style="display:none;" onclick="showAdminPanel()"><span class="ico">👑</span>管理面板</button>' +
-            '<button class="sidebar-item" id="sidebarVipEarly" style="display:none;" onclick="markVipEarly()"><span class="ico">🔒</span>标记VIP先行视频</button>' +
+            '<div class="sidebar-label">账号</div>' +
+            '<button class="sidebar-item" id="sideLogin" onclick="showLoginDialog()"><span class="ico">登录</span>登录/注册</button>' +
+            '<button class="sidebar-item" id="sideLogout" style="display:none;" onclick="clearLoginSession()"><span class="ico">退出</span>退出登录</button>' +
+            '<button class="sidebar-item" id="sideFriends" onclick="showFriendRequests()"><span class="ico">好友</span>好友请求</button>' +
+            '<button class="sidebar-item" id="sidePwd" onclick="showPwdDialog()"><span class="ico">密码</span>修改密码</button>' +
+            '<button class="sidebar-item" id="sidebarAdmin" style="display:none;" onclick="showAdminPanel()"><span class="ico">管理</span>管理面板</button>' +
             '</div>';
         sidebar.appendChild(div);
-        updateSidebarForVip();
+        updateSidebarLogin();
     })();
     updateFavsBadge();
     updateHistBadge();
     applyPrefsUI();
-
-    // iOS 独立模式检测
+// iOS 独立模式检测
     if (window.navigator.standalone) {
         document.documentElement.classList.add('ios-standalone');
     }
