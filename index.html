@@ -884,7 +884,7 @@
                 <button class="ms-btn" onclick="adminDo('scraper_run')" style="background:rgba(100,160,200,0.1);color:#4a9adf;">🔄 手动爬虫</button>
                 <button class="ms-btn" onclick="adminDo('clear_cache')" style="background:rgba(200,100,100,0.1);color:#c08080;">🧹 清理缓存</button>
             </div>
-            <div id="adminContent" style="font-size:11px;color:var(--vmuted);text-align:center;">选择上方功能<br><small style="color:var(--vmuted);">管理员: 全部功能可用 | 需要 service_role 密钥的操作会有提示</small></div>
+            <div id="adminContent" style="font-size:11px;color:var(--vmuted);text-align:center;">选择上方功能<br><small style="color:var(--vmuted);">管理员: 全部功能可用 | 需执行 02_security.sql的操作会有提示</small></div>
         </div>
     </div>
 
@@ -4122,32 +4122,19 @@
         }
     }
 
-    var _serviceKey = '';
-    function getServiceHeaders() {
-        if (!_serviceKey) _serviceKey = sessionStorage.getItem('svc_key') || '';
-        if (_serviceKey) return {'apikey': _serviceKey, 'Authorization': 'Bearer ' + _serviceKey, 'Content-Type': 'application/json'};
-        return _H();
-    }
-    function setServiceKey() {
-        var key = prompt('输入 Supabase service_role 密钥:\n(Settings→API→service_role)\n留空则使用受限权限');
-        if (key) { _serviceKey = key; sessionStorage.setItem('svc_key', key); toast('✅ 密钥已设置'); }
-        else { _serviceKey = ''; sessionStorage.removeItem('svc_key'); }
-    }
-
     async function _adminPost(url, body) {
-        try { var r = await fetch(url, {method:'POST', headers:getServiceHeaders(), body:JSON.stringify(body)}); return r.ok ? r.json().catch(function(){return null}) : null; }
+        try { var r = await fetch(url, {method:'POST', headers:_H(), body:JSON.stringify(body)}); return r.ok ? r.json().catch(function(){return null}) : null; }
         catch(e) { return null; }
     }
     async function _adminPatch(url, body) {
-        try { var r = await fetch(url, {method:'PATCH', headers:getServiceHeaders(), body:JSON.stringify(body)}); return r.ok; }
+        try { var r = await fetch(url, {method:'PATCH', headers:_H(), body:JSON.stringify(body)}); return r.ok; }
         catch(e) { return false; }
     }
 
     function showAdminPanel() {
         if (!_isAdmin) { showLoginDialog(); return; }
         document.getElementById('adminPanelOverlay').classList.add('on');
-        var hasKey = !!sessionStorage.getItem('svc_key');
-        document.getElementById('adminContent').innerHTML = '选择上方功能<br><small style="color:var(--vmuted);">密钥: ' + (hasKey ? '✅ service_role' : '⚠️ anon(受限)') + ' — <a href="#" onclick="setServiceKey();return false;" style="color:var(--vprimary);">设置</a></small>';
+        document.getElementById('adminContent').innerHTML = '选择上方功能';
     }
 
     function closeAdminPanel() {
@@ -4203,12 +4190,12 @@
             // 如果选了"仅显示此",先把旧公告设为inactive
             if (only) {
                 await fetch(SUPABASE_URL + '/rest/v1/announcements?is_active=is.true', {
-                    method: 'PATCH', headers: getServiceHeaders(),
+                    method: 'PATCH', headers: _H(),
                     body: JSON.stringify({is_active: false})
                 }).catch(function(){});
             }
             var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements', {
-                method: 'POST', headers: getServiceHeaders(),
+                method: 'POST', headers: _H(),
                 body: JSON.stringify({title: t, content: c, created_by: _username, is_active: true})
             });
             if (resp.ok) {
@@ -4602,7 +4589,7 @@
             r.textContent = '✅ 已保存'; r.style.color = 'var(--green)';
             loadVids(true);
         } else {
-            r.textContent = '❌ 需要 service_role 密钥'; r.style.color = '#c08080';
+            r.textContent = '❌ 需执行 02_security.sql'; r.style.color = '#c08080';
         }
     }
 
@@ -4623,9 +4610,6 @@
             if (keep.indexOf(allKeys[j]) < 0) localStorage.removeItem(allKeys[j]);
         }
         sessionStorage.clear();
-        // 保留 service_role 密钥
-        var svcKey = sessionStorage.getItem('svc_key');
-        if (svcKey) sessionStorage.setItem('svc_key', svcKey);
         toast('🧹 缓存已清理 (保留了登录和收藏)');
     }
 
@@ -4726,7 +4710,7 @@
             if (ok !== null) {
                 r.innerHTML = '✅ 激活码: <b style="font-size:14px;color:var(--vprimary);user-select:all;">' + code + '</b> (' + uses + '次)<br><button class="cheat-btn accent" style="font-size:10px;padding:4px 10px;margin-top:4px;" onclick="navigator.clipboard.writeText(\'' + code + '\');this.textContent=\'✅ 已复制!\'">📋 复制激活码</button>';
             } else {
-                r.textContent = '❌ 需要 service_role 密钥'; r.style.color = '#c08080';
+                r.textContent = '❌ 需执行 02_security.sql'; r.style.color = '#c08080';
             }
         } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
