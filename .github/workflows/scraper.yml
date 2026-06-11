@@ -1,11 +1,13 @@
-name: Scraper v8 (并行栏目 + 优先解析)
+name: Scraper (完整抓取 + 独立MP4解析)
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 */2 * * *'   # 每2小时完整抓取
+    - cron: '*/30 * * * *'  # 每30分钟MP4解析
   workflow_dispatch:
 
 jobs:
+  # ====== 完整抓取(每2小时) ======
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -14,17 +16,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install httpx playwright playwright-stealth
+      - run: pip install httpx playwright
       - run: |
           playwright install chromium
           sudo playwright install-deps chromium 2>/dev/null || true
       - env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scraper/main.py
-      - name: 上传调试截图 (失败时)
-        if: failure()
-        uses: actions/upload-artifact@v4
+        run: python scraper/main.py full
+
+  # ====== MP4解析(每30分钟) ======
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: debug-screenshot
-          path: /tmp/monsnode_debug.png
+          python-version: '3.12'
+      - run: pip install httpx playwright
+      - run: |
+          playwright install chromium
+          sudo playwright install-deps chromium 2>/dev/null || true
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scraper/main.py resolve

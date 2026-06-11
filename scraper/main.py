@@ -408,7 +408,7 @@ async def scrape_all():
         "errors": [],
     }
 
-    log("启动浏览器...")
+    log("启动浏览器(stealth模式)...")
     pw = await async_playwright().start()
     ua = random.choice(USER_AGENTS)
     log(f"UA: {ua[:80]}...")
@@ -419,7 +419,8 @@ async def scrape_all():
             "--disable-dev-shm-usage", "--disable-gpu",
             "--disable-blink-features=AutomationControlled",
             "--no-first-run", "--no-default-browser-check",
-            "--mute-audio",
+            "--mute-audio", "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
         ]
     )
     context = await browser.new_context(
@@ -429,7 +430,17 @@ async def scrape_all():
         timezone_id="Asia/Tokyo",
         geolocation={"latitude": 35.6895, "longitude": 139.6917},
     )
-    log("浏览器已启动")
+    # stealth 注入: 隐藏自动化特征
+    try:
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP','ja','en-US','en']});
+            window.chrome = {runtime: {}};
+        """)
+    except Exception:
+        pass
+    log("浏览器已启动(stealth注入)")
 
     section_results_lock = asyncio.Lock()
 
@@ -853,9 +864,131 @@ async def scrape_all():
     return stats
 
 
+async def resolve_only():
+    """独立MP4解析模式: 只解析数据库中待处理的视频, 不抓取新内容"""
+    from playwright.async_api import async_playwright
+
+    stats = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "videos_found": 0, "videos_saved": 0,
+        "mp4_resolved": 0, "pages_crawled": 0,
+        "errors": [],
+    }
+
+    # 查询需要解析的视频
+    headers = supabase_headers()
+    client = httpx.Client(timeout=30)
+    try:
+        url = (
+            SUPABASE_URL + "/rest/v1/videos"
+            + "?select=video_id,monsnode_video_id"
+            + "&has_mp4=is.false"
+            + "&monsnode_video_id=not.is.null"
+            + "&retry_count=lt." + str(MAX_RETRY_COUNT)
+            + "&order=created_at.desc"
+            + "&limit=200"
+        )
+        resp = client.get(url, headers=headers)
+        if resp.status_code == 200:
+            targets = resp.json()
+        else:
+            targets = []
+    except Exception as e:
+        log(f"查询待解析视频失败: {e}", "ERROR")
+        targets = []
+    finally:
+        client.close()
+
+    if not targets:
+        log("无待解析视频")
+        return stats
+
+    log(f"待解析MP4: {len(targets)} 个视频")
+
+    pw = await async_playwright().start()
+    ua = random.choice(USER_AGENTS)
+    browser = await pw.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-setuid-sandbox",
+              "--disable-dev-shm-usage", "--disable-gpu",
+              "--disable-blink-features=AutomationControlled",
+              "--no-first-run", "--no-default-browser-check",
+              "--mute-audio"],
+    )
+    context = await browser.new_context(
+        user_agent=ua,
+        viewport={"width": 1366, "height": 768},
+        locale="ja-JP",
+        timezone_id="Asia/Tokyo",
+    )
+    try:
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        """)
+    except Exception:
+        pass
+
+    log("开始解析MP4...")
+    sem = asyncio.Semaphore(MP4_TAB_CONCURRENCY)
+
+    async def resolve_one(item):
+        mid = item.get("monsnode_video_id", "")
+        vid = item.get("video_id", "")
+        if not mid or not mid.isdigit():
+            return vid, mid, None
+        async with sem:
+            page = await context.new_page()
+            try:
+                resp = await page.goto(
+                    f"{BASE_URL}/twjn.php?v={mid}",
+                    wait_until="domcontentloaded",
+                    timeout=15000
+                )
+                if resp and resp.status == 200:
+                    content = await page.content()
+                    m = re.search(r"var\s+u\s*=\s*atob\('([^']+)'\)", content)
+                    if m:
+                        mp4 = base64.b64decode(m.group(1)).decode('utf-8')
+                        if 'video.twimg.com' in mp4:
+                            return vid, mid, mp4
+                return vid, mid, None
+            except Exception:
+                return vid, mid, None
+            finally:
+                await page.close()
+
+    resolved = 0
+    t0 = time.time()
+    for batch_start in range(0, len(targets), MP4_TAB_CONCURRENCY * 3):
+        batch = targets[batch_start:batch_start + MP4_TAB_CONCURRENCY * 3]
+        tasks = [resolve_one(t) for t in batch]
+        results = await asyncio.gather(*tasks)
+        batch_updates = {}
+        for vid, mid, mp4 in results:
+            if mp4:
+                batch_updates[mid] = (vid, mp4)
+                resolved += 1
+        if batch_updates:
+            supabase_update_mp4(batch_updates)
+        done = min(batch_start + MP4_TAB_CONCURRENCY * 3, len(targets))
+        log(f"  {done}/{len(targets)} → {resolved} MP4 ({time.time()-t0:.0f}s)")
+
+    stats["mp4_resolved"] = resolved
+    log(f"MP4解析完成: {resolved}/{len(targets)} ({time.time()-t0:.0f}s)")
+
+    await context.close()
+    await browser.close()
+    await pw.stop()
+
+    stats["finished_at"] = datetime.now(timezone.utc).isoformat()
+    supabase_save_status(stats)
+    return stats
+
+
 def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     print("=" * 55)
-    log("monsnode 爬虫 v9 — 无限滚动 + 分页双重策略")
+    log(f"monsnode 爬虫 v9 — 模式: {mode}")
     key_ok = SUPABASE_KEY and len(SUPABASE_KEY) > 100
     log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌'} ({len(SUPABASE_URL)} 字符)")
     log(f"SUPABASE_KEY={'已设置' if key_ok else '❌'} ({len(SUPABASE_KEY)} 字符)")
@@ -863,6 +996,14 @@ def main():
         log("请设置 SUPABASE_URL 和 SUPABASE_KEY 环境变量", "ERROR")
         sys.exit(1)
     print("=" * 55)
+
+    if mode == "resolve":
+        log("MP4解析模式: 只解析已有视频的MP4, 不抓取新内容")
+        stats = asyncio.run(resolve_only())
+        print("\n" + "=" * 55)
+        print(f"  MP4解析: {stats['mp4_resolved']} 个")
+        print("=" * 55)
+        return
 
     stats = asyncio.run(scrape_all())
     mp4_rate = stats['mp4_resolved'] / max(stats['videos_found'], 1) * 100
