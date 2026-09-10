@@ -838,6 +838,12 @@
 </head>
 <body>
 
+    <!-- 代码完整性校验横幅 (被篡改时显示, 默认隐藏) -->
+    <div id="codeTamperBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#7a1f1f;color:#ffe0e0;font-size:12px;padding:10px 14px;text-align:center;font-family:var(--font-mono);box-shadow:0 2px 10px rgba(0,0,0,0.5);">
+        ⚠️ <b>代码完整性校验失败</b> — 当前网页代码与仓库部署版本不一致，可能已被篡改！为保护安全已禁止进入隐藏页面。<br>
+        <span style="font-size:10px;opacity:0.8;">如是你本人最近更新了页面，请重新部署 GitHub Actions 并等待校验通过。</span>
+    </div>
+
     <!-- ==================== 登录对话框 ==================== -->
     <div class="cheat-dialog-overlay" id="loginDialogOverlay">
         <div class="cheat-dialog" style="width:320px;">
@@ -952,6 +958,7 @@
                 <input type="tel" class="auth-digit" id="authD4" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
             </div>
             <p class="auth-hint" id="authHint">在 iOS 快捷指令中查看当前密码</p>
+            <p class="auth-hint" id="authVerifyStatus" style="margin-top:8px;font-size:10px;"></p>
         </div>
     </div>
 
@@ -1386,14 +1393,27 @@
     // 视图切换
     // ============================================================
     function enterVideoMode() {
-        if (isAuthValid()) {
-            // 已认证 → 直接进入
-            document.body.classList.add('dark-mode');
-            loadVids(true);
-        } else {
-            // 未认证 → 显示密码锁
-            showAuthOverlay();
+        // 代码完整性闸门: 校验失败时禁止进入
+        if (_codeIntegrity && _codeIntegrity.state === 'fail') {
+            document.getElementById('codeTamperBanner').style.display = 'block';
+            return;
         }
+        var tok = getGateToken();
+        if (tok) {
+            fetch(SUPABASE_URL + '/rest/v1/rpc/check_session', {
+                method: 'POST', headers: _H(), body: JSON.stringify({ p_token: tok })
+            }).then(function(r){ return r.json(); }).then(function(s){
+                if (s && s.length && s[0].valid) {
+                    document.body.classList.add('dark-mode');
+                    loadVids(true);
+                    return;
+                }
+                setGateToken(null);
+                showAuthOverlay();
+            }).catch(function(){ showAuthOverlay(); });
+            return;
+        }
+        showAuthOverlay();
     }
     function goBackToGame() {
         document.body.classList.remove('dark-mode');
@@ -1461,24 +1481,11 @@
     loadPrefs();
 
     // ============================================================
-    // TOTP 动态密码验证 (Steam Guard 风格)
-    // 纯数学算法, 每 5 分钟换一次 4 位数密码
-    // iOS 快捷指令可用相同算法直接计算 (无需 SHA-256/hex 转换)
-    // 秘密参数由 "MONS2026NODEKEY" 预计算得出
+    // 动态密码锁 — 服务端校验 (verify_passcode RPC)
+    // 密钥不再存在于页面里，而是存于 Supabase system_config.totp_secret
+    // 旧的页面常数 (1046/7919/6271/6559466) 已全部作废
     // ============================================================
-    var TOTP_S1 = 1046;      // "MONS2026NODEKEY" 各字符 ASCII 值之和
-    var TOTP_P1 = 7919;      // 大质数 1
-    var TOTP_P2 = 6271;      // 大质数 2
-    var TOTP_M  = 6559466;   // = S1 * P2 = 1046 * 6271 (预计算, 省去快捷指令一步乘法)
     var TOTP_STEP = 300;     // 5分钟
-
-    function generateTOTP() {
-        var timeWindow = Math.floor(Date.now() / 1000 / TOTP_STEP);
-        // 算法: ((W + S1) * P1 + W * M) % 10000
-        // 三个常数 S1=1046, P1=7919, M=6559466
-        var code = ((timeWindow + TOTP_S1) * TOTP_P1 + timeWindow * TOTP_M) % 10000;
-        return code.toString().padStart(4, '0');
-    }
 
     var authOverlay = document.getElementById('authOverlay');
     var authD1 = document.getElementById('authD1');
@@ -1488,58 +1495,55 @@
     var authHintEl = document.getElementById('authHint');
     var allDigits = [authD1, authD2, authD3, authD4];
 
-    // 检查是否已通过验证
-    // - 在页面上时: 自动续期, 永不过期
-    // - 离开页面 ≤10分钟: 回来不用重新输入
-    // - 离开页面 >10分钟: 需要重新输入
-    function isAuthValid() {
-        var exp = localStorage.getItem('auth_expiry');
-        if (!exp) return false;
-        return Date.now() < parseInt(exp);
+    // 检查是否已通过验证 (本地预检; 真正校验在进入时调用 check_session RPC)
+    function hasGateToken() {
+        return !!localStorage.getItem('vid_gate_token');
     }
-
-    // 延长有效期 (在页面上每分钟调用一次, 离开页面后自然过期)
-    function extendAuth() {
-        localStorage.setItem('auth_expiry', (Date.now() + 10 * 60 * 1000).toString());
+    function getGateToken() {
+        return localStorage.getItem('vid_gate_token') || '';
     }
-    var authHeartbeat = setInterval(extendAuth, 60000);
+    function setGateToken(t) {
+        if (t) localStorage.setItem('vid_gate_token', t);
+        else localStorage.removeItem('vid_gate_token');
+    }
 
     function showAuthOverlay() {
         authOverlay.classList.remove('hidden');
         allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
-        authHintEl.innerHTML = '<a href="totp.html" target="_blank" style="color:var(--vprimary);text-decoration:none;">🔗 打开密码生成器</a>';
+        authHintEl.innerHTML = '<span style="color:var(--vmuted);">请输入动态密码（由站主提供）</span>';
+        _renderIntegrityBadge();
         authD1.focus();
     }
 
     function hideAuthOverlay() {
         authOverlay.classList.add('hidden');
-        extendAuth(); // 首次授权, 设 10 分钟过期
-        // 认证通过 → 进入视频模式
         document.body.classList.add('dark-mode');
         loadVids(true);
     }
 
+    // 服务端校验密码, 通过则签发会话 token
     function checkPassword() {
         var input = allDigits.map(function(d) { return d.value; }).join('');
         if (input.length !== 4) return;
-
-        var expected = generateTOTP();
-        // 也允许上一个时间窗口的密码 (边界情况容错)
-        var prevWindow = Math.floor(Date.now() / 1000 / TOTP_STEP) - 1;
-        var prevCode = ((prevWindow + TOTP_S1) * TOTP_P1 + prevWindow * TOTP_M) % 10000;
-        prevCode = prevCode.toString().padStart(4, '0');
-
-        if (input === expected || input === prevCode) {
-            hideAuthOverlay();
-        } else {
-            // 抖动错误效果
-            allDigits.forEach(function(d) { d.classList.add('error'); });
-            authHintEl.innerHTML = '<span style="color:#c08080;">密码错误，请确认后重试</span>';
-            setTimeout(function() {
-                allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
-                authD1.focus();
-            }, 600);
-        }
+        authHintEl.innerHTML = '<span style="color:var(--vmuted);">验证中...</span>';
+        fetch(SUPABASE_URL + '/rest/v1/rpc/verify_passcode', {
+            method: 'POST', headers: _H(),
+            body: JSON.stringify({ p_code: input, p_device_id: getDeviceId() })
+        }).then(function(r){ return r.json(); }).then(function(res){
+            if (res && res.ok && res.token) {
+                setGateToken(res.token);
+                hideAuthOverlay();
+            } else {
+                allDigits.forEach(function(d) { d.classList.add('error'); });
+                authHintEl.innerHTML = '<span style="color:#c08080;">密码错误，请确认后重试</span>';
+                setTimeout(function() {
+                    allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
+                    authD1.focus();
+                }, 600);
+            }
+        }).catch(function(){
+            authHintEl.innerHTML = '<span style="color:#c08080;">网络错误，请重试</span>';
+        });
     }
 
     // 4 位数字输入框联动
@@ -2405,6 +2409,8 @@
         if(activeSection && activeSection !== 'favs' && activeSection !== 'history') params+='&source_section=ilike.*'+encodeURIComponent(activeSection)+'*';
         // 作者过滤
         if(activeAuthor) params+='&author=ilike.*'+encodeURIComponent(activeAuthor.trim())+'*';
+        // 已下架的视频不显示
+        params+='&removed=is.false';
         // 可播放性筛选 (客户端过滤, 因为 has_mp4 列可能不存在)
         // 不添加到 params, 在 render 之前过滤
         // 排序: 有播放量的按播放量排，否则按时间
@@ -2436,6 +2442,7 @@
         if(activeSection && activeSection !== 'favs' && activeSection !== 'history') countParams+='&source_section=ilike.*'+encodeURIComponent(activeSection)+'*';
         if(activeAuthor) countParams+='&author=ilike.*'+encodeURIComponent(activeAuthor.trim())+'*';
         // 可播放性筛选: 客户端过滤 (has_mp4 列可能不存在)
+        countParams+='&removed=is.false';
         countParams+='&limit=1';
         var cp=fetch(SUPABASE_URL+'/rest/v1/videos?'+countParams,{method:'GET',headers:ch});
 
@@ -3743,7 +3750,16 @@
     // ============================================================
     var SITE_OWNER = 'kuo';
     var _isAdmin = false;
-
+    var _token = '';          // 服务端签发的会话 token (登录/密码锁共用)
+    var _deviceId = '';
+    function getDeviceId() {
+        if (_deviceId) return _deviceId;
+        try {
+            var d = localStorage.getItem('vid_device_id');
+            if (!d) { d = 'dev' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); localStorage.setItem('vid_device_id', d); }
+            _deviceId = d; return d;
+        } catch(e) { return 'dev' + Math.random().toString(36).slice(2, 10); }
+    }
 
     // ============ 账号登录系统 ============
     var _username = '';
@@ -3810,26 +3826,24 @@
         document.getElementById('loginResult').textContent = '登录中...';
         document.getElementById('loginResult').style.color = 'var(--vmuted)';
         try {
-            var hash = await sha256(user + ':' + pass);
-            var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user) + '&select=username,password_hash,vip_level,is_admin,banned&limit=1');
-            if (!data || !data.length) {
-                document.getElementById('loginResult').textContent = '❌ 账号不存在或数据库未配置';
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/login_account', {
+                method: 'POST', headers: _H(),
+                body: JSON.stringify({ p_username: user, p_password: pass, p_device_id: getDeviceId() })
+            });
+            var res = await resp.json();
+            if (!res || !res.length) {
+                document.getElementById('loginResult').textContent = '❌ 登录失败（请确认已执行 09_lockdown.sql）';
                 document.getElementById('loginResult').style.color = '#c08080'; return;
             }
-            var acc = data[0];
-            if (acc.banned) {
-                document.getElementById('loginResult').textContent = '❌ 账号已被封禁';
-                document.getElementById('loginResult').style.color = '#c08080'; return;
-            }
-            if (acc.password_hash !== hash) {
-                document.getElementById('loginResult').textContent = '❌ 密码错误';
+            var acc = res[0];
+            if (!acc.ok) {
+                document.getElementById('loginResult').textContent = '❌ ' + acc.message;
                 document.getElementById('loginResult').style.color = '#c08080'; return;
             }
             _username = user; _loggedIn = true;
-            _isAdmin = acc.is_admin;
+            _isAdmin = acc.is_admin; _token = acc.token;
             var remember = document.getElementById('loginRemember').checked;
-            saveLoginSession(user, hash, remember);
-            _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user), {last_login: new Date().toISOString()});
+            saveLoginSession(user, acc.token, remember);
             updateVipBadge(); updateSidebarLogin();
             checkUnread();
             document.getElementById('loginResult').textContent = '✅ 欢迎, ' + user + '!' + (_isAdmin ? ' (管理员)' : '');
@@ -3878,12 +3892,21 @@
         if (pass !== pass2) { resultEl.textContent = '❌ 两次密码不一致'; resultEl.style.color='#c08080'; return; }
         resultEl.textContent = '注册中...'; resultEl.style.color = 'var(--vmuted)';
         try {
-            var hash = await sha256(user + ':' + pass);
-            var check = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(user) + '&select=username&limit=1');
-            if (check && check.length) { resultEl.textContent = '❌ 用户名已存在'; resultEl.style.color = '#c08080'; return; }
-            var ok = await _post(SUPABASE_URL + '/rest/v1/user_accounts', {username: user, password_hash: hash, is_admin: false});
-            if (ok !== null) { resultEl.textContent = '✅ 注册成功! 请登录'; resultEl.style.color = 'var(--green)'; setTimeout(toggleLoginMode, 1000); }
-            else { resultEl.textContent = '❌ 注册失败 — 请执行 02_security.sql 开放anon写入权限'; resultEl.style.color = '#c08080'; }
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/register_account', {
+                method: 'POST', headers: _H(),
+                body: JSON.stringify({ p_username: user, p_password: pass, p_device_id: getDeviceId() })
+            });
+            var res = await resp.json();
+            if (!res || !res.length || !res[0].ok) {
+                var msg = (res && res.length && res[0].message) ? res[0].message : '注册失败（请确认已执行 09_lockdown.sql）';
+                resultEl.textContent = '❌ ' + msg; resultEl.style.color = '#c08080'; return;
+            }
+            _username = user; _loggedIn = true;
+            _isAdmin = false; _token = res[0].token;
+            saveLoginSession(user, res[0].token, true);
+            updateVipBadge(); updateSidebarLogin();
+            resultEl.textContent = '✅ 注册成功，已自动登录'; resultEl.style.color = 'var(--green)';
+            setTimeout(closeLoginDialog, 1000);
         } catch(e) { resultEl.textContent = '❌ 网络错误'; resultEl.style.color = '#c08080'; }
     }
 
@@ -3922,30 +3945,30 @@
     async function showUserProfile(username) {
         if (!username) return;
         try {
-            var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(username)+'&select=*&limit=1');
-            if (data) {
-                data = Array.isArray(data) ? data : [data];
-                if (data && data.length) {
-                    var p = data[0];
-                    var badge = p.verified ? ' <span style="color:#4a9adf;font-size:14px;">✔️</span>' : '';
-                    var vipLabel = '';
-                    var html = '<div style="text-align:center;padding:20px;">' +
-                        '<div style="font-size:48px;margin-bottom:8px;">' + (p.verified ? '👤🔵' : '👤') + '</div>' +
-                        '<div style="font-size:20px;font-weight:700;color:var(--vtext);font-family:var(--font-serif);">@' + esc(p.username) + badge + '</div>' +
-                        '<div style="font-size:12px;color:var(--vmuted);margin-top:4px;">' + vipLabel + '</div>' +
-                        (p.bio ? '<div style="font-size:12px;color:var(--vmuted);margin-top:8px;">' + esc(p.bio) + '</div>' : '') +
-                        '<div style="font-size:11px;color:var(--vmuted);margin-top:8px;">' +
-                        '<span>粉丝 ' + (p.follower_count||0) + '</span> · <span>关注 ' + (p.following_count||0) + '</span> · <span>' + new Date(p.created_at).toLocaleDateString('zh-CN') + ' 加入</span>' +
-                        '</div>';
-                    if (_loggedIn && _username !== username) {
-                        html += '<div style="margin-top:12px;"><button class="cheat-btn accent" onclick="followUser(\'' + esc(username) + '\')">+ 关注</button></div>';
-                    }
-                    html += '<div style="margin-top:12px;"><button class="cheat-btn" onclick="showAuthorPage(\'' + esc(username) + '\');closeAdminPanel();">查看作品</button></div>';
-                    html += '</div>';
-                    $grid.innerHTML = html;
-                    var overlay = document.getElementById('adminPanelOverlay');
-                    if (overlay) overlay.classList.remove('on');
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/get_user_profile', {
+                method: 'POST', headers: _H(), body: JSON.stringify({ p_username: username })
+            });
+            var rows = await resp.json();
+            var p = (rows && rows.length) ? rows[0] : null;
+            if (p) {
+                var badge = p.verified ? ' <span style="color:#4a9adf;font-size:14px;">✔️</span>' : '';
+                var vipLabel = '';
+                var html = '<div style="text-align:center;padding:20px;">' +
+                    '<div style="font-size:48px;margin-bottom:8px;">' + (p.verified ? '👤🔵' : '👤') + '</div>' +
+                    '<div style="font-size:20px;font-weight:700;color:var(--vtext);font-family:var(--font-serif);">@' + esc(p.username) + badge + '</div>' +
+                    '<div style="font-size:12px;color:var(--vmuted);margin-top:4px;">' + vipLabel + '</div>' +
+                    (p.bio ? '<div style="font-size:12px;color:var(--vmuted);margin-top:8px;">' + esc(p.bio) + '</div>' : '') +
+                    '<div style="font-size:11px;color:var(--vmuted);margin-top:8px;">' +
+                    '<span>粉丝 ' + (p.follower_count||0) + '</span> · <span>关注 ' + (p.following_count||0) + '</span> · <span>' + new Date(p.created_at).toLocaleDateString('zh-CN') + ' 加入</span>' +
+                    '</div>';
+                if (_loggedIn && _username !== username) {
+                    html += '<div style="margin-top:12px;"><button class="cheat-btn accent" onclick="followUser(\'' + esc(username) + '\')">+ 关注</button></div>';
                 }
+                html += '<div style="margin-top:12px;"><button class="cheat-btn" onclick="showAuthorPage(\'' + esc(username) + '\');closeAdminPanel();">查看作品</button></div>';
+                html += '</div>';
+                $grid.innerHTML = html;
+                var overlay = document.getElementById('adminPanelOverlay');
+                if (overlay) overlay.classList.remove('on');
             }
         } catch(e) {}
     }
@@ -3975,16 +3998,17 @@
         var r = document.getElementById('pwdResult');
         if (!oldP || !newP || newP.length < 4) { r.textContent = '❌ 新密码至少4个字符'; r.style.color = '#c08080'; return; }
         r.textContent = '验证中...'; r.style.color = 'var(--vmuted)';
-        var oldHash = await sha256(_username + ':' + oldP);
-        var newHash = await sha256(_username + ':' + newP);
         try {
-            var check = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username) + '&select=password_hash&limit=1');
-            if (!check || !check.length || check[0].password_hash !== oldHash) {
-                r.textContent = '❌ 原密码错误'; r.style.color = '#c08080'; return;
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/change_password', {
+                method: 'POST', headers: _H(),
+                body: JSON.stringify({ p_username: _username, p_old_password: oldP, p_new_password: newP })
+            });
+            var res = await resp.json();
+            if (res && res.length && res[0].ok) {
+                r.textContent = '✅ 密码修改成功, 请重新登录'; r.style.color = 'var(--green)'; clearLoginSession();
+            } else {
+                r.textContent = (res && res.length && res[0].message) ? '❌ ' + res[0].message : '❌ 修改失败'; r.style.color = '#c08080';
             }
-            var ok = await _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username), {password_hash: newHash});
-            if (ok) { r.textContent = '✅ 密码修改成功, 请重新登录'; r.style.color = 'var(--green)'; clearLoginSession(); }
-            else { r.textContent = '❌ 修改失败'; r.style.color = '#c08080'; }
         } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
 
@@ -4073,46 +4097,67 @@
         area.innerHTML = '<div class="vpi-spinner"></div>';
         var hds = _h(), results = [];
 
-        // 1. 连通性测试 (用videos表测试, 根路径可能返回错误)
+        // 1. 连通性测试 (用videos表测试)
         var connOK = false;
         try { var cr = await fetch(SUPABASE_URL + '/rest/v1/videos?limit=1', {headers:hds}); connOK = cr.ok; } catch(e) {}
         results.push(['📡 Supabase连接', connOK ? '✅' : '❌']);
 
-        // 2. 来自 01_tables.sql 的13张表
-        var tables = ['videos','scrape_status','user_accounts','user_vips','activation_codes',
-                      'friends','messages','announcements','admin_log','bans','system_config',
-                      'cloud_favorites','user_follows'];
-        for (var i = 0; i < tables.length; i++) {
+        // 2. 公开表: 应可读
+        var openTables = ['videos','scrape_status','announcements','site_pages','scraped_videos','friends','messages','cloud_favorites','user_follows'];
+        for (var i = 0; i < openTables.length; i++) {
             try {
-                var r = await fetch(SUPABASE_URL + '/rest/v1/' + tables[i] + '?limit=1', {headers: hds});
-                results.push([tables[i], r.ok ? '✅' : '❌ HTTP' + r.status]);
-            } catch(e) { results.push([tables[i], '❌']); }
+                var r = await fetch(SUPABASE_URL + '/rest/v1/' + openTables[i] + '?limit=1', {headers: hds});
+                results.push([openTables[i], r.ok ? '✅' : '❌ HTTP' + r.status]);
+            } catch(e) { results.push([openTables[i], '❌']); }
         }
 
-        // 3. 管理员账号
+        // 3. 敏感表: 应被锁定 (401/403)
+        var lockedTables = ['user_vips','activation_codes','admin_log','bans','system_config','sessions'];
+        for (var j = 0; j < lockedTables.length; j++) {
+            try {
+                var r2 = await fetch(SUPABASE_URL + '/rest/v1/' + lockedTables[j] + '?limit=1', {headers: hds});
+                results.push([lockedTables[j], (r2.status === 401 || r2.status === 403) ? '🔒 已锁定' : '⚠️ 可访问' + r2.status]);
+            } catch(e) { results.push([lockedTables[j], '🔒 已锁定']); }
+        }
+
+        // 4. user_accounts 安全列: 应可读 (不含敏感列)
         try {
-            var adm = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.kuo&select=username,vip_level,is_admin,verified&limit=1');
+            var safe = await _get(SUPABASE_URL + '/rest/v1/user_accounts?select=username,vip_level,verified&limit=1');
+            results.push(['👤 user_accounts 安全列', (safe && safe.length) ? '✅' : '❌']);
+        } catch(e) { results.push(['👤 user_accounts 安全列', '❌']); }
+
+        // 5. 敏感列 is_admin: 应被拒绝读取
+        try {
+            var sens = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?select=is_admin&limit=1', {headers: hds});
+            results.push(['🔒 is_admin 列', (sens.status === 400 || sens.status === 403) ? '🔒 不可读' : '⚠️ 可读!' + sens.status]);
+        } catch(e) { results.push(['🔒 is_admin 列', '🔒 不可读']); }
+
+        // 6. 管理员 kuo (只读安全列)
+        try {
+            var adm = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.kuo&select=username,vip_level,verified&limit=1');
             if (adm && adm.length > 0) {
                 var a = adm[0];
-                results.push(['👤 管理员 kuo', '✅ ' + a.vip_level + (a.is_admin?' 👑':'') + (a.verified?' 🔵':'')]);
-            } else { results.push(['👤 管理员 kuo', '❌ 不存在']); }
-        } catch(e) { results.push(['👤 管理员 kuo', '❌']); }
+                results.push(['👑 管理员 kuo', '✅ ' + a.vip_level + (a.verified?' 🔵':'')]);
+            } else { results.push(['👑 管理员 kuo', '❌ 不存在']); }
+        } catch(e) { results.push(['👑 管理员 kuo', '❌']); }
 
-        // 4. RLS 检查
+        // 7. 动态密码锁: 服务端校验 (错误密码应被拒绝)
         try {
-            var rls = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.kuo&select=vip_level&limit=1', {headers:hds});
-            results.push(['🔒 RLS读取检查', rls.ok ? '✅' : '❌']);
-        } catch(e) { results.push(['🔒 RLS读取检查', '❌']); }
+            var pc = await _post(SUPABASE_URL + '/rest/v1/rpc/verify_passcode', {p_code: '0000', p_device_id: 'diag'});
+            var locked = !(pc && pc.length && pc[0].ok);
+            results.push(['🔑 动态密码锁', locked ? '✅ 服务端校验' : '⚠️ 异常']);
+        } catch(e) { results.push(['🔑 动态密码锁', '❌']); }
 
-        var failCount = results.filter(function(x){return x[1].indexOf('❌')===0;}).length;
+        var failCount = results.filter(function(x){return x[1].indexOf('❌')===0 || x[1].indexOf('⚠️')===0;}).length;
         var h = '<b>' + (failCount===0?'✅ 全部正常':'❌ '+failCount+' 项异常') + '</b><br>';
         h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px 8px;font-size:10px;font-family:monospace;max-height:350px;overflow-y:auto;">';
         for (var k = 0; k < results.length; k++) {
-            h += '<div style="color:'+(results[k][1].indexOf('❌')===0?'#c08080':'var(--green)')+'">'+results[k][1]+'</div><div>'+results[k][0]+'</div>';
+            var bad = results[k][1].indexOf('❌')===0 || results[k][1].indexOf('⚠️')===0;
+            h += '<div style="color:'+(bad?'#c08080':'var(--green)')+'">'+results[k][1]+'</div><div>'+results[k][0]+'</div>';
         }
         h += '</div>';
         if (failCount > 0) {
-            h += '<br><b style="color:#c08080;">请依次执行: 01_tables.sql → 02_security.sql → 03_seed.sql → 04_scraper_fn.sql</b>';
+            h += '<br><b style="color:#c08080;">请在 Supabase SQL Editor 执行: 09_lockdown.sql（替代旧的 02_security.sql）</b>';
         }
         area.innerHTML = h;
     }
@@ -4157,9 +4202,13 @@
 
     function showAdminPanel() {
         if (!_isAdmin) { showLoginDialog(); return; }
-        // 重新从数据库验证管理员身份(防止被降级后仍能访问)
-        _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(_username) + '&select=is_admin&limit=1').then(function(data){
-            if (!data || !data.length || !data[0].is_admin) {
+        if (!_token) { _isAdmin = false; clearLoginSession(); showLoginDialog(); return; }
+        // 用服务端会话 token 验证管理员身份(客户端 is_admin 仅作缓存, 以服务端为准)
+        fetch(SUPABASE_URL + '/rest/v1/rpc/check_session', {
+            method: 'POST', headers: _H(), body: JSON.stringify({ p_token: _token })
+        }).then(function(r){ return r.json(); }).then(function(rows){
+            var s = (rows && rows.length) ? rows[0] : null;
+            if (!s || !s.valid || !s.is_admin) {
                 _isAdmin = false;
                 updateVipBadge(); updateSidebarLogin();
                 clearLoginSession();
@@ -4257,10 +4306,14 @@
 
     function showAdminUsers(area) {
         area.innerHTML = '<div class="vpi-spinner" style="margin:20px auto;"></div>';
-        _get(SUPABASE_URL + '/rest/v1/user_accounts?select=username,is_admin,created_at,last_login&order=created_at.desc&limit=100').then(function(users){
+        if (!_token) { area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">未登录或会话已失效</div>'; return; }
+        fetch(SUPABASE_URL + '/rest/v1/rpc/admin_list_users', {
+            method: 'POST', headers: _H(), body: JSON.stringify({ p_token: _token, p_offset: 0, p_limit: 100 })
+        }).then(function(r){ return r.json(); }).then(function(users){
+            if (!Array.isArray(users)) users = [];
             var h = '<div style="max-height:350px;overflow-y:auto;"><table style="width:100%;font-size:10px;border-collapse:collapse;">';
             h += '<tr style="color:var(--vmuted);"><th style="text-align:left;padding:4px;">用户</th><th>角色</th><th>注册时间</th><th>操作</th></tr>';
-            if (!users || users.length === 0) {
+            if (users.length === 0) {
                 h += '<tr><td colspan="4" style="padding:20px;text-align:center;color:#c08080;">暂无用户数据</td></tr>';
             } else {
                 for (var i=0;i<users.length;i++) {
@@ -4268,7 +4321,7 @@
                     var role = u.is_admin ? '<span style="color:#c8a45c;">管理员</span>' : '<span style="color:var(--vmuted);">用户</span>';
                     var date = u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '?';
                     h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
-                    h += '<td style="padding:4px;cursor:pointer;color:var(--vprimary);" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+'</td>';
+                    h += '<td style="padding:4px;cursor:pointer;color:var(--vprimary);" onclick="showUserProfile(\''+esc(u.username)+'\')">@'+esc(u.username)+(u.verified?' 🔵':'')+'</td>';
                     h += '<td style="font-size:9px;">'+role+'</td>';
                     h += '<td style="font-size:9px;color:var(--vmuted);">'+date+'</td>';
                     h += '<td>';
@@ -4281,7 +4334,7 @@
             h += '</table></div>';
             area.innerHTML = h;
         }).catch(function(e){
-            area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">加载失败: '+esc(e.message)+'</div>';
+            area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">加载失败: '+esc(e.message)+'<br>需要管理员会话 (09_lockdown.sql)</div>';
         });
     }
 
@@ -4292,14 +4345,14 @@
             return;
         }
         if (btn) btn.textContent = '...';
-        _patch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(username), {is_admin: makeAdmin}).then(function(ok){
+        _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', { p_token: _token, p_action: 'set_admin', p_target: username, p_detail: makeAdmin ? 'true' : 'false' }).then(function(res){
+            var ok = res && res.length && res[0].ok;
             if (ok) {
-                _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: makeAdmin?'promote_admin':'demote_admin', target: username});
                 toast((makeAdmin ? '已升为管理员: @' : '已取消管理员: @') + username + (makeAdmin ? '' : ' — 该用户需重新登录生效'));
                 adminDo('set_admin');
             } else {
                 if (btn) btn.textContent = '失败';
-                toast('需要执行 02_security.sql');
+                toast('无权限或会话失效，请重新登录');
             }
         });
     }
@@ -4308,14 +4361,14 @@
         if (username === SITE_OWNER) { toast('站主不可删除'); return; }
         if (!confirm('确定删除用户 @'+username+' ？此操作不可撤销！')) return;
         if (btn) btn.textContent = '...';
-        fetch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(username), {method: 'DELETE', headers: _h()}).then(function(r){
-            if (r.ok) {
-                _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'delete_user', target: username});
+        _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', { p_token: _token, p_action: 'delete_user', p_target: username, p_detail: '' }).then(function(res){
+            var ok = res && res.length && res[0].ok;
+            if (ok) {
                 toast('已删除 @'+username);
                 adminDo('set_admin');
             } else {
                 if (btn) btn.textContent = '失败';
-                toast('需要执行 02_security.sql');
+                toast('无权限或会话失效，请重新登录');
             }
         });
     }
@@ -4323,23 +4376,21 @@
 
     function showAdminStats(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
-        Promise.all([
-            fetch(SUPABASE_URL+'/rest/v1/user_accounts?select=id&limit=1',{headers:Object.assign({},_h(),{'Prefer':'count=exact'})}),
-            fetch(SUPABASE_URL+'/rest/v1/videos?select=id&limit=1',{headers:Object.assign({},_h(),{'Prefer':'count=exact'})}),
-            fetch(SUPABASE_URL+'/rest/v1/announcements?select=id&limit=1',{headers:Object.assign({},_h(),{'Prefer':'count=exact'})})
-        ]).then(function(rs){
-            var counts = [0,0,0];
-            for (var i=0;i<rs.length;i++) {
-                var rg = rs[i].headers.get('content-range');
-                if (rg) { var m = rg.match(/\/(\d+)/); if (m) counts[i] = parseInt(m[1]); }
+        if (!_token) { area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">未登录或会话已失效</div>'; return; }
+        _post(SUPABASE_URL + '/rest/v1/rpc/site_stats', { p_token: _token }).then(function(rows){
+            var s = (rows && rows.length) ? rows[0] : null;
+            if (!s) {
+                area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">无管理员权限</div>';
+                return;
             }
             area.innerHTML =
                 '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;">' +
-                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[0]+'</div><div style="font-size:10px;color:var(--vmuted);">注册用户</div></div>' +
-                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[1]+'</div><div style="font-size:10px;color:var(--vmuted);">视频总数</div></div>' +
-                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+counts[2]+'</div><div style="font-size:10px;color:var(--vmuted);">公告数</div></div>' +
-                '</div>';
-        });
+                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+(s.total_users||0)+'</div><div style="font-size:10px;color:var(--vmuted);">注册用户</div></div>' +
+                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+(s.total_videos||0)+'</div><div style="font-size:10px;color:var(--vmuted);">视频总数</div></div>' +
+                '<div style="background:var(--vcard);padding:12px;border-radius:2px;"><div style="font-size:24px;color:var(--vprimary);">'+(s.playable_videos||0)+'</div><div style="font-size:10px;color:var(--vmuted);">可播放视频</div></div>' +
+                '</div>' +
+                '<div style="font-size:10px;color:var(--vmuted);text-align:center;margin-top:8px;">私信总数: '+(s.total_messages||0)+'</div>';
+        }).catch(function(){ area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">加载失败</div>'; });
     }
 
     function showAdminConfig(area) {
@@ -4348,12 +4399,18 @@
             '<input id="cfgSiteName" placeholder="站点名称" value="VideoDB" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;">'+
             '<button class="cheat-btn accent" onclick="saveConfig()" style="width:100%;">保存设置</button>'+
             '<div id="cfgResult" style="font-size:10px;margin-top:6px;"></div>';
+        // 读取当前站点名称 (只读白名单)
+        _post(SUPABASE_URL + '/rest/v1/rpc/get_config', { p_key: 'site_name' }).then(function(rows){
+            var el = document.getElementById('cfgSiteName');
+            if (el && rows && rows.length && rows[0].value) el.value = rows[0].value;
+        }).catch(function(){});
     }
     async function saveConfig() {
         var name = document.getElementById('cfgSiteName').value || 'VideoDB';
-        var ok = await _post(SUPABASE_URL + '/rest/v1/system_config', {key: 'site_name', value: name, updated_at: new Date().toISOString()});
-        if (ok === null) ok = await _patch(SUPABASE_URL + '/rest/v1/system_config?key=eq.site_name', {value: name});
-        document.getElementById('cfgResult').textContent = ok ? '✅ 已保存' : '❌ 失败';
+        if (!_token) { document.getElementById('cfgResult').textContent = '❌ 未登录或会话失效'; document.getElementById('cfgResult').style.color = '#c08080'; return; }
+        var res = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_config', { p_token: _token, p_key: 'site_name', p_value: name });
+        var ok = res && res.length && res[0].ok;
+        document.getElementById('cfgResult').textContent = ok ? '✅ 已保存' : '❌ 失败 (无管理员权限?)';
         document.getElementById('cfgResult').style.color = ok ? 'var(--green)' : '#c08080';
     }
     function showAdminSearch(area) {
@@ -4361,8 +4418,8 @@
     }
     async function searchUser(q) {
         if (!q.trim()) { document.getElementById('searchUserResult').innerHTML = ''; return; }
-        var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=ilike.*'+escUrl(q)+'*&banned=eq.false&select=username,vip_level,verified&order=created_at.desc&limit=30');
-        var users = Array.isArray(data) ? data : (data ? [data] : []);
+        var data = await _post(SUPABASE_URL + '/rest/v1/rpc/search_users', { p_query: q.trim() });
+        var users = Array.isArray(data) ? data : [];
         var h = '';
         for (var i = 0; i < users.length; i++) {
             var u = users[i];
@@ -4383,9 +4440,10 @@
         var p = document.getElementById('resetNewPwd').value.trim();
         var r = document.getElementById('resetPwdResult');
         if (!u || !p) { r.textContent = '请填写完整'; return; }
-        var hash = await sha256(u + ':' + p);
-        var ok = await _adminPatch(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(u)+'&is_admin=eq.false', {password_hash: hash});
-        r.textContent = ok ? '✅ 已重置密码' : '❌ 用户不存在或为管理员';
+        if (!_token) { r.textContent = '❌ 未登录或会话失效'; r.style.color = '#c08080'; return; }
+        var res = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_reset_password', { p_token: _token, p_target: u, p_new_password: p });
+        var ok = res && res.length && res[0].ok;
+        r.textContent = ok ? '✅ 已重置密码' : '❌ ' + ((res && res.length && res[0].message) || '无权限或用户不存在');
         r.style.color = ok ? 'var(--green)' : '#c08080';
     }
     function showAdminDelVideo(area) {
@@ -4399,14 +4457,14 @@
         var vid = document.getElementById('delVideoId').value.trim();
         if (!vid) return;
         if (!confirm('确定删除 ' + vid + ' ?')) return;
-        var ok = await _delete(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(vid));
         var r = document.getElementById('delVideoResult');
+        var res = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', { p_token: _token, p_action: 'delete_video', p_target: vid, p_detail: '' });
+        var ok = res && res.length && res[0].ok;
         if (ok) {
-            await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'delete_video', target: vid});
             r.textContent = '已删除 ' + vid; r.style.color = 'var(--green)';
             loadVids(true);
         } else {
-            r.textContent = '需执行 02_security.sql'; r.style.color = '#c08080';
+            r.textContent = ((res && res.length && res[0].message) || '无权限或会话失效'); r.style.color = '#c08080';
         }
     }
 
@@ -4419,10 +4477,9 @@
         r.textContent = '删除中...'; r.style.color = 'var(--vmuted)';
         var deleted = 0;
         for (var i=0;i<ids.length;i++) {
-            var ok = await _delete(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(ids[i]));
-            if (ok) deleted++;
+            var res = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', { p_token: _token, p_action: 'delete_video', p_target: ids[i], p_detail: '' });
+            if (res && res.length && res[0].ok) deleted++;
         }
-        await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'batch_delete_video', detail: deleted+'/'+ids.length});
         r.textContent = '已删除 ' + deleted + '/' + ids.length; r.style.color = 'var(--green)';
         loadVids(true);
     }
@@ -4439,11 +4496,12 @@
         area.innerHTML = '<button class="cheat-btn accent" onclick="exportAllData()" style="width:100%;">📤 导出全站用户列表(JSON)</button><div id="exportResult" style="font-size:10px;margin-top:6px;"></div>';
     }
     async function exportAllData() {
-        var r = await fetch(SUPABASE_URL+'/rest/v1/user_accounts?select=username,vip_level,verified,banned,created_at&limit=1000',{headers:_h()});
+        if (!_token) { document.getElementById('exportResult').textContent = '❌ 未登录或会话失效'; return; }
+        var r = await fetch(SUPABASE_URL+'/rest/v1/rpc/admin_list_users', {method:'POST', headers:_H(), body: JSON.stringify({ p_token: _token, p_offset: 0, p_limit: 2000 })});
         var data = await r.json();
         var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
         var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'users_export.json'; a.click();
-        document.getElementById('exportResult').textContent = '✅ 已导出 ' + data.length + ' 条';
+        document.getElementById('exportResult').textContent = '✅ 已导出 ' + (Array.isArray(data)?data.length:0) + ' 条';
     }
     function showAdminBroadcast(area) {
         area.innerHTML =
@@ -4457,9 +4515,10 @@
     async function sendBroadcast() {
         var msg = document.getElementById('broadcastMsg').value.trim();
         if (!msg) return;
-        await _adminPost(SUPABASE_URL+'/rest/v1/announcements',{title:'📢 系统通知',content:msg,created_by:_username,is_active:true});
-        showNotification('📢 管理员通知: ' + msg);
-        document.getElementById('bcResult').textContent = '✅ 公告已发布 + 弹窗通知已弹出';
+        var res = await _post(SUPABASE_URL+'/rest/v1/rpc/admin_exec', { p_token: _token, p_action: 'announce_create', p_target: '📢 系统通知', p_detail: msg });
+        var ok = res && res.length && res[0].ok;
+        if (ok) { showNotification('📢 管理员通知: ' + msg); loadAnnouncements(); }
+        document.getElementById('bcResult').textContent = ok ? '✅ 公告已发布 + 弹窗通知已弹出' : '❌ 无权限或会话失效';
     }
     function sendLocalNotification() {
         var msg = document.getElementById('broadcastMsg').value.trim();
@@ -4469,23 +4528,25 @@
     }
     function showAdminAudit(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
-        Promise.all([
-            fetch(SUPABASE_URL+'/rest/v1/admin_log?select=*&order=created_at.desc&limit=50',{headers:_h()}).then(function(r){return r.json();}),
-            fetch(SUPABASE_URL+'/rest/v1/bans?select=*&order=banned_at.desc&limit=20',{headers:_h()}).then(function(r){return r.json();})
-        ]).then(function(r){
-            var logs = r[0], bans = r[1];
+        if (!_token) { area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">未登录或会话已失效</div>'; return; }
+        _post(SUPABASE_URL + '/rest/v1/rpc/admin_audit', { p_token: _token }).then(function(rows){
+            var row = (rows && rows.length) ? rows[0] : null;
+            var logs = (row && row.logs) ? row.logs : [];
+            var bans = (row && row.bans) ? row.bans : [];
             var h = '<b>最近操作:</b><div style="max-height:150px;overflow-y:auto;margin-bottom:8px;">';
             for (var i=0;i<logs.length;i++) h += '<div style="font-size:10px;padding:2px 0;">'+esc(logs[i].admin_user)+' '+esc(logs[i].action)+' '+esc(logs[i].target)+' <span style="color:var(--vmuted);">'+new Date(logs[i].created_at).toLocaleString('zh-CN')+'</span></div>';
             h += '</div><b>封禁记录:</b><div style="max-height:150px;overflow-y:auto;">';
             for (var j=0;j<bans.length;j++) h += '<div style="font-size:10px;padding:2px 0;">🚫 '+esc(bans[j].username)+' by '+esc(bans[j].banned_by)+(bans[j].reason?' ('+esc(bans[j].reason)+')':'')+'</div>';
             h += '</div>';
             area.innerHTML = h;
-        });
+        }).catch(function(){ area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">加载失败 (需管理员会话)</div>'; });
     }
 
     function showAdminLogs(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
-        fetch(SUPABASE_URL+'/rest/v1/admin_log?select=*&order=created_at.desc&limit=50',{headers:_h()}).then(function(r){return r.json();}).then(function(logs){
+        if (!_token) { area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">未登录或会话已失效</div>'; return; }
+        _post(SUPABASE_URL + '/rest/v1/rpc/admin_logs', { p_token: _token }).then(function(logs){
+            if (!Array.isArray(logs)) logs = [];
             var h = '<div style="max-height:300px;overflow-y:auto;">';
             for (var i=0;i<logs.length;i++) {
                 var l = logs[i];
@@ -4498,7 +4559,7 @@
             }
             h += '</div>';
             area.innerHTML = h;
-        });
+        }).catch(function(){ area.innerHTML = '<div style="color:#c08080;text-align:center;padding:20px;">加载失败 (需管理员会话)</div>'; });
     }
 
     // ============ 新增管理功能 ============
@@ -4518,71 +4579,39 @@
             '<div id="videoMgmtResult" style="font-size:10px;margin-top:6px;"></div>';
     }
 
+    function doVideoMgmt() {
+        var action = document.getElementById('videoMgmtAction').value;
+        doVideoMgmtQuick(action);
+    }
+
     async function doVideoMgmtQuick(action) {
         var param = document.getElementById('videoMgmtParam').value.trim();
         var r = document.getElementById('videoMgmtResult');
         r.textContent = '处理中...'; r.style.color = 'var(--vmuted)';
-        var url = SUPABASE_URL + '/rest/v1/videos?';
-        var method = 'PATCH';
-        var body = {};
-        var confirmMsg = '';
-        var limit = '&limit=500';
-        switch(action) {
-            case 'rescrape_all':
-                url += 'needs_rescrape=is.false' + limit;
-                body = {needs_rescrape: true, updated_at: new Date().toISOString()};
-                confirmMsg = '确定标记所有未标记的视频为重爬？';
-                break;
-            case 'clear_all':
-                url += 'needs_rescrape=is.true' + limit;
-                body = {needs_rescrape: false, updated_at: new Date().toISOString()};
-                confirmMsg = '确定清除所有重爬标记？';
-                break;
-            case 'del_no_mp4':
-                url += 'has_mp4=is.false&needs_rescrape=is.true' + limit;
-                method = 'DELETE';
-                confirmMsg = '确定删除所有无法播放且待重爬的视频？此操作不可撤销！';
-                break;
-            case 'del_old_30d':
-                var cutoff = new Date(Date.now() - 30*86400000).toISOString();
-                url += 'updated_at=lt.' + cutoff + '&has_mp4=is.false' + limit;
-                method = 'DELETE';
-                confirmMsg = '确定删除30天前未更新且无法播放的视频？此操作不可撤销！';
-                break;
-            case 'rescrape_section':
-                if (!param) { r.textContent = '请输入栏目名'; return; }
-                url += 'source_section=ilike.*'+encodeURIComponent(param)+'*' + limit;
-                body = {needs_rescrape: true, updated_at: new Date().toISOString()};
-                confirmMsg = '确定标记栏目 "' + param + '" 所有视频为重爬？';
-                break;
-            case 'del_section':
-                if (!param) { r.textContent = '请输入栏目名'; return; }
-                url += 'source_section=ilike.*'+encodeURIComponent(param)+'*' + limit;
-                method = 'DELETE';
-                confirmMsg = '确定删除栏目 "' + param + '" 的所有视频？此操作不可撤销！';
-                break;
-            default:
-                r.textContent = '未知操作'; return;
+        if (!_token) { r.textContent = '❌ 未登录或会话失效'; r.style.color = '#c08080'; return; }
+
+        var map = {
+            'rescrape': ['videos_rescrape_all', '确定标记所有未标记的视频为重爬？'],
+            'clear_rescrape': ['videos_clear_rescrape', '确定清除所有重爬标记？'],
+            'del_no_mp4': ['videos_del_no_mp4', '确定删除所有无法播放且待重爬的视频？此操作不可撤销！'],
+            'del_old': ['videos_del_old_30d', '确定删除30天前未更新且无法播放的视频？此操作不可撤销！'],
+            'rescrape_section': ['videos_rescrape_section', '确定标记栏目 "' + param + '" 所有视频为重爬？'],
+            'del_section': ['videos_del_section', '确定删除栏目 "' + param + '" 的所有视频？此操作不可撤销！'],
+            'del_author': ['videos_del_author', '确定删除作者 "' + param + '" 的所有视频？此操作不可撤销！']
+        };
+        var entry = map[action];
+        if (!entry) { r.textContent = '未知操作'; return; }
+        if ((action === 'del_section' || action === 'del_author' || action === 'rescrape_section') && !param) {
+            r.textContent = '请输入栏目名或作者名'; return;
         }
-        if (!confirm(confirmMsg)) { r.textContent = '已取消'; r.style.color = 'var(--vmuted)'; return; }
-        try {
-            var resp;
-            if (method === 'DELETE') {
-                resp = await fetch(url, {method: 'DELETE', headers: _h()});
-            } else {
-                resp = await fetch(url, {method: 'PATCH', headers: Object.assign({}, _h(), {'Content-Type':'application/json'}), body: JSON.stringify(body)});
-            }
-            if (resp.ok) {
-                await _post(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: action, target: param, detail: '批量操作'});
-                r.textContent = '操作成功'; r.style.color = 'var(--green)';
-                loadVids(true);
-            } else {
-                r.textContent = 'HTTP ' + resp.status + ' — 需执行 02_security.sql';
-                r.style.color = '#c08080';
-            }
-        } catch(e) {
-            r.textContent = (e.message || '网络错误');
-            r.style.color = '#c08080';
+        if (!confirm(entry[1])) { r.textContent = '已取消'; r.style.color = 'var(--vmuted)'; return; }
+        var res = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', { p_token: _token, p_action: entry[0], p_target: param, p_detail: '' });
+        var ok = res && res.length && res[0].ok;
+        if (ok) {
+            r.textContent = '✅ ' + (res[0].message || '操作成功'); r.style.color = 'var(--green)';
+            loadVids(true);
+        } else {
+            r.textContent = '❌ ' + ((res && res.length && res[0].message) || '无权限或会话失效'); r.style.color = '#c08080';
         }
     }
 
@@ -4627,14 +4656,15 @@
         var thumb = document.getElementById('editVidThumb').value.trim();
         var r = document.getElementById('editVidResult');
         if (!vid) return;
+        if (!_token) { r.textContent = '❌ 未登录或会话失效'; r.style.color = '#c08080'; return; }
         r.textContent = '保存中...'; r.style.color = 'var(--vmuted)';
-        var ok = await _adminPatch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(vid), {title: title, author: author, thumbnail_url: thumb, updated_at: new Date().toISOString()});
+        var res = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_edit_video', { p_token: _token, p_video_id: vid, p_title: title, p_author: author, p_thumbnail: thumb });
+        var ok = res && res.length && res[0].ok;
         if (ok) {
-            await _adminPost(SUPABASE_URL + '/rest/v1/admin_log', {admin_user: _username, action: 'edit_video', target: vid, detail: title});
             r.textContent = '✅ 已保存'; r.style.color = 'var(--green)';
             loadVids(true);
         } else {
-            r.textContent = '❌ 需执行 02_security.sql'; r.style.color = '#c08080';
+            r.textContent = '❌ ' + ((res && res.length && res[0].message) || '无权限或会话失效'); r.style.color = '#c08080';
         }
     }
 
@@ -4649,7 +4679,7 @@
 
     function clearAppCache() {
         // 清理本地存储的缓存数据 (保留登录状态和收藏)
-        var keep = ['login_user', 'login_hash', 'login_time', 'login_remember', 'auth_expiry', 'vid_prefs', 'vid_favs', 'best2048'];
+        var keep = ['login_user', 'login_token', 'login_time', 'login_remember', 'vid_prefs', 'vid_favs', 'best2048', 'vid_gate_token', 'vid_device_id'];
         var allKeys = [];
         for (var i = 0; i < localStorage.length; i++) allKeys.push(localStorage.key(i));
         for (var j = 0; j < allKeys.length; j++) {
@@ -4979,37 +5009,42 @@
         });
     }
 
-function saveLoginSession(user, hash, remember) {
+function saveLoginSession(user, token, remember) {
         var store = remember ? localStorage : sessionStorage;
         store.setItem('login_user', user);
-        store.setItem('login_hash', hash);
+        store.setItem('login_token', token);
         store.setItem('login_time', Date.now().toString());
         if (remember) localStorage.setItem('login_remember', '1');
         else { localStorage.removeItem('login_remember'); sessionStorage.setItem('login_remember', '0'); }
     }
 
     function clearLoginSession() {
+        if (_token) {
+            try { fetch(SUPABASE_URL + '/rest/v1/rpc/logout', {method:'POST', headers:_H(), body: JSON.stringify({ p_token: _token })}).catch(function(){}); } catch(e) {}
+        }
         [localStorage, sessionStorage].forEach(function(s) {
-            s.removeItem('login_user'); s.removeItem('login_hash'); s.removeItem('login_time');
+            s.removeItem('login_user'); s.removeItem('login_token'); s.removeItem('login_time'); s.removeItem('login_hash');
         });
         localStorage.removeItem('login_remember');
         _username = ''; _loggedIn = false;
-        _isAdmin = false;
+        _isAdmin = false; _token = '';
         updateVipBadge(); updateSidebarLogin();
     }
 
+    // 用服务端签发的 token 恢复登录 (不再读取密码哈希)
     async function autoLogin() {
         var savedUser = sessionStorage.getItem('login_user') || localStorage.getItem('login_user');
-        var savedHash = sessionStorage.getItem('login_hash') || localStorage.getItem('login_hash');
-        if (!savedUser || !savedHash) return false;
+        var savedToken = sessionStorage.getItem('login_token') || localStorage.getItem('login_token');
+        if (!savedUser || !savedToken) return false;
         try {
-            var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(savedUser) + '&select=username,password_hash,vip_level,is_admin,banned&limit=1');
-            if (!data || !data.length) { clearLoginSession(); return false; }
-            var acc = data[0];
-            if (acc.banned || acc.password_hash !== savedHash) { clearLoginSession(); return false; }
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/check_session', {
+                method: 'POST', headers: _H(), body: JSON.stringify({ p_token: savedToken })
+            });
+            var rows = await resp.json();
+            var s = (rows && rows.length) ? rows[0] : null;
+            if (!s || !s.valid || s.username !== savedUser) { clearLoginSession(); return false; }
             _username = savedUser; _loggedIn = true;
-            _isAdmin = acc.is_admin;
-            saveLoginSession(savedUser, savedHash);
+            _isAdmin = !!s.is_admin; _token = savedToken;
             checkUnread();
             return true;
         } catch(e) { clearLoginSession(); return false; }
@@ -5050,13 +5085,15 @@ function saveLoginSession(user, hash, remember) {
         var uses = parseInt(document.getElementById('genCodeUses').value) || 1;
         var r = document.getElementById('genCodeResult');
         r.textContent = '生成中...'; r.style.color = 'var(--vmuted)';
+        if (!_token) { r.textContent = '❌ 未登录或会话失效'; r.style.color = '#c08080'; return; }
         try {
-            var code = level.toUpperCase() + '_' + Date.now().toString(36).toUpperCase() + randomStr(4);
-            var ok = await _adminPost(SUPABASE_URL + '/rest/v1/activation_codes', {code: code, vip_level: level, max_uses: uses, created_by: _username});
-            if (ok !== null) {
+            var res = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_generate_code', { p_token: _token, p_level: level, p_uses: uses });
+            var ok = res && res.length && res[0].ok;
+            if (ok && res[0].code) {
+                var code = res[0].code;
                 r.innerHTML = '✅ 激活码: <b style="font-size:14px;color:var(--vprimary);user-select:all;">' + code + '</b> (' + uses + '次)<br><button class="cheat-btn accent" style="font-size:10px;padding:4px 10px;margin-top:4px;" onclick="navigator.clipboard.writeText(\'' + code + '\');this.textContent=\'✅ 已复制!\'">📋 复制激活码</button>';
             } else {
-                r.textContent = '❌ 需执行 02_security.sql'; r.style.color = '#c08080';
+                r.textContent = '❌ 无管理员权限或会话失效'; r.style.color = '#c08080';
             }
         } catch(e) { r.textContent = '❌ 网络错误'; r.style.color = '#c08080'; }
     }
@@ -5095,12 +5132,71 @@ function saveLoginSession(user, hash, remember) {
         loadAnnouncements();
     };
 
+    // ============ 代码完整性校验 ============
+    // 将当前页面代码的 SHA-256 与仓库部署时写入 Supabase 的 site_code_hash 比对,
+    // 以检测页面是否被第三方篡改/替换。未配置 hash 时跳过(部署后自动启用)。
+    var _codeIntegrity = { state: 'pending' };
+    var _codeIntegrityChecked = false;
+
+    function _renderIntegrityBadge() {
+        var el = document.getElementById('authVerifyStatus');
+        if (!el) return;
+        var st = _codeIntegrity.state;
+        if (st === 'pass') {
+            el.innerHTML = '<span style="color:#5a7a5a;">🔒 代码已验证 · 与仓库部署版本一致</span>';
+        } else if (st === 'fail') {
+            el.innerHTML = '<span style="color:#c08080;">⚠️ 代码校验失败 · 页面可能被篡改，已禁止进入</span>';
+        } else if (st === 'noset') {
+            el.innerHTML = '<span style="color:var(--vmuted);">⏳ 尚未配置代码校验（部署后自动启用）</span>';
+        } else if (st === 'error') {
+            el.innerHTML = '<span style="color:var(--vmuted);">— 代码校验不可用（本地预览时正常）</span>';
+        } else {
+            el.innerHTML = '<span style="color:var(--vmuted);">校验中…</span>';
+        }
+    }
+
+    function verifyCodeIntegrity() {
+        if (_codeIntegrityChecked) return Promise.resolve(_codeIntegrity);
+        _codeIntegrityChecked = true;
+        _renderIntegrityBadge();
+        return fetch(location.href, { cache: 'no-store' })
+            .then(function(r){ return r.arrayBuffer(); })
+            .then(function(buf){
+                var bytes = new Uint8Array(buf);
+                var s = '';
+                for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+                return sha256(s);
+            })
+            .then(function(computed){
+                return _post(SUPABASE_URL + '/rest/v1/rpc/get_config', { p_key: 'site_code_hash' }).then(function(rows){
+                    var stored = rows && rows.length && rows[0].value ? String(rows[0].value).trim().toLowerCase() : '';
+                    if (!stored) {
+                        _codeIntegrity.state = 'noset';
+                    } else if (computed === stored) {
+                        _codeIntegrity.state = 'pass';
+                    } else {
+                        _codeIntegrity.state = 'fail';
+                        console.warn('[integrity] 代码校验失败: 当前页面 sha256=' + computed + ' != 部署记录 ' + stored);
+                        document.getElementById('codeTamperBanner').style.display = 'block';
+                    }
+                    _renderIntegrityBadge();
+                    return _codeIntegrity;
+                });
+            })
+            .catch(function(e){
+                _codeIntegrity.state = 'error';
+                _renderIntegrityBadge();
+                return _codeIntegrity;
+            });
+    }
+
     // ============ 初始化 + 启动 ============
     addExtraSidebarItems();
     initGame();
     updateFavsBadge();
     updateHistBadge();
     applyPrefsUI();
+    verifyCodeIntegrity();
     autoLogin().then(function() { updateVipBadge(); updateSidebarLogin(); });
     // 给 sidebar 打补丁添加登录入口
     (function() {

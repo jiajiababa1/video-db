@@ -57,7 +57,7 @@
 <div class="wrap">
     <div class="icon">🔐</div>
     <h1>当前动态密码</h1>
-    <p class="sub">5 分钟自动更换</p>
+    <p class="sub">5 分钟自动更换 · 本站专用</p>
     <div class="code" id="code">----</div>
     <div class="timer">
         剩余 <span id="remaining">--</span>
@@ -65,19 +65,27 @@
     </div>
     <button class="btn copy" id="copyBtn" onclick="doCopy()">📋 点此复制密码</button>
     <button class="btn back" onclick="window.close();">← 返回</button>
-    <p class="hint">复制后切换到视频库页面<br>在密码框中粘贴即可</p>
+    <p class="hint">复制后切换到视频库页面<br>在密码框中粘贴即可<br><br>⚠️ 本页包含内部密钥，请勿外传</p>
 </div>
 <script>
-// 与 index.html 完全一致的 TOTP 算法
-var S1 = 1046;      // "MONS2026NODEKEY" ASCII 和
-var P1 = 7919;      // 大质数1
-var P2 = 6271;      // 大质数2
-var M  = 6559466;   // S1 * P2
+// TOTP 算法与服务器端完全一致 (09_lockdown.sql):
+//   code = ((win + s1) * P1 + win * s1*P2) % 10000,  win = floor(now/300)
+//   s1 = 密钥字符串 ASCII 码之和（此处自动计算，勿写死，防止改种子后不同步）
+var SEED = 'VIDEODB2026LOCKKEY';
+var P1 = 7919;
+var P2 = 6271;
 var STEP = 300;     // 5 分钟
 
+function seedSum(s) {
+    var n = 0;
+    for (var i = 0; i < s.length; i++) n += s.charCodeAt(i);
+    return n;
+}
+
 function generateTOTP() {
-    var timeWindow = Math.floor(Date.now() / 1000 / STEP);
-    var code = ((timeWindow + S1) * P1 + timeWindow * M) % 10000;
+    var s1 = seedSum(SEED);
+    var win = Math.floor(Date.now() / 1000 / STEP);
+    var code = ((win + s1) * P1 + win * (s1 * P2)) % 10000;
     return code;
 }
 
