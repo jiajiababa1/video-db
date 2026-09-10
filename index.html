@@ -1530,8 +1530,9 @@
             method: 'POST', headers: _H(),
             body: JSON.stringify({ p_code: input, p_device_id: getDeviceId() })
         }).then(function(r){ return r.json(); }).then(function(res){
-            if (res && res.ok && res.token) {
-                setGateToken(res.token);
+            var row = (res && res.length) ? res[0] : res;
+            if (row && row.ok && row.token) {
+                setGateToken(row.token);
                 hideAuthOverlay();
             } else {
                 allDigits.forEach(function(d) { d.classList.add('error'); });
@@ -3788,6 +3789,19 @@
             return Promise.resolve(sha256_fallback(str));
         }
     }
+    function sha256Bytes(buf) {
+        var bytes = new Uint8Array(buf);
+        try {
+            if (crypto && crypto.subtle && crypto.subtle.digest) {
+                return crypto.subtle.digest('SHA-256', bytes).then(function(hash) {
+                    return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+                });
+            }
+        } catch(e) {}
+        var s = '';
+        for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return Promise.resolve(sha256_fallback(s));
+    }
     function sha256_fallback(s) {
         function S(X,n){return(X>>>n)|(X<<(32-n));}
         function R(X,n){return(X>>>n);}
@@ -5162,10 +5176,7 @@ function saveLoginSession(user, token, remember) {
         return fetch(location.href, { cache: 'no-store' })
             .then(function(r){ return r.arrayBuffer(); })
             .then(function(buf){
-                var bytes = new Uint8Array(buf);
-                var s = '';
-                for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-                return sha256(s);
+                return sha256Bytes(buf);
             })
             .then(function(computed){
                 return _post(SUPABASE_URL + '/rest/v1/rpc/get_config', { p_key: 'site_code_hash' }).then(function(rows){
