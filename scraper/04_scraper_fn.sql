@@ -10,10 +10,10 @@ BEGIN
   FOR v IN SELECT * FROM jsonb_array_elements(videos)
   LOOP
     INSERT INTO public.videos (video_id, title, thumbnail_url, video_url, author,
-      duration, views, monsnode_video_id, source_page, source_section,
+      duration, mp4_url, views, monsnode_video_id, source_page, source_section,
       vote_up, vote_down, scraped_at, updated_at, has_mp4, needs_rescrape, mp4_checked_at)
     VALUES (v->>'video_id', v->>'title', v->>'thumbnail_url', v->>'video_url', v->>'author',
-      v->>'duration', v->>'views', v->>'monsnode_video_id', v->>'source_page', v->>'source_section',
+      v->>'duration', v->>'mp4_url', v->>'views', v->>'monsnode_video_id', v->>'source_page', v->>'source_section',
       COALESCE((v->>'vote_up')::integer, 0), COALESCE((v->>'vote_down')::integer, 0),
       COALESCE((v->>'scraped_at')::timestamptz, NOW()), NOW(),
       COALESCE((v->>'has_mp4')::boolean, false), COALESCE((v->>'needs_rescrape')::boolean, true),
@@ -24,6 +24,7 @@ BEGIN
       video_url = COALESCE(NULLIF(v->>'video_url', ''), videos.video_url),
       author = COALESCE(NULLIF(v->>'author', ''), videos.author),
       duration = CASE WHEN (v->>'has_mp4')::boolean AND NULLIF(v->>'duration','') IS NOT NULL THEN v->>'duration' ELSE videos.duration END,
+      mp4_url = CASE WHEN (v->>'has_mp4')::boolean AND NULLIF(v->>'mp4_url','') IS NOT NULL THEN v->>'mp4_url' ELSE videos.mp4_url END,
       views = COALESCE(NULLIF(v->>'views', ''), videos.views),
       monsnode_video_id = COALESCE(NULLIF(v->>'monsnode_video_id', ''), videos.monsnode_video_id),
       source_page = COALESCE(NULLIF(v->>'source_page', ''), videos.source_page),

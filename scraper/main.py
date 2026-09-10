@@ -198,6 +198,7 @@ def supabase_update_mp4(updates: dict[str, tuple[str, str | None]]) -> int:
         }
         if has_mp4:
             patch["duration"] = mp4
+            patch["mp4_url"] = mp4
             patch["needs_rescrape"] = False
             patch["retry_count"] = 0
         else:
@@ -308,6 +309,7 @@ def supabase_save(videos: list[dict]) -> int:
             "video_url": urljoin(BASE_URL, v.get("url", ""))[:1000],
             "author": (v.get("author") or "")[:200],
             "duration": mp4 if has_mp4 else "",
+            "mp4_url": mp4 if has_mp4 else "",
             "views": (v.get("views") or "")[:50],
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
             "source_page": (v.get("source_page") or "")[:500],
@@ -802,20 +804,22 @@ async def scrape_all():
         else:
             log("  无待回爬视频")
 
-        # 阶段 5: 下架检测 (视频超过 3 天未更新 → 标记)
+        # 阶段 5: 下架检测 (仅当: 超7天未更新 + 无MP4 + 重试>=3次 + 本轮未抓取到 → 才标记)
+        # 避免误杀: 还有MP4可播放 / 解析失败次数不够 / 单轮抓取遗漏 的视频一律不标记
         log("\n[阶段5] 下架检测...")
         try:
             all_scraped_ids = {v["video_id"] for v in all_section_videos}
             if all_scraped_ids:
                 client = httpx.Client(timeout=30)
                 headers = supabase_headers()
-                # 查询最近 3 天未更新的视频 (非本次抓到的)
-                cutoff = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
                 resp = client.get(
                     SUPABASE_URL + "/rest/v1/videos"
                     + "?select=video_id"
                     + "&updated_at=lt." + cutoff
                     + "&removed=is.false"
+                    + "&has_mp4=is.false"
+                    + "&retry_count=gte.3"
                     + "&order=scraped_at.asc"
                     + "&limit=500",
                     headers=headers
