@@ -36,8 +36,8 @@ TARGET_SECTIONS = [
 MP4_PRIORITY = ["trending", "latest", "home", "24h", "3d", "7d", "30d", "ranking"]
 
 BATCH_SIZE = 100
-MP4_TAB_CONCURRENCY = 3
-MAX_RETRY_COUNT = 3  # 最多重试次数, 超过标记为死链
+MP4_TAB_CONCURRENCY = 5
+MAX_RETRY_COUNT = 3  # 连续失败上限; 超过后进入「死链池」, 由 reset_retry_batch 周期性复活
 
 # UA 池 (轮换使用)
 USER_AGENTS = [
@@ -175,6 +175,31 @@ def supabase_fetch_failed(limit: int = 100) -> list[dict]:
     except Exception as e:
         log(f"查询失败视频异常: {e}", "WARN")
         return []
+    finally:
+        client.close()
+
+
+def supabase_reset_retry(limit: int = 300) -> int:
+    """复活一批已达重试上限的死链 (retry_count=0, mp4_checked_at=NULL)
+    这样重爬队列永远不会枯竭, 取代旧的「3次失败即永久放弃」"""
+    headers = {**supabase_headers(), "Content-Type": "application/json"}
+    client = httpx.Client(timeout=30)
+    try:
+        resp = client.post(
+            SUPABASE_URL + "/rest/v1/rpc/reset_retry_batch",
+            headers=headers,
+            json={"p_limit": limit},
+        )
+        if resp.status_code in (200, 201, 204):
+            try:
+                return int(resp.json())
+            except Exception:
+                return 0
+        log(f"重置死链失败: HTTP {resp.status_code} (需先执行 10_rescrape_fix.sql)", "WARN")
+        return 0
+    except Exception as e:
+        log(f"重置死链异常: {e}", "WARN")
+        return 0
     finally:
         client.close()
 
@@ -802,7 +827,10 @@ async def scrape_all():
                 stats["rescrape_updated"] = updated
                 log(f"  回爬完成: 更新 {updated} 条, 其中 {len(all_rescraped_mp4)} 个解析成功 ({time.time()-t3:.0f}s)")
         else:
-            log("  无待回爬视频")
+            log("  无待回爬视频, 尝试复活死链池...")
+            revived = supabase_reset_retry(300)
+            if revived > 0:
+                log(f"  已重置 {revived} 条死链的重试计数, 下轮将重新回爬")
 
         # 阶段 5: 下架检测 (仅当: 超7天未更新 + 无MP4 + 重试>=3次 + 本轮未抓取到 → 才标记)
         # 避免误杀: 还有MP4可播放 / 解析失败次数不够 / 单轮抓取遗漏 的视频一律不标记
@@ -879,7 +907,7 @@ async def scrape_all():
             # 标记超过 30 天未更新的缩略图
             thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
             r = c.patch(
-                SUPABASE_URL + "/rest/v1/videos?thumbnail_url=ilike.*twimg.com*&updated_at=lt." + thirty_days_ago,
+                SUPABASE_URL + "/rest/v1/videos?thumbnail_url=ilike.*twimg.com*&updated_at=lt." + thirty_days_ago + "&has_mp4=is.false",
                 headers={**h, "Content-Type": "application/json"},
                 json={"needs_rescrape": True}
             )
@@ -921,7 +949,7 @@ async def resolve_only():
             + "&monsnode_video_id=not.is.null"
             + "&retry_count=lt." + str(MAX_RETRY_COUNT)
             + "&order=created_at.desc"
-            + "&limit=200"
+            + "&limit=600"
         )
         resp = client.get(url, headers=headers)
         if resp.status_code == 200:
@@ -935,7 +963,10 @@ async def resolve_only():
         client.close()
 
     if not targets:
-        log("无待解析视频")
+        log("无待解析视频, 尝试复活死链池...")
+        revived = supabase_reset_retry(300)
+        if revived > 0:
+            log(f"已重置 {revived} 条死链的重试计数, 请稍后再次运行 resolve 模式")
         return stats
 
     log(f"待解析MP4: {len(targets)} 个视频")
