@@ -1483,7 +1483,7 @@
     var lastTrigger=0, COOLDOWN=3600000;
     var compactView=false;
     var lastScrapeTime=null;
-    var playableFilter='playable'; // 'all' | 'playable' | 'unplayable' (默认只看可播放)
+    var playableFilter='all'; // 'all' | 'playable' | 'unplayable' (默认全部: 未解析与已解析按时间顺序混排)
 
     // ============ 偏好持久化 ============
     function savePrefs() {
@@ -2455,7 +2455,7 @@
         if (activeSection === 'ranking' || activeSection === 'trending') {
             params+='&order=views.desc.nullslast&limit='+sz+'&offset='+f;
         } else {
-            params+='&order=has_mp4.desc.nullslast,created_at.'+sortOrder+',video_id.desc&limit='+sz+'&offset='+f;
+            params+='&order=created_at.'+sortOrder+',video_id.'+sortOrder+'&limit='+sz+'&offset='+f;
         }
 
         var h=_h();
