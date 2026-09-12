@@ -1225,21 +1225,63 @@
 
     <!-- ==================== 登录对话框 ==================== -->
     <div class="cheat-dialog-overlay" id="loginDialogOverlay">
-        <div class="cheat-dialog" style="width:320px;">
+        <div class="cheat-dialog" style="width:330px;">
             <button class="vid-modal-close" onclick="closeLoginDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
             <p class="title" id="loginTitle">🔐 账号登录</p>
-            <div style="margin-bottom:12px;">
-                <input type="text" id="loginUsername" placeholder="用户名 (2-20字符)" autocomplete="username" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
-                <input type="password" id="loginPassword" placeholder="密码 (4+字符)" autocomplete="current-password" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);">
-                <input type="password" id="loginPassword2" placeholder="确认密码 (仅注册时填写)" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);display:none;margin-bottom:8px;">
-                <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--vmuted);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="loginRemember" checked> 记住密码 (30天自动登录)</label>
+            <div style="display:flex;gap:6px;margin-bottom:12px;">
+                <button class="cheat-btn accent" id="loginTabEmail" onclick="setLoginTab('email')" style="flex:1;font-size:11px;">📧 邮箱验证码</button>
+                <button class="cheat-btn" id="loginTabPass" onclick="setLoginTab('pass')" style="flex:1;font-size:11px;">🔑 账号密码</button>
+            </div>
+            <div id="loginEmailSection" style="margin-bottom:12px;">
+                <input type="email" id="loginEmail" placeholder="邮箱地址" autocomplete="email" inputmode="email" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                <div id="loginCodeRow" style="display:flex;gap:6px;margin-bottom:8px;">
+                    <input type="text" id="loginCode" placeholder="6位验证码" inputmode="numeric" autocomplete="one-time-code" maxlength="8" style="flex:1;min-width:0;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                    <button class="cheat-btn" id="loginSendBtn" onclick="sendEmailCode()" style="flex-shrink:0;font-size:11px;padding:0 10px;white-space:nowrap;">发送验证码</button>
+                </div>
+                <div id="loginEmailUserRow" style="display:none;">
+                    <input type="text" id="loginEmailUser" placeholder="用户名 (2-20字符, 新用户)" autocomplete="username" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                </div>
+                <div id="loginEmailPassRow" style="display:none;">
+                    <input type="password" id="loginEmailPass" placeholder="设置密码 (可选, 便于找回)" autocomplete="new-password" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                </div>
+            </div>
+            <div id="loginPassSection" style="display:none;margin-bottom:12px;">
+                <input type="text" id="loginUsername" placeholder="用户名 (2-20字符)" autocomplete="username" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                <input type="password" id="loginPassword" placeholder="密码 (4+字符)" autocomplete="current-password" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                <input type="password" id="loginPassword2" placeholder="确认密码 (仅注册时填写)" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);display:none;margin-bottom:8px;box-sizing:border-box;">
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--vmuted);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="loginRemember" checked> 记住登录 (30天自动登录)</label>
+            <div class="actions">
+                <button class="btn-cancel" id="loginModeSwitch" onclick="toggleLoginMode()" style="font-size:10px;display:none;">注册新账号</button>
+                <button class="btn-cancel" onclick="closeLoginDialog()">取消</button>
+                <button class="cheat-btn accent" id="loginBtn" onclick="emailMainAction()">发送验证码</button>
+            </div>
+            <p style="font-size:10px;color:var(--vmuted);margin-top:12px;text-align:left;line-height:1.6;" id="loginResult"></p>
+        </div>
+    </div>
+
+    <!-- ==================== 绑定邮箱对话框 ==================== -->
+    <div class="cheat-dialog-overlay" id="bindEmailOverlay">
+        <div class="cheat-dialog" style="width:330px;">
+            <button class="vid-modal-close" onclick="closeBindEmailDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
+            <p class="title">📧 绑定邮箱</p>
+            <div id="bindEmailBody" style="font-size:12px;color:var(--vmuted);line-height:1.8;text-align:left;margin-bottom:12px;min-height:44px;"></div>
+            <input type="email" id="bindEmailInput" placeholder="邮箱地址" inputmode="email" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+            <div style="display:flex;gap:6px;margin-bottom:8px;">
+                <input type="text" id="bindCodeInput" placeholder="6位验证码" inputmode="numeric" autocomplete="one-time-code" maxlength="8" style="flex:1;min-width:0;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                <button class="cheat-btn" id="bindSendBtn" onclick="bindSendCode()" style="flex-shrink:0;font-size:11px;padding:0 10px;white-space:nowrap;">发送验证码</button>
+            </div>
+            <div id="bindPwdRow" style="display:none;margin-bottom:8px;">
+                <div style="display:flex;gap:6px;">
+                    <input type="password" id="bindPwdInput" placeholder="设置登录密码 (4+字符)" autocomplete="new-password" style="flex:1;min-width:0;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                    <button class="cheat-btn" onclick="saveAccountPassword()" style="flex-shrink:0;font-size:11px;padding:0 10px;white-space:nowrap;">保存密码</button>
+                </div>
             </div>
             <div class="actions">
-                <button class="btn-cancel" id="loginModeSwitch" onclick="toggleLoginMode()" style="font-size:10px;">注册新账号</button>
-                <button class="btn-cancel" onclick="closeLoginDialog()">取消</button>
-                <button class="cheat-btn accent" id="loginBtn" onclick="doLogin()">登录</button>
+                <button class="btn-cancel" onclick="closeBindEmailDialog()">关闭</button>
+                <button class="cheat-btn accent" id="bindSubmitBtn" onclick="bindSubmit()">绑定</button>
             </div>
-            <p style="font-size:10px;color:var(--vmuted);margin-top:12px;" id="loginResult"></p>
+            <p style="font-size:10px;color:var(--vmuted);margin-top:10px;text-align:left;line-height:1.6;" id="bindEmailResult"></p>
         </div>
     </div>
 
@@ -5763,10 +5805,22 @@
     }
 
 
-    var _loginMode = 'login'; // 'login' | 'register'
+    var _loginMode = 'login'; // 'login' | 'register'  (仅账号密码分区使用)
+    var _loginTab = 'email';  // 'email' | 'pass'
+    var _emailStage = 'email'; // 'email' | 'code' | 'needuser'
+    var _emailAuthEmail = '';
+    var _emailAccess = null;
+    var _emailCooldown = 0, _emailCdTimer = null;
 
-    function toggleLoginMode() {
-        _loginMode = (_loginMode === 'login') ? 'register' : 'login';
+    function _loginMsg(text, isErr) {
+        var el = document.getElementById('loginResult');
+        if (!el) return;
+        el.textContent = text;
+        el.style.color = isErr ? '#c08080' : 'var(--vmuted)';
+    }
+
+    // 账号密码分区的按钮/标题状态
+    function _applyPassMode() {
         var title = document.getElementById('loginTitle');
         var btn = document.getElementById('loginBtn');
         var switchBtn = document.getElementById('loginModeSwitch');
@@ -5775,16 +5829,204 @@
             title.textContent = '📝 注册新账号';
             btn.textContent = '注册';
             btn.onclick = doRegister;
-            pw2.style.display = 'block';
+            if (pw2) pw2.style.display = 'block';
             switchBtn.textContent = '已有账号? 登录';
         } else {
             title.textContent = '🔐 账号登录';
             btn.textContent = '登录';
             btn.onclick = doLogin;
-            pw2.style.display = 'none';
+            if (pw2) pw2.style.display = 'none';
             switchBtn.textContent = '注册新账号';
         }
-        document.getElementById('loginResult').textContent = '';
+    }
+
+    function toggleLoginMode() {
+        _loginMode = (_loginMode === 'login') ? 'register' : 'login';
+        _applyPassMode();
+        var el = document.getElementById('loginResult'); if (el) el.textContent = '';
+    }
+
+    function setLoginTab(tab) {
+        _loginTab = tab;
+        var isEmail = (tab === 'email');
+        var es = document.getElementById('loginEmailSection');
+        var ps = document.getElementById('loginPassSection');
+        if (es) es.style.display = isEmail ? 'block' : 'none';
+        if (ps) ps.style.display = isEmail ? 'none' : 'block';
+        var te = document.getElementById('loginTabEmail'), tp = document.getElementById('loginTabPass');
+        if (te) te.className = 'cheat-btn' + (isEmail ? ' accent' : '');
+        if (tp) tp.className = 'cheat-btn' + (isEmail ? '' : ' accent');
+        var sw = document.getElementById('loginModeSwitch'); if (sw) sw.style.display = isEmail ? 'none' : '';
+        var resultEl = document.getElementById('loginResult'); if (resultEl) resultEl.textContent = '';
+        if (isEmail) {
+            var btn = document.getElementById('loginBtn');
+            if (btn) {
+                btn.onclick = emailMainAction;
+                btn.textContent = _emailStage === 'needuser' ? '完成注册' : (_emailStage === 'code' ? '验证并登录' : '发送验证码');
+            }
+            var ti = document.getElementById('loginTitle'); if (ti) ti.textContent = '📧 邮箱登录 / 注册';
+        } else {
+            _applyPassMode();
+        }
+    }
+
+    // ---------- 邮箱验证码: 底层请求 ----------
+    async function _authReq(path, body, token) {
+        try {
+            var r = await fetch(SUPABASE_URL + '/auth/v1' + path, {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + (token || SUPABASE_ANON_KEY), 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {})
+            });
+            var t = await r.text(); var d = null;
+            try { d = t ? JSON.parse(t) : null; } catch (e) { d = t; }
+            var msg = (d && (d.msg || d.error_description || d.message || d.error)) || '';
+            return { ok: r.ok, status: r.status, data: d, msg: msg };
+        } catch (e) { return { ok: false, status: 0, data: null, msg: String((e && e.message) || e) }; }
+    }
+
+    async function _authRpc(name, body, access) {
+        try {
+            var r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + name, {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + (access || SUPABASE_ANON_KEY), 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {})
+            });
+            var t = await r.text(); var d = null;
+            try { d = t ? JSON.parse(t) : null; } catch (e) { d = t; }
+            if (Array.isArray(d)) return d;
+            if (d && typeof d === 'object') return [{ ok: false, message: d.message || d.msg || '请求失败' }];
+            return null;
+        } catch (e) { return null; }
+    }
+
+    function _friendlyEmailErr(out) {
+        var m = out && out.msg ? out.msg : '';
+        if (out && out.status === 429) return '发送太频繁了，请稍后再试（站点邮件额度有限）';
+        if (/rate limit/i.test(m)) return '发送太频繁了，请稍后再试';
+        if (/invalid.*email|email.*invalid/i.test(m)) return '这个邮箱地址无效，请检查后重试';
+        if (/already registered|already been registered/i.test(m)) return '该邮箱已注册，请直接获取验证码登录';
+        if (!m) m = '发送失败 (HTTP ' + (out ? out.status : '?') + ')';
+        return m;
+    }
+
+    function _startEmailCooldown(sec) {
+        _emailCooldown = sec;
+        var btn = document.getElementById('loginSendBtn');
+        if (_emailCdTimer) clearInterval(_emailCdTimer);
+        if (!btn) return;
+        var tick = function () {
+            if (_emailCooldown <= 0) {
+                clearInterval(_emailCdTimer); _emailCdTimer = null;
+                btn.disabled = false; btn.style.opacity = '1'; btn.textContent = '重新发送';
+                return;
+            }
+            btn.disabled = true; btn.style.opacity = '0.55';
+            btn.textContent = _emailCooldown + 's';
+            _emailCooldown--;
+        };
+        tick();
+        _emailCdTimer = setInterval(tick, 1000);
+    }
+    function _stopEmailCooldown() {
+        if (_emailCdTimer) clearInterval(_emailCdTimer);
+        _emailCdTimer = null; _emailCooldown = 0;
+        var btn = document.getElementById('loginSendBtn');
+        if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = '发送验证码'; }
+    }
+
+    // ---------- 邮箱验证码: 主流程 ----------
+    async function sendEmailCode() {
+        var el = document.getElementById('loginEmail');
+        var email = (el ? el.value : '').trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { _loginMsg('❌ 请输入有效的邮箱地址', true); return; }
+        if (_emailCooldown > 0) return;
+        _loginMsg('📨 正在发送验证码...', false);
+        var out = await _authReq('/otp', { email: email, create_user: true });
+        if (!out.ok) { _loginMsg('❌ ' + _friendlyEmailErr(out), true); return; }
+        _emailAuthEmail = email; _emailStage = 'code'; _emailAccess = null;
+        if (el) el.readOnly = true;
+        var ci = document.getElementById('loginCode'); if (ci) { ci.value = ''; ci.focus(); }
+        _startEmailCooldown(60);
+        var btn = document.getElementById('loginBtn'); if (btn) { btn.textContent = '验证并登录'; btn.onclick = emailMainAction; }
+        _loginMsg('✅ 验证码已发送到 ' + email + '，请查收（也看看垃圾箱）。\n若邮件里是一个链接，直接点击链接也能完成验证。', false);
+    }
+
+    async function verifyEmailCode() {
+        var code = ((document.getElementById('loginCode') || {}).value || '').trim();
+        if (!/^\d{4,8}$/.test(code)) { _loginMsg('❌ 请输入邮件里的验证码', true); return; }
+        if (!_emailAuthEmail) { _loginMsg('❌ 请先点击「发送验证码」', true); return; }
+        _loginMsg('🔎 正在验证...', false);
+        var types = ['signup', 'email', 'magiclink'];
+        var access = null, lastMsg = '';
+        for (var i = 0; i < types.length; i++) {
+            var out = await _authReq('/verify', { type: types[i], email: _emailAuthEmail, token: code });
+            if (out.ok && out.data && out.data.access_token) { access = out.data.access_token; break; }
+            lastMsg = out.msg || '';
+        }
+        if (!access) { _loginMsg('❌ 验证码错误或已过期' + (lastMsg ? '（' + lastMsg + '）' : '') + '，请重新发送', true); return; }
+        await _emailLoginWithAccess(access);
+    }
+
+    async function _emailLoginWithAccess(access) {
+        _emailAccess = access;
+        _loginMsg('🔎 正在登录...', false);
+        var arr = await _authRpc('email_login', { p_device_id: getDeviceId() }, access);
+        var a = arr && arr[0];
+        if (!a) { _loginMsg('❌ 邮箱登录失败，请重试', true); return; }
+        if (a.need_username) {
+            _emailStage = 'needuser';
+            var overlay = document.getElementById('loginDialogOverlay');
+            if (overlay) overlay.classList.add('on');
+            var emEl = document.getElementById('loginEmail');
+            if (emEl && !emEl.value) emEl.value = _emailAuthEmail;
+            setLoginTab('email');
+            var ur = document.getElementById('loginEmailUserRow'); if (ur) ur.style.display = 'block';
+            var pr = document.getElementById('loginEmailPassRow'); if (pr) pr.style.display = 'block';
+            var ub = document.getElementById('loginEmailUser'); if (ub) ub.focus();
+            var btn = document.getElementById('loginBtn'); if (btn) { btn.textContent = '完成注册'; btn.onclick = emailMainAction; }
+            _loginMsg('ℹ️ 该邮箱还没有账号，设置用户名即可完成注册（密码可选，便于以后找回账号）', false);
+            return;
+        }
+        if (!a.ok) { _loginMsg('❌ ' + (a.message || '登录失败'), true); return; }
+        await _finishLogin(a.username, a.token, a.vip_level, a.is_admin, null);
+        _loginMsg('✅ 欢迎回来, ' + a.username + (a.is_admin ? ' (管理员)' : '') + '!', false);
+        setTimeout(closeLoginDialog, 700);
+    }
+
+    async function completeEmailRegister() {
+        var uname = ((document.getElementById('loginEmailUser') || {}).value || '').trim();
+        var pass = ((document.getElementById('loginEmailPass') || {}).value || '').trim();
+        if (uname.length < 2 || uname.length > 20) { _loginMsg('❌ 用户名需要 2-20 个字符', true); return; }
+        _loginMsg('📝 正在注册...', false);
+        var arr = await _authRpc('register_email', { p_username: uname, p_password: pass, p_device_id: getDeviceId() }, _emailAccess);
+        var a = arr && arr[0];
+        if (!a) { _loginMsg('❌ 注册失败，请重试', true); return; }
+        if (!a.ok) { _loginMsg('❌ ' + (a.message || '注册失败'), true); return; }
+        await _finishLogin(a.username, a.token, a.vip_level, a.is_admin, pass || null);
+        _loginMsg('✅ 注册成功，已自动登录!', false);
+        setTimeout(closeLoginDialog, 700);
+    }
+
+    function emailMainAction() {
+        if (_emailStage === 'needuser') return completeEmailRegister();
+        if (_emailStage === 'code') return verifyEmailCode();
+        return sendEmailCode();
+    }
+
+    // 统一登录成功后的状态落地 (账号密码 / 邮箱 两条路径共用)
+    async function _finishLogin(user, token, vipLevel, isAdmin, pass) {
+        _username = user; _loggedIn = true; _isAdmin = !!isAdmin;
+        window._vipLevel = (vipLevel || 'free').toLowerCase();
+        window._vipExpiresAt = null;
+        if (window.checkVipExpiry) window.checkVipExpiry();
+        try { if (pass) await setEncKeyFromPass(pass); } catch (e) {}
+        var rem = document.getElementById('loginRemember');
+        saveLoginSession(user, token, rem ? !!rem.checked : true);
+        updateVipBadge(); updateSidebarLogin(); checkUnread();
+        try { cloudSyncAll(); } catch (e) {}
+        if (window.refreshAccountStatusNow) window.refreshAccountStatusNow(true);
+        if (window.refreshEmailStatus) { try { window.refreshEmailStatus(); } catch (e) {} }
     }
 
     async function doRegister() {
@@ -5821,17 +6063,153 @@
     }
 
     function showLoginDialog() {
-        _loginMode = 'login'; toggleLoginMode(); toggleLoginMode(); // reset to login
-        document.getElementById('loginDialogOverlay').classList.add('on');
-        document.getElementById('loginUsername').value = '';
-        document.getElementById('loginPassword').value = '';
-        document.getElementById('loginPassword2').value = '';
-        document.getElementById('loginResult').textContent = '';
-        setTimeout(function(){ document.getElementById('loginUsername').focus(); }, 300);
+        _loginMode = 'login';
+        _emailStage = 'email'; _emailAuthEmail = ''; _emailAccess = null;
+        var overlay = document.getElementById('loginDialogOverlay');
+        if (overlay) overlay.classList.add('on');
+        ['loginUsername', 'loginPassword', 'loginPassword2', 'loginCode', 'loginEmailUser', 'loginEmailPass'].forEach(function (id) {
+            var e = document.getElementById(id); if (e) e.value = '';
+        });
+        var em = document.getElementById('loginEmail');
+        if (em) { em.value = ''; em.readOnly = false; }
+        ['loginEmailUserRow', 'loginEmailPassRow'].forEach(function (id) {
+            var e = document.getElementById(id); if (e) e.style.display = 'none';
+        });
+        _stopEmailCooldown();
+        _loginMsg('', false);
+        setLoginTab('email');
+        setTimeout(function () { var e = document.getElementById('loginEmail'); if (e) e.focus(); }, 300);
     }
 
     function closeLoginDialog() {
         document.getElementById('loginDialogOverlay').classList.remove('on');
+    }
+
+    // ============ 绑定 / 解绑邮箱 ============
+    var _bindEmail = '', _bindAccess = null, _bindCooldown = 0, _bindCdTimer = null;
+
+    function showBindEmailDialog() {
+        if (!_loggedIn) { toast('请先登录'); showLoginDialog(); return; }
+        var o = document.getElementById('bindEmailOverlay'); if (o) o.classList.add('on');
+        var ei = document.getElementById('bindEmailInput'); if (ei) ei.value = '';
+        var ci = document.getElementById('bindCodeInput'); if (ci) ci.value = '';
+        var r = document.getElementById('bindEmailResult'); if (r) r.textContent = '';
+        _bindEmail = ''; _bindAccess = null; _stopBindCooldown();
+        refreshEmailStatus();
+    }
+    function closeBindEmailDialog() {
+        var o = document.getElementById('bindEmailOverlay'); if (o) o.classList.remove('on');
+        _stopBindCooldown();
+    }
+
+    async function refreshEmailStatus() {
+        var body = document.getElementById('bindEmailBody');
+        var pwdRow = document.getElementById('bindPwdRow');
+        if (!body) return;
+        if (!_loggedIn) { body.textContent = '请先登录'; if (pwdRow) pwdRow.style.display = 'none'; return; }
+        body.textContent = '读取中...';
+        var arr = await _authRpc('my_email', { p_token: getLoginToken() }, null);
+        var a = arr && arr[0];
+        if (!a) { body.innerHTML = '当前未绑定邮箱。绑定后可用邮箱验证码登录。'; if (pwdRow) pwdRow.style.display = 'none'; return; }
+        if (a.email) {
+            body.innerHTML = '当前邮箱：<b style="color:var(--green);">' + esc(a.email) + '</b> ✔️ 已验证<br>' +
+                '该账号可用邮箱验证码登录。' + (a.has_password ? '' : '<br><span style="color:#c8a45c;">建议设置一个密码，方便找回。</span>') +
+                '<br><button class="cheat-btn" onclick="doUnbindEmail()" style="font-size:10px;margin-top:6px;">解绑邮箱</button>';
+        } else {
+            body.innerHTML = '当前未绑定邮箱。绑定后可用邮箱验证码登录。';
+        }
+        if (pwdRow) pwdRow.style.display = a.has_password ? 'none' : '';
+        if (!a.has_password) { var pi = document.getElementById('bindPwdInput'); if (pi) pi.value = ''; }
+    }
+
+    async function saveAccountPassword() {
+        var pw = ((document.getElementById('bindPwdInput') || {}).value || '').trim();
+        if (pw.length < 4) { _bindMsg('❌ 密码至少4个字符', true); return; }
+        _bindMsg('保存中...', false);
+        var arr = await _authRpc('set_password', { p_token: getLoginToken(), p_new_password: pw, p_old_password: null }, null);
+        var a = arr && arr[0];
+        if (!a || !a.ok) { _bindMsg('❌ ' + ((a && a.message) || '保存失败'), true); return; }
+        _bindMsg('✅ 密码已设置，可用「账号密码」登录', false);
+        refreshEmailStatus();
+    }
+
+    function _bindMsg(t, err) { var r = document.getElementById('bindEmailResult'); if (r) { r.textContent = t; r.style.color = err ? '#c08080' : 'var(--vmuted)'; } }
+
+    function _startBindCooldown(sec) {
+        _bindCooldown = sec;
+        var btn = document.getElementById('bindSendBtn');
+        if (_bindCdTimer) clearInterval(_bindCdTimer);
+        if (!btn) return;
+        var tick = function () {
+            if (_bindCooldown <= 0) { clearInterval(_bindCdTimer); _bindCdTimer = null; btn.disabled = false; btn.style.opacity = '1'; btn.textContent = '重新发送'; return; }
+            btn.disabled = true; btn.style.opacity = '0.55'; btn.textContent = _bindCooldown + 's'; _bindCooldown--;
+        };
+        tick(); _bindCdTimer = setInterval(tick, 1000);
+    }
+    function _stopBindCooldown() {
+        if (_bindCdTimer) clearInterval(_bindCdTimer);
+        _bindCdTimer = null; _bindCooldown = 0;
+        var btn = document.getElementById('bindSendBtn');
+        if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = '发送验证码'; }
+    }
+
+    async function bindSendCode() {
+        var email = ((document.getElementById('bindEmailInput') || {}).value || '').trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { _bindMsg('❌ 请输入有效的邮箱地址', true); return; }
+        if (_bindCooldown > 0) return;
+        _bindMsg('📨 正在发送...', false);
+        var out = await _authReq('/otp', { email: email, create_user: true });
+        if (!out.ok) { _bindMsg('❌ ' + _friendlyEmailErr(out), true); return; }
+        _bindEmail = email;
+        var ci = document.getElementById('bindCodeInput'); if (ci) ci.focus();
+        _startBindCooldown(60);
+        _bindMsg('✅ 验证码已发送到 ' + email + '，请查收（也看看垃圾箱）', false);
+    }
+
+    async function bindSubmit() {
+        if (!_bindEmail) { _bindMsg('❌ 请先发送验证码', true); return; }
+        var code = ((document.getElementById('bindCodeInput') || {}).value || '').trim();
+        if (!/^\d{4,8}$/.test(code)) { _bindMsg('❌ 请输入邮件里的验证码', true); return; }
+        _bindMsg('🔎 验证中...', false);
+        var access = null, types = ['signup', 'email', 'magiclink'];
+        for (var i = 0; i < types.length; i++) {
+            var o = await _authReq('/verify', { type: types[i], email: _bindEmail, token: code });
+            if (o.ok && o.data && o.data.access_token) { access = o.data.access_token; break; }
+        }
+        if (!access) { _bindMsg('❌ 验证码错误或已过期，请重新发送', true); return; }
+        var arr = await _authRpc('bind_email', { p_token: getLoginToken() }, access);
+        var a = arr && arr[0];
+        if (!a || !a.ok) { _bindMsg('❌ ' + ((a && a.message) || '绑定失败'), true); return; }
+        _bindMsg('✅ 绑定成功：' + a.email, false);
+        toast('📧 邮箱绑定成功');
+        refreshEmailStatus();
+    }
+
+    async function doUnbindEmail() {
+        if (!window.confirm('确定解绑邮箱吗？解绑后将无法用邮箱验证码登录。')) return;
+        var arr = await _authRpc('unbind_email', { p_token: getLoginToken() }, null);
+        var a = arr && arr[0];
+        _bindMsg(a && a.ok ? '✅ 已解绑邮箱' : ('❌ ' + ((a && a.message) || '解绑失败')), !(a && a.ok));
+        refreshEmailStatus();
+    }
+
+    // 邮件里的「链接」回调 (无自定义 SMTP 时, Supabase 默认发链接而非验证码):
+    // GoTrue 会把 access_token 放在 URL hash 里返回, 这里直接用它完成登录
+    async function handleEmailHashReturn() {
+        var h = (window.location.hash || '').replace(/^#/, '');
+        if (!h || h.indexOf('access_token=') < 0) return false;
+        var p = {};
+        h.split('&').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) p[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); });
+        if (!p.access_token) return false;
+        try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e) {}
+        try {
+            var pad = p.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+            while (pad.length % 4) pad += '=';
+            var pl = JSON.parse(atob(pad));
+            if (pl && pl.email) _emailAuthEmail = String(pl.email).toLowerCase();
+        } catch (e) {}
+        if (!_loggedIn) await _emailLoginWithAccess(p.access_token);
+        return true;
     }
 
     // ============ 公告 ============
@@ -8154,6 +8532,10 @@ function getLoginToken() {
     }
 
     function saveLoginSession(user, token, remember) {
+        // 清掉另一侧存储, 避免「记住登录」与「本次会话」两份 token 并存导致 getLoginToken() 取到旧值
+        [localStorage, sessionStorage].forEach(function(s) {
+            s.removeItem('login_user'); s.removeItem('login_token'); s.removeItem('login_time');
+        });
         var store = remember ? localStorage : sessionStorage;
         store.setItem('login_user', user);
         store.setItem('login_token', token);
@@ -8254,6 +8636,8 @@ function getLoginToken() {
         if (friendsBtn) friendsBtn.style.display = _loggedIn ? '' : 'none';
         var pwdBtn = document.getElementById('sidePwd');
         if (pwdBtn) pwdBtn.style.display = _loggedIn ? '' : 'none';
+        var emailBtn = document.getElementById('sideEmail');
+        if (emailBtn) emailBtn.style.display = _loggedIn ? '' : 'none';
         checkFriendBadges();
         updateCloudTriggerUI();
     }
@@ -8288,6 +8672,8 @@ function getLoginToken() {
     applyPrefsUI();
     if (gs.moves > 0 && !gs.over) setTimeout(function(){ toast('💡 已恢复上次游戏 (得分:' + gs.score + ' 步数:' + gs.moves + ')'); }, 800);
     autoLogin().then(function() { updateVipBadge(); updateSidebarLogin(); });
+    // 邮件验证链接回调 (若邮件是链接形式, 打开后可直接完成登录)
+    try { handleEmailHashReturn(); } catch (e) {}
     // 给 sidebar 打补丁添加登录入口
     (function() {
         var sidebar = document.getElementById('sidebar');
@@ -8301,6 +8687,7 @@ function getLoginToken() {
             '<button class="sidebar-item" id="sideLogin" onclick="showLoginDialog()"><span class="ico">登录</span>登录/注册</button>' +
             '<button class="sidebar-item" id="sideLogout" style="display:none;" onclick="clearLoginSession()"><span class="ico">退出</span>退出登录</button>' +
             '<button class="sidebar-item" id="sidePwd" onclick="showPwdDialog()"><span class="ico">密码</span>修改密码</button>' +
+            '<button class="sidebar-item" id="sideEmail" style="display:none;" onclick="showBindEmailDialog()"><span class="ico">邮箱</span>绑定邮箱</button>' +
             '<button class="sidebar-item" id="sidebarAdmin" style="display:none;" onclick="showAdminPanel()"><span class="ico">管理</span>管理面板</button>' +
             '</div>';
         sidebar.appendChild(div);
