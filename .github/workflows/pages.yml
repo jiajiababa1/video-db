@@ -48,9 +48,15 @@ jobs:
             -d "{\"key\":\"site_code_hash\",\"value\":\"$HASH\",\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
       # 只部署 index.html —— scraper/、*.sql、totp 页等源码不再公开暴露
+      - name: 准备部署目录 (仅 index.html)
+        run: |
+          rm -rf _site
+          mkdir -p _site
+          cp index.html _site/index.html
+
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: index.html
+          path: _site
       - uses: actions/deploy-pages@v5
         id: deployment
 
@@ -66,11 +72,14 @@ jobs:
           set -euo pipefail
           EXPECTED=$(sha256sum index.html | awk '{print $1}')
           DEPLOY_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
-          ACTUAL=$(curl -sSL "$DEPLOY_URL" | sha256sum | awk '{print $1}')
-          echo "仓库 index.html sha256: $EXPECTED"
-          echo "线上页面  sha256: $ACTUAL"
-          if [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "::error::线上页面与仓库代码不一致! 页面可能被篡改或部署失败, 请立即检查。"
-            exit 1
-          fi
-          echo "✅ 线上页面与仓库代码完全一致"
+          for i in $(seq 1 12); do
+            ACTUAL=$(curl -sSL "$DEPLOY_URL?t=$(date +%s)" | sha256sum | awk '{print $1}')
+            echo "尝试 $i — 仓库: $EXPECTED  线上: $ACTUAL"
+            if [ "$EXPECTED" = "$ACTUAL" ]; then
+              echo "✅ 线上页面与仓库代码完全一致"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::线上页面与仓库代码不一致! 页面可能被篡改或部署失败, 请立即检查。"
+          exit 1
