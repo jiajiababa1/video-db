@@ -1,11 +1,15 @@
 # ===== 爬虫依赖 =====
-# 必需: HTTP 抓取列表页/搜索页 + 读写 Supabase (scraper/main.py v11 全程用 httpx)
-httpx
+# 必需: HTTP 抓取列表页/搜索页 + 读写 Supabase + MP4 解析 (scraper/main.py v12)
+#   httpx[http2]  直连层 (带 HTTP/2)
+httpx[http2]
 
-# 可选: 仅当列表页 HTTP 请求被 Cloudflare 拦截时, main.py 才会自动回退用浏览器抓取
+# 必需: 反 Cloudflare 传输层 —— monsnode 对 GitHub Actions 机房 IP 返回 403 挑战页,
+# curl_cffi 伪装 Chrome 的 TLS 指纹后通常可通过。main.py 会自动探测并选用。
+curl_cffi>=0.7
+
+# 可选: 直连与 curl_cffi 都被拦时的最后兜底 (浏览器抓列表)。装了才会启用。
 playwright
 
 # 以下为仓库内其他脚本/历史版本可能用到, scraper/main.py 不依赖:
 beautifulsoup4
 lxml
-curl-cffi>=0.7
