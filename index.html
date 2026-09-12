@@ -2,13 +2,28 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#08080a">
+<meta name="color-scheme" content="dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="VideoDB">
 <meta name="format-detection" content="telephone=no">
+<meta name="screen-orientation" content="portrait">
+<meta name="x5-orientation" content="portrait">
+<meta name="full-screen" content="yes">
+<meta name="x5-fullscreen" content="true">
+<meta name="browsermode" content="application">
+<meta name="x5-page-mode" content="app">
+<meta name="description" content="2048 小游戏 + 视频聚合">
+<meta property="og:title" content="2048 在线小游戏">
+<meta property="og:description" content="玩 2048，看视频">
+<meta property="og:image" content="https://user.uploads.dev/file/0cb0efaf223a26649db652bd4a6c5b1c.jpg">
+<meta property="og:type" content="website">
+<meta itemprop="name" content="2048 在线小游戏">
+<meta itemprop="image" content="https://user.uploads.dev/file/0cb0efaf223a26649db652bd4a6c5b1c.jpg">
+<link rel="icon" href="https://user.uploads.dev/file/0cb0efaf223a26649db652bd4a6c5b1c.jpg">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
 <script type="text/x-server-plugin">
@@ -76,6 +91,128 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', connect); else connect();
 })();
 </script>
+<script>
+/* ============ 微信客户端适配 (WeChat / X5 / WKWebView) ============ */
+(function () {
+    "use strict";
+    var ua = navigator.userAgent || "";
+    var isWeChat = /MicroMessenger/i.test(ua);
+    var isIOS = /iPhone|iPad|iPod/i.test(ua) || (ua.indexOf("Macintosh") >= 0 && "ontouchend" in document);
+    var isAndroid = /Android/i.test(ua);
+    var isX5 = /(X5\/|XWEB|TBS\/|MMWEBSDK|MQQBrowser)/i.test(ua);
+    var root = document.documentElement;
+    if (isWeChat) root.classList.add("wechat");
+    root.classList.add(isIOS ? "ios" : (isAndroid ? "android" : "desktop"));
+    if (isX5) root.classList.add("x5");
+    window.__isWeChat = isWeChat;
+
+    if (!document.querySelector('meta[name=viewport]')) {
+        var mv = document.createElement('meta');
+        mv.name = 'viewport';
+        mv.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover';
+        document.head.appendChild(mv);
+    }
+
+    function resetWxFontSize() {
+        try {
+            if (window.WeixinJSBridge && window.WeixinJSBridge.invoke) {
+                window.WeixinJSBridge.invoke("setFontSizeCallback", { fontSize: "16px" });
+                window.WeixinJSBridge.invoke("getNetworkType", {}, function () {});
+            }
+        } catch (e) {}
+    }
+
+    function setAppHeight() {
+        var vv = window.visualViewport;
+        var h = (vv && vv.height) || window.innerHeight || 0;
+        if (h > 0) root.style.setProperty("--app-h", Math.round(h) + "px");
+    }
+    setAppHeight();
+    window.addEventListener("resize", setAppHeight);
+    window.addEventListener("orientationchange", function () { setTimeout(setAppHeight, 350); });
+    if (window.visualViewport && window.visualViewport.addEventListener) {
+        window.visualViewport.addEventListener("resize", setAppHeight);
+        window.visualViewport.addEventListener("scroll", setAppHeight);
+    }
+
+    window.__wxPlay = function (video, onBlocked) {
+        if (!video) return;
+        var done = false;
+        function blocked() { if (!done) { done = true; if (onBlocked) onBlocked(); } }
+        function retry() {
+            try {
+                var p = video.play();
+                if (p && p.then) p.then(function () { done = true; }).catch(blocked);
+                else done = true;
+            } catch (e) { blocked(); }
+        }
+        var pr;
+        try { pr = video.play(); } catch (e) { retry(); return; }
+        if (!pr || !pr.then) { done = true; return; }
+        pr.then(function () { done = true; }).catch(function () {
+            if (window.WeixinJSBridge && window.WeixinJSBridge.invoke) {
+                try {
+                    window.WeixinJSBridge.invoke("getNetworkType", {}, function () { setTimeout(retry, 0); });
+                    setTimeout(function () { if (!done) retry(); }, 400);
+                    return;
+                } catch (e) {}
+            }
+            retry();
+        });
+    };
+
+    window.__wxCopyFallback = function (text) {
+        try {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.setAttribute("readonly", "");
+            ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+            document.body.appendChild(ta);
+            ta.select();
+            try { ta.setSelectionRange(0, ta.value.length); } catch (e) {}
+            var ok = document.execCommand("copy");
+            document.body.removeChild(ta);
+            return ok;
+        } catch (e) { return false; }
+    };
+
+    window.__wxCopy = function (text) {
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).catch(function () { window.__wxCopyFallback(text); });
+                return true;
+            }
+        } catch (e) {}
+        return window.__wxCopyFallback(text);
+    };
+
+    function showWxTip() {
+        if (!isWeChat) return;
+        if (document.getElementById("wxTip")) return;
+        var key = "wx_tip_ts";
+        var last = 0;
+        try { last = parseInt(localStorage.getItem(key) || "0", 10) || 0; } catch (e) {}
+        if (Date.now() - last < 3 * 24 * 3600 * 1000) return;
+        var tip = document.createElement("div");
+        tip.id = "wxTip";
+        tip.innerHTML = '<span>微信内视频播放受限 · 点右上角 <b>···</b> → 在浏览器中打开体验更佳</span><button type="button" aria-label="关闭">✕</button>';
+        function dismiss() {
+            try { localStorage.setItem(key, String(Date.now())); } catch (e) {}
+            if (tip.parentNode) tip.parentNode.removeChild(tip);
+        }
+        tip.querySelector("button").addEventListener("click", function (e) { e.stopPropagation(); dismiss(); });
+        document.body.appendChild(tip);
+        setTimeout(dismiss, 9000);
+    }
+    if (isWeChat) {
+        resetWxFontSize();
+        document.addEventListener("WeixinJSBridgeReady", function () { resetWxFontSize(); setAppHeight(); }, false);
+        setTimeout(resetWxFontSize, 800);
+    }
+
+    setTimeout(showWxTip, 2500);
+})();
+</script>
 <style>
         :root {
             --bg: #f5f0e8; --text: #3d3828; --board-bg: #b8a88a;
@@ -125,12 +262,12 @@
         }
 
         /* ============ 页面切换 ============ */
-        .view-game, .view-video { transition: opacity 0.5s, transform 0.5s, visibility 0s 0.5s; }
+        .view-game, .view-video { transition: opacity 0.5s, visibility 0s 0.5s; }
         body.dark-mode .view-game { opacity:0; pointer-events:none; transform:scale(0.95); visibility:hidden; position:absolute; }
-        body.dark-mode .view-video { opacity:1; pointer-events:auto; transform:scale(1); visibility:visible; }
+        body.dark-mode .view-video { opacity:1; pointer-events:auto; transform:none; visibility:visible; }
         body.dark-mode { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
         .view-video { opacity:0; pointer-events:none; transform:scale(0.95); visibility:hidden; min-height:100dvh; }
-        .view-game { opacity:1; transform:scale(1); visibility:visible; }
+        .view-game { opacity:1; transform:none; visibility:visible; }
         body { overflow: hidden; }
 
         /* ============ 噪声纹理 (仅暗色模式) ============ */
@@ -307,7 +444,7 @@
         .vid-back:hover { background:rgba(26,26,24,0.7); color:var(--vtext); border-color:var(--vprimary); }
         .vid-search { flex:1; min-width:120px; max-width:400px; position:relative; }
         .vid-search input {
-            width:100%; padding:8px 14px 8px 36px; border-radius:var(--radius-sm);
+            width:100%; box-sizing:border-box; padding:8px 14px 8px 36px; border-radius:var(--radius-sm);
             border:1px solid var(--vborder); background:rgba(14,14,18,0.6); backdrop-filter:var(--glass-blur);
             -webkit-backdrop-filter:var(--glass-blur);
             color:var(--vtext);
@@ -1028,6 +1165,12 @@
             .auth-digit { width:46px; height:54px; font-size:24px; }
             .cheat-panel { bottom:calc(8px + env(safe-area-inset-bottom, 0px)); }
             .vid-body { padding:10px 12px; gap:8px; }
+            /* 头部工具条在窄屏必须换行/收缩, 否则整页横向溢出 → 微信里看着"非常大" */
+            .vid-header-top { gap:6px; row-gap:8px; }
+            .vid-actions { flex-wrap:wrap; flex-shrink:1; justify-content:flex-start; width:100%; gap:5px; }
+            .vid-btn { padding:6px 9px; font-size:10px; letter-spacing:0; }
+            .vid-logo { font-size:16px; }
+            .vid-back { padding:6px 10px; }
         }
 
         /* ============ 好友系统 ============ */
@@ -1058,6 +1201,24 @@
         .msg-loc { display:flex; align-items:center; gap:8px; background:rgba(74,154,223,0.1); border:1px solid rgba(74,154,223,0.25); border-radius:6px; padding:6px 10px; cursor:pointer; }
         .chat-sticker { font-size:22px; width:40px; height:40px; border-radius:8px; border:1px solid var(--vborder); background:var(--vcard); cursor:pointer; }
         .chat-sticker:hover { border-color:var(--vprimary); transform:scale(1.12); }
+
+        /* ============ 微信客户端适配 (WeChat / X5 / WKWebView) ============ */
+        html, body { -webkit-text-size-adjust:100% !important; text-size-adjust:100% !important; }
+        html.wechat.x5, html.wechat.x5 body { -webkit-text-size-adjust:none !important; }
+        html.wechat body, html.wechat .view-video, html.wechat .view-game { min-height:var(--app-h, 100vh); }
+        html.wechat button, html.wechat a, html.wechat [onclick], html.wechat .vid-card, html.wechat .vid-tab, html.wechat .vpi-tapplay { touch-action:manipulation; }
+        html.wechat input:not([type=checkbox]), html.wechat textarea, html.wechat select { font-size:16px !important; }
+        html.wechat.x5 .vid-header { background:rgba(8,8,10,0.95); }
+        html.wechat.x5 #stickFooter { background:rgba(8,8,10,0.97); }
+        html.wechat .vpi-tapplay { flex-direction:column; gap:10px; background:rgba(0,0,0,0.45); }
+        html.wechat .vpi-tapplay button { width:74px; height:74px; font-size:28px; }
+        .vpi-tapplay-hint { font-size:12px; color:#e4e0d8; letter-spacing:1px; font-family:var(--font-mono); text-shadow:0 1px 8px rgba(0,0,0,0.9); }
+        .vpi-stall { position:absolute; inset:0; z-index:9; display:flex; flex-direction:column; gap:10px; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); border-radius:var(--radius-sm); }
+        .vpi-stall button { padding:10px 18px; border-radius:var(--radius-sm); border:1px solid rgba(200,164,92,0.6); background:rgba(200,164,92,0.9); color:#1a1808; font-size:13px; font-family:var(--font-mono); cursor:pointer; }
+        .vpi-stall span { font-size:11px; color:#c9c3b8; font-family:var(--font-mono); }
+        #wxTip { position:fixed; left:8px; right:8px; top:calc(6px + env(safe-area-inset-top, 0px)); z-index:9998; display:flex; align-items:center; gap:8px; padding:9px 12px; border-radius:10px; background:rgba(200,164,92,0.95); color:#1a1808; font-size:12px; line-height:1.4; box-shadow:0 6px 20px rgba(0,0,0,0.45); text-align:left; }
+        #wxTip b { font-family:var(--font-mono); }
+        #wxTip button { margin-left:auto; flex-shrink:0; background:transparent; border:none; color:#1a1808; font-size:14px; cursor:pointer; padding:2px 4px; }
 </style>
 <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
 
@@ -1761,8 +1922,16 @@
         var maxTile = 0;
         for (var r=0;r<4;r++) for (var c=0;c<4;c++) if (gs.grid[r][c]>maxTile) maxTile=gs.grid[r][c];
         var text = '🎮 2048\n分数: ' + gs.score + ' | 最高: ' + gs.best + '\n最高方块: ' + maxTile + ' | 步数: ' + gs.moves + (gs.won?' 🏆':'');
-        if (navigator.share) navigator.share({title:'我的2048', text:text}).catch(function(){});
-        else { navigator.clipboard.writeText(text).catch(function(){}); toast('📋 结果已复制'); }
+        var url = location.origin + location.pathname;
+        if (/\.perchance\.org$/i.test(location.hostname) && window.generatorName) url = 'https://perchance.org/' + window.generatorName;
+        if (document.documentElement.classList.contains('wechat')) {
+            var full = text + '\n' + url;
+            if (window.__wxCopy) window.__wxCopy(full);
+            toast('📋 成绩已复制 · 点右上角 ··· 分享给朋友');
+            return;
+        }
+        if (navigator.share) navigator.share({title:'我的2048', text:text + '\n' + url}).catch(function(){});
+        else { navigator.clipboard.writeText(text + '\n' + url).catch(function(){}); toast('📋 结果已复制'); }
     }
 
     function toggleDarkGame() {
@@ -1883,7 +2052,7 @@
             if(currentInlinePlayer && !e.target.closest('input,textarea')){
                 var vid = currentInlinePlayer.querySelector('video');
                 if(vid){
-                    if(e.keyCode===32){e.preventDefault();vid.paused?vid.play():vid.pause();} // Space = 暂停/播放
+                    if(e.keyCode===32){e.preventDefault();if(vid.paused){var sp=vid.play();if(sp&&sp.catch)sp.catch(function(){});}else vid.pause();} // Space = 暂停/播放
                     else if(e.keyCode===70){e.preventDefault();if(document.fullscreenElement){document.exitFullscreen();}else{vid.requestFullscreen().catch(function(){});}} // F = 全屏
                     else if(e.keyCode===37){e.preventDefault();vid.currentTime=Math.max(0,vid.currentTime-5);} // ← 后退5秒
                     else if(e.keyCode===39){e.preventDefault();vid.currentTime=Math.min(vid.duration,vid.currentTime+5);} // → 前进5秒
@@ -3009,13 +3178,29 @@
         return /(not\s*found|not_found|invalid\s*(video|id|link)|expired|已被删除|不存在|fail(ed)?)/i.test(html);
     }
 
+    // 带超时的 fetch (X5/老内核无 AbortSignal.timeout, 手动 AbortController)
+    function fetchWithTimeout(url, ms) {
+        return new Promise(function (resolve, reject) {
+            var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            var timer = setTimeout(function () {
+                if (ctrl) { try { ctrl.abort(); } catch (e) {} }
+                reject(new Error('timeout'));
+            }, ms);
+            fetch(url, ctrl ? { signal: ctrl.signal } : {}).then(function (r) {
+                clearTimeout(timer); resolve(r);
+            }, function (e) {
+                clearTimeout(timer); reject(e);
+            });
+        });
+    }
+
     // 通过推文 ID 获取 MP4 (fxtwitter + vxtwitter, 仅返回 MP4 URL 不使用 iframe)
     async function resolveViaTwitterApi(tweetId) {
         // 并行尝试 fxtwitter 和 vxtwitter
         var urls = ['https://api.fxtwitter.com/status/', 'https://api.vxtwitter.com/status/'];
         for (var u = 0; u < urls.length; u++) {
             try {
-                var resp = await fetch(urls[u] + tweetId);
+                var resp = await fetchWithTimeout(urls[u] + tweetId, 9000);
                 if (!resp.ok) continue;
                 var data = await resp.json();
                 var media = data.tweet && data.tweet.media;
@@ -3082,6 +3267,18 @@
         return { mp4Url: null, source: 'not_found' };
     }
 
+    function applyVideoAttrs(video) {
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.setAttribute('x5-playsinline', 'true');
+        video.setAttribute('x5-video-player-type', 'h5');
+        video.setAttribute('x5-video-player-fullscreen', 'true');
+        video.setAttribute('x5-video-orientation', 'portrait');
+        video.setAttribute('disablePictureInPicture', 'true');
+        video.setAttribute('referrerpolicy', 'no-referrer');
+        try { video.referrerPolicy = 'no-referrer'; } catch (e) {}
+    }
+
     // 创建 <video> 元素 (自动播放, 绝不跳转, iOS 优化)
     function createVideoPlayer(mp4Url) {
         var video = document.createElement('video');
@@ -3091,22 +3288,15 @@
         video.preload = 'auto';
         video.referrerPolicy = 'no-referrer';
         video.style.cssText = 'width:100%;max-height:60vh;max-height:60dvh;background:#000;display:block;outline:none;';
-        video.setAttribute('playsinline', 'true');
-        video.setAttribute('webkit-playsinline', 'true');
-        video.setAttribute('x5-video-player-type', 'h5');
-        video.setAttribute('x5-video-player-fullscreen', 'true');
-        video.setAttribute('x5-video-orientation', 'portraint');
-        video.setAttribute('disablePictureInPicture', 'true');
+        applyVideoAttrs(video);
         video.src = mp4Url;
         try { video.load(); } catch (e) {}
         video.onerror = function() {
             var parent = video.parentElement;
             if (parent) renderVideoError(parent, '视频加载失败', '可能已被删除或设为私密');
         };
-        video.play().catch(function() {
-            video.muted = true;
-            video.play().catch(function() {});
-        });
+        if (window.__wxPlay) window.__wxPlay(video, null);
+        else video.play().catch(function() {});
         return video;
     }
 
@@ -3142,6 +3332,7 @@
     var currentInlineCard = null;
     var currentInlinePlayer = null;
     var currentInlineMp4 = '';
+    var currentInlineOpenAt = 0;
 
     var _savedScrollY = 0;
 
@@ -3181,8 +3372,16 @@
         if (!cardEl || !cardEl.isConnected) return;
         // 所有播放路径 (点击/连播/手气/深链) 统一记录观看历史
         if (v && v.video_id) addToHistory(v.video_id);
-        // 同一个卡片 → 收起
+        // 同一个卡片 → 收起; 但 1.2s 内再次点击视为误触/想重试 → 重拉播放器而不是收起
         if (currentInlineCard === cardEl && currentInlinePlayer) {
+            var _v0 = currentInlinePlayer.querySelector('video');
+            if (currentInlineOpenAt && (Date.now() - currentInlineOpenAt) < 1200 && _v0 && (_v0.paused || _v0.readyState < 3)) {
+                try { _v0.load(); } catch (e) {}
+                if (window.__wxPlay) window.__wxPlay(_v0, null);
+                else { var _pr0 = _v0.play(); if (_pr0 && _pr0.catch) _pr0.catch(function () {}); }
+                currentInlineOpenAt = Date.now();
+                return;
+            }
             closeInlinePlayer();
             return;
         }
@@ -3219,6 +3418,7 @@
         currentInlineCard = cardEl;
         currentInlinePlayer = player;
         currentInlineVideo = v;
+        currentInlineOpenAt = Date.now();
         syncFavWlButtons(v.video_id);
 
         player.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -3285,12 +3485,8 @@
         var video = document.createElement('video');
         video.controls = true;
         video.autoplay = true;
-        video.setAttribute('playsinline', '');
-        video.setAttribute('webkit-playsinline', '');
-        video.setAttribute('x5-video-player-type', 'h5');
+        applyVideoAttrs(video);
         video.setAttribute('preload', 'auto');
-        video.setAttribute('referrerpolicy', 'no-referrer');
-        try { video.referrerPolicy = 'no-referrer'; } catch (e) {}
         video.style.cssText = 'width:100%;max-height:50vh;max-height:50dvh;background:#000;border-radius:var(--radius-sm);display:block;';
         wrap.innerHTML = '';
         wrap.appendChild(video);
@@ -3298,25 +3494,7 @@
         video.src = mp4Url;
         try { video.load(); } catch (e) {}
         // 直链失效自动重解析: 先试 twjn / Twitter API 换一条可用直链, 都不行再显示错误卡片 (每个播放器只重试一次)
-        if (wrap.dataset.fb !== '1') {
-            wrap.dataset.fb = '1';
-            video.onerror = function() {
-                var vv = currentInlineVideo;
-                if (!vv) { renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密'); return; }
-                wrap.innerHTML = '<div class="vpi-spinner"></div>';
-                (async function() {
-                    var alt = null;
-                    try {
-                        if (vv.monsnode_video_id) alt = await resolveViaTwjn(vv.monsnode_video_id);
-                        if (!alt) { var tid = extractTweetId(vv.video_id); if (tid) alt = await resolveViaTwitterApi(tid); }
-                    } catch(e) {}
-                    if (alt && alt !== mp4Url) setInlineVideo(wrap, alt);
-                    else renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密');
-                })();
-            };
-        } else {
-            video.onerror = function() { renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密'); };
-        }
+        video.onerror = function () { _reResolve(); };
         // 恢复上次播放进度
         if (currentInlineVideo && currentInlineVideo.video_id) {
             var savedTime = parseFloat(localStorage.getItem('vid_progress_' + currentInlineVideo.video_id) || '0');
@@ -3340,53 +3518,93 @@
         // 键盘控制
         video.tabIndex = 0;
         video.addEventListener('keydown', function(e) {
-            if (e.key === ' ') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+            if (e.key === ' ') { e.preventDefault(); if (video.paused) { var kp = video.play(); if (kp && kp.catch) kp.catch(function(){}); } else video.pause(); }
             else if (e.key === 'ArrowLeft') video.currentTime -= 5;
             else if (e.key === 'ArrowRight') video.currentTime += 5;
             else if (e.key === 'f') { if (video.requestFullscreen) video.requestFullscreen(); }
             else if (e.key === 'm') { video.muted = !video.muted; }
         });
-        var _pokePlay = function () {
-            var pr = video.play();
-            if (pr && pr.catch) pr.catch(function () {
-                video.muted = true;
-                var p2 = video.play();
-                if (p2 && p2.catch) p2.catch(function () { showTapPlay(); });
-            });
-        };
+        var _userMustTap = false;
         function showTapPlay() {
+            _userMustTap = true;
             if (!wrap.querySelector('.vpi-tapplay')) {
+                if (wrap.getBoundingClientRect().height < 140) wrap.style.minHeight = '200px';
                 var ov = document.createElement('div');
                 ov.className = 'vpi-tapplay';
-                ov.innerHTML = '<button type="button" aria-label="播放">\u25b6</button>';
-                ov.addEventListener('click', function (e) { e.stopPropagation(); try { video.play(); } catch (err) {} });
+                ov.innerHTML = '<button type="button" aria-label="播放">\u25b6</button><span class="vpi-tapplay-hint">点击播放</span>';
+                ov.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    if (window.__wxPlay) { window.__wxPlay(video, null); return; }
+                    var p = video.play();
+                    if (p && p.catch) p.catch(function () {});
+                });
                 wrap.appendChild(ov);
             }
         }
-        video.addEventListener('playing', function () { var ov = wrap.querySelector('.vpi-tapplay'); if (ov) ov.remove(); });
+        var _pokePlay = function () {
+            if (window.__wxPlay) { window.__wxPlay(video, showTapPlay); return; }
+            var pr = video.play();
+            if (pr && pr.catch) pr.catch(function () { showTapPlay(); });
+        };
+        // 重新解析直链 (直链失效 / 长时间无画面) — 每个播放器只换源一次, 之后才报错
+        var _resolving = false;
+        function _reResolve() {
+            if (_resolving || !wrap.isConnected) return;
+            if (wrap.dataset.rr === '1') { renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密'); return; }
+            var vv = currentInlineVideo;
+            if (!vv) { renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密'); return; }
+            _resolving = true;
+            wrap.dataset.rr = '1';
+            wrap.innerHTML = '<div class="vpi-spinner"></div>';
+            (async function () {
+                var alt = null;
+                try {
+                    if (vv.monsnode_video_id) alt = await resolveViaTwjn(vv.monsnode_video_id);
+                    if (!alt) { var tid = extractTweetId(vv.video_id); if (tid) alt = await resolveViaTwitterApi(tid); }
+                } catch (e) {}
+                _resolving = false;
+                if (!wrap.isConnected) return;
+                if (alt && alt !== mp4Url) setInlineVideo(wrap, alt);
+                else renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密');
+            })();
+        }
+        // 卡住时的"重新加载"按钮 (主线程仍在转圈时给用户一个可点的出口)
+        function showStallRetry() {
+            if (!wrap.isConnected) return;
+            if (wrap.querySelector('.vpi-stall') || wrap.querySelector('.vpi-tapplay') || wrap.querySelector('video') && video.readyState >= 2) return;
+            var ov = document.createElement('div');
+            ov.className = 'vpi-stall';
+            ov.innerHTML = '<button type="button">\uD83D\uDD04 重新加载</button><span>加载较慢？点此重试</span>';
+            ov.addEventListener('click', function (e) {
+                e.stopPropagation();
+                ov.remove();
+                try { video.load(); } catch (err) {}
+                _pokePlay();
+            });
+            wrap.appendChild(ov);
+        }
+        var _spawnAt = Date.now();
+        video.addEventListener('playing', function () { var ov = wrap.querySelector('.vpi-tapplay'); if (ov) ov.remove(); var st = wrap.querySelector('.vpi-stall'); if (st) st.remove(); wrap.style.minHeight = ''; });
+        // 已能解码却仍暂停(常见于 play() 被 load() 打断 / 自动播放被静默拦截) → 自动补一次 play()
+        video.addEventListener('canplay', function () {
+            if (Date.now() - _spawnAt > 15000) return;
+            if (video.paused && !_userMustTap) _pokePlay();
+        });
         _pokePlay();
-        // 看门狗: 8 秒内仍未开始解码(偶发 NO_SOURCE / 网络卡住) → 强制重新 load 一次;
-        // 再等 9 秒仍无画面 → 重新解析直链, 最后才显示错误卡片。避免"点卡片转圈/黑屏播不了"。
+        // 看门狗: 5s 未解码 → 强制重新 load; 7s → 显示"重新加载"; 13s 仍无画面 → 换源重新解析
         setTimeout(function () {
             if (!video.isConnected || video.readyState >= 2) return;
             try { video.load(); } catch (e) {}
             _pokePlay();
-            setTimeout(function () {
-                if (!video.isConnected || video.readyState >= 2) return;
-                var vv = currentInlineVideo;
-                if (!vv) { renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密'); return; }
-                wrap.innerHTML = '<div class="vpi-spinner"></div>';
-                (async function () {
-                    var alt = null;
-                    try {
-                        if (vv.monsnode_video_id) alt = await resolveViaTwjn(vv.monsnode_video_id);
-                        if (!alt) { var tid = extractTweetId(vv.video_id); if (tid) alt = await resolveViaTwitterApi(tid); }
-                    } catch (e) {}
-                    if (alt && alt !== mp4Url) setInlineVideo(wrap, alt);
-                    else renderVideoError(wrap, '视频加载失败', '可能已被删除或设为私密');
-                })();
-            }, 9000);
-        }, 8000);
+        }, 5000);
+        setTimeout(function () {
+            if (!video.isConnected || video.readyState >= 2) return;
+            showStallRetry();
+        }, 7000);
+        setTimeout(function () {
+            if (!video.isConnected || video.readyState >= 2) return;
+            _reResolve();
+        }, 13000);
     }
 
     function updateInlineBtns(player, mp4Url, v) {
@@ -3412,6 +3630,7 @@
         currentInlineCard = null;
         currentInlineVideo = null;
         currentInlineMp4 = '';
+        currentInlineOpenAt = 0;
         if (_luckyCleanup) _luckyCleanup();
         // 恢复滚动位置
         if (_savedScrollY > 0) {
@@ -4189,7 +4408,7 @@
 
     function copyLink(url,btn){
         if(!url)return;
-        if(navigator.clipboard){navigator.clipboard.writeText(url).then(function(){showCopied(btn);});}
+        if(navigator.clipboard){navigator.clipboard.writeText(url).then(function(){showCopied(btn);}).catch(function(){showCopied(btn);});}
         else{
             var ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
             document.body.appendChild(ta);ta.select();
@@ -4197,7 +4416,10 @@
             document.body.removeChild(ta);
         }
     }
-    function showCopied(btn){btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='🔗';btn.classList.remove('copied');},1500);}
+    function showCopied(btn){
+        if(!btn){toast('🔗 链接已复制');return;}
+        btn.textContent='✓';btn.classList.add('copied');setTimeout(function(){btn.textContent='🔗';btn.classList.remove('copied');},1500);
+    }
 
     // ============ 作者页紧凑行 ============
     function authorRow(v) {
@@ -5024,22 +5246,37 @@
     }
 
     // ============ 分享功能 ============
+    function buildShareUrl(videoId) {
+        var base;
+        if (/\.perchance\.org$/i.test(location.hostname) && window.generatorName) {
+            base = 'https://perchance.org/' + window.generatorName;
+        } else {
+            base = location.origin + location.pathname;
+        }
+        return base + (videoId ? '#/video/' + encodeURIComponent(videoId) : '#/videos');
+    }
     async function shareVideo() {
         if (!currentInlineVideo) { toast('无视频信息'); return; }
         var v = currentInlineVideo;
-        var url = v.video_url || (v.monsnode_video_id ? 'https://monsnode.com/twjn.php?v=' + v.monsnode_video_id : '');
         var title = v.title || v.video_id || '视频';
+        var shareUrl = buildShareUrl(v.video_id);
+        if (document.documentElement.classList.contains('wechat')) {
+            var copied = window.__wxCopy ? window.__wxCopy(shareUrl) : false;
+            if (!copied) copyLink(shareUrl, null);
+            toast('🔗 链接已复制 · 点右上角 ··· 发送给朋友');
+            return;
+        }
         if (navigator.share) {
             try {
-                await navigator.share({ title: title, text: title, url: url });
+                await navigator.share({ title: title, text: title, url: shareUrl });
+                return;
             } catch(e) {}
+        }
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(shareUrl);
+            toast('🔗 链接已复制: ' + title);
         } else {
-            if (navigator.clipboard) {
-                navigator.clipboard.writeText(url);
-                toast('🔗 链接已复制: ' + title);
-            } else {
-                copyLink(url, null);
-            }
+            copyLink(shareUrl, null);
         }
     }
 
@@ -8869,7 +9106,7 @@ function getLoginToken() {
         var vid = isVideoUrl(w.file_url);
         var mediaHtml;
         if (vid) {
-            mediaHtml = '<video src="' + esc(w.file_url) + '" controls playsinline preload="metadata"' + (w.cover_url ? ' poster="' + esc(w.cover_url) + '"' : '') + ' style="width:100%;display:block;background:#000;max-height:400px;"></video>';
+            mediaHtml = '<video src="' + esc(w.file_url) + '" controls playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" preload="metadata"' + (w.cover_url ? ' poster="' + esc(w.cover_url) + '"' : '') + ' style="width:100%;display:block;background:#000;max-height:400px;"></video>';
         } else if (w.cover_url) {
             mediaHtml = '<div style="height:150px;background:#0a0a0c;overflow:hidden;"><img loading="lazy" src="' + esc(w.cover_url) + '" style="width:100%;height:100%;object-fit:cover;"></div>';
         } else {
