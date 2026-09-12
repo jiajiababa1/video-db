@@ -1483,7 +1483,7 @@
     var lastTrigger=0, COOLDOWN=3600000;
     var compactView=false;
     var lastScrapeTime=null;
-    var playableFilter='all'; // 'all' | 'playable' | 'unplayable'
+    var playableFilter='playable'; // 'all' | 'playable' | 'unplayable' (默认只看可播放)
 
     // ============ 偏好持久化 ============
     function savePrefs() {
@@ -1508,8 +1508,10 @@
         if ($sortLabel) { $sortLabel.textContent = sortOrder === 'desc' ? '最新优先' : '最早优先'; }
         var pfBtn = document.getElementById('playableFilter');
         if (pfBtn) {
+            pfBtn.classList.remove('active');
             if (playableFilter === 'playable') { pfBtn.textContent = '✅ 可播'; pfBtn.classList.add('active'); }
             else if (playableFilter === 'unplayable') { pfBtn.textContent = '⚠️ 失效'; pfBtn.classList.add('active'); }
+            else { pfBtn.textContent = '🔇 全部'; }
         }
     }
     loadPrefs();
@@ -2446,8 +2448,9 @@
         if(activeAuthor) params+='&author=ilike.*'+encodeURIComponent(activeAuthor.trim())+'*';
         // 已下架的视频不显示
         params+='&removed=is.false';
-        // 可播放性筛选 (客户端过滤, 因为 has_mp4 列可能不存在)
-        // 不添加到 params, 在 render 之前过滤
+        // 可播放性筛选: 服务端过滤 (客户端过滤会导致分页/空列表问题)
+        if(playableFilter === 'playable') params+='&or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
+        else if(playableFilter === 'unplayable') params+='&not.or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
         // 排序: 有播放量的按播放量排，否则按时间
         if (activeSection === 'ranking' || activeSection === 'trending') {
             params+='&order=views.desc.nullslast&limit='+sz+'&offset='+f;
@@ -2476,7 +2479,9 @@
         }
         if(activeSection && activeSection !== 'favs' && activeSection !== 'history') countParams+='&source_section=ilike.*'+encodeURIComponent(activeSection)+'*';
         if(activeAuthor) countParams+='&author=ilike.*'+encodeURIComponent(activeAuthor.trim())+'*';
-        // 可播放性筛选: 客户端过滤 (has_mp4 列可能不存在)
+        // 可播放性筛选: 服务端过滤
+        if(playableFilter === 'playable') countParams+='&or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
+        else if(playableFilter === 'unplayable') countParams+='&not.or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
         countParams+='&removed=is.false';
         countParams+='&limit=1';
         var cp=fetch(SUPABASE_URL+'/rest/v1/videos?'+countParams,{method:'GET',headers:ch});
@@ -2886,7 +2891,7 @@
             var r=await fetchVids(page,sq,PAGE_SIZE);
             total=r.count;
             var filtered=applyFiltersAndRender(r.data, total, page>1);
-            hasMore=filtered.length>=PAGE_SIZE;
+            hasMore=r.data.length>=PAGE_SIZE;
             hideSkeletons();
             if(reset) fetchLastScrape();
         }catch(e){
@@ -2905,7 +2910,7 @@
             var r=await fetchVids(page,sq,PAGE_SIZE);
             total=r.count;
             var filtered2=applyFiltersAndRender(r.data, total, true);
-            hasMore=filtered2.length>=PAGE_SIZE;
+            hasMore=r.data.length>=PAGE_SIZE;
         }catch(e){toast('加载失败: '+e.message);page--;}
         loading=false;
     }
