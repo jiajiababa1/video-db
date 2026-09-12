@@ -3,6 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '0 6 * * *'   # 每日 06:00 UTC 自动校验线上代码完整性
   workflow_dispatch:
 
 permissions:
@@ -16,15 +18,59 @@ concurrency:
 
 jobs:
   deploy:
+    # 定时校验时不重新部署 (只跑 verify)
+    if: github.event_name != 'schedule'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v4
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/checkout@v5
+
+      - name: 计算 index.html SHA-256 并写入 Supabase (site_code_hash)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_SERVICE_KEY:-}" ]; then
+            echo "::warning::未设置 SUPABASE_SERVICE_ROLE_KEY 密钥, 跳过写入 site_code_hash (前端将显示'未配置代码校验')"
+            exit 0
+          fi
+          HASH=$(sha256sum index.html | awk '{print $1}')
+          echo "site_code_hash=$HASH"
+          # service_role 直写 system_config (绕过 RLS, 无需会话 token)
+          curl -sS -X POST "$SUPABASE_URL/rest/v1/system_config" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"key\":\"site_code_hash\",\"value\":\"$HASH\",\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+      # 只部署 index.html —— scraper/、*.sql、totp 页等源码不再公开暴露
+      - uses: actions/upload-pages-artifact@v5
         with:
-          path: '.'
-      - uses: actions/deploy-pages@v4
+          path: index.html
+      - uses: actions/deploy-pages@v5
         id: deployment
+
+  verify:
+    needs: deploy
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 比对线上页面与仓库代码 (篡改检测)
+        run: |
+          set -euo pipefail
+          EXPECTED=$(sha256sum index.html | awk '{print $1}')
+          DEPLOY_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          ACTUAL=$(curl -sSL "$DEPLOY_URL" | sha256sum | awk '{print $1}')
+          echo "仓库 index.html sha256: $EXPECTED"
+          echo "线上页面  sha256: $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::线上页面与仓库代码不一致! 页面可能被篡改或部署失败, 请立即检查。"
+            exit 1
+          fi
+          echo "✅ 线上页面与仓库代码完全一致"

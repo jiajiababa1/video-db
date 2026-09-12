@@ -1,44 +1,76 @@
-name: Scraper (完整抓取 + 独立MP4解析)
+name: Scraper (HTTP 抓取 + MP4 解析)
 
+# 说明:
+#   • 列表页 / 搜索页 / twjn.php 全部改用普通 HTTP 抓取 (scraper/main.py v11),
+#     不再依赖 Playwright 浏览器导航 —— 它在 Actions 上被外部 CDN 拖到 100% 超时,
+#     这正是之前「一条都抓不到」的根因。Playwright 现在只作 Cloudflare 回退, 可选。
+#   • 完整抓取每 2 小时一次; MP4 解析每小时一次 (与整点错开), 快速消化积压。
+#   • 公开仓库的 Actions 分钟数免费, 所以可以放心提高解析频率。
 on:
   schedule:
-    - cron: '0 */2 * * *'   # 每2小时完整抓取
-    - cron: '*/30 * * * *'  # 每30分钟MP4解析
+    - cron: '0 */2 * * *'    # 每 2 小时整点: 完整抓取 (列表 + 保存 + 解析一批)
+    - cron: '25 * * * *'     # 每小时 :25: 独立 MP4 解析 (轻量, 只打 twjn.php)
   workflow_dispatch:
+    inputs:
+      mode:
+        description: '运行模式'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full      # 完整抓取 (列表 + 保存 + 解析一批)
+          - resolve   # 只解析 MP4 (不抓列表)
+          - test      # 连通性自检, 打印每步 HTTP 状态, 不写数据库
 
 jobs:
-  # ====== 完整抓取(每2小时) ======
+  # ====== 完整抓取 (每 2 小时整点) ======
   scrape:
+    if: github.event.schedule == '0 */2 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode != 'resolve')
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    concurrency:
+      group: scraper-scrape
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install httpx playwright
-      - run: |
-          playwright install chromium
-          sudo playwright install-deps chromium 2>/dev/null || true
-      - env:
+      - run: pip install httpx
+      - name: 安装 Playwright (仅作 Cloudflare 回退, 失败不影响)
+        continue-on-error: true
+        run: |
+          pip install playwright
+          python -m playwright install chromium || true
+      - name: 运行爬虫
+        env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scraper/main.py full
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          if [ -z "$MODE" ]; then MODE="full"; fi
+          python scraper/main.py "$MODE"
 
-  # ====== MP4解析(每30分钟) ======
+  # ====== 独立 MP4 解析 (每小时 :25) ======
   resolve:
+    if: github.event.schedule == '25 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'resolve')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    concurrency:
+      group: scraper-resolve
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install httpx playwright
-      - run: |
-          playwright install chromium
-          sudo playwright install-deps chromium 2>/dev/null || true
-      - env:
+      - run: pip install httpx
+      - name: 批量解析 MP4
+        env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          MP4_WORKERS: '20'
+          SB_WORKERS: '16'
+          RESOLVE_LIMIT: '6000'
+          RESOLVE_BUDGET: '900'
         run: python scraper/main.py resolve
