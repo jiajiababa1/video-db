@@ -1236,8 +1236,8 @@
                 <input type="password" id="loginPassword2" placeholder="确认密码 (仅注册时填写)" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);display:none;margin-bottom:8px;box-sizing:border-box;">
             </div>
             <div id="captchaSection" style="display:none;margin-bottom:10px;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <img id="captchaImg" alt="验证码" title="点击图片刷新" onclick="loadCaptcha()" style="width:135px;height:45px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:#fff;cursor:pointer;object-fit:contain;flex-shrink:0;transition:opacity 0.2s;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <img id="captchaImg" alt="验证码" title="点击图片刷新" onclick="loadCaptcha()" style="height:54px;width:auto;max-width:100%;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:#fff;cursor:pointer;object-fit:contain;flex-shrink:0;transition:opacity 0.2s;">
                     <button type="button" id="captchaRefreshBtn" class="btn-cancel" style="font-size:10px;padding:7px 12px;flex-shrink:0;" onclick="loadCaptcha()">↻ 换一张</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
