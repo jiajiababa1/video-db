@@ -4142,8 +4142,8 @@
     }
     async function refreshMessages() {
         if (!_chatWith) return;
-        var data = await _get(SUPABASE_URL + '/rest/v1/messages?select=*&order=created_at.desc&limit=50');
-        if (data) data = data.filter(function(m){ return (m.from_user===_username&&m.to_user===_chatWith)||(m.from_user===_chatWith&&m.to_user===_username); });
+        // 私信读写走「会话 token 鉴权」RPC (messages 表已对 anon 关闭)
+        var data = await _post(SUPABASE_URL + '/rest/v1/rpc/get_conversation_t', {p_token: _token, p_with: _chatWith, p_limit: 50});
         var msgs = Array.isArray(data) ? data : (data ? [data] : []);
         msgs.reverse(); // 旧→新
         var h = '';
@@ -4164,14 +4164,15 @@
         var content = input.value.trim();
         if (!content || !_chatWith) return;
         input.value = '';
-        await _post(SUPABASE_URL + '/rest/v1/messages', {from_user: _username, to_user: _chatWith, content: content});
+        await _post(SUPABASE_URL + '/rest/v1/rpc/send_message_t', {p_token: _token, p_to: _chatWith, p_content: content});
         await refreshMessages();
     }
     async function checkUnread() {
         if (!_loggedIn) return;
-        var data = await _get(SUPABASE_URL + '/rest/v1/messages?to_user=eq.'+escUrl(_username)+'&is_read=eq.false&select=id');
-        if (data && data.length > 0) {
-            toast('💬 ' + data.length + ' 条未读私信');
+        var data = await _post(SUPABASE_URL + '/rest/v1/rpc/unread_count_t', {p_token: _token});
+        var cnt = (Array.isArray(data) && data[0]) ? (parseInt(data[0].cnt) || 0) : 0;
+        if (cnt > 0) {
+            toast('💬 ' + cnt + ' 条未读私信');
         }
     }
 
@@ -4188,14 +4189,22 @@
 
         // 2. 客户端直接读写的公开表 (应可访问)
         var openTables = ['videos','scrape_status','announcements','site_pages','scraped_videos',
-                          'friends','messages','cloud_favorites','user_follows',
+                          'friends','cloud_favorites','user_follows',
                           'cloud_user_data','cloud_user_config','works','board_groups','board_messages',
-                          'user_vips','activation_codes','admin_log','bans','system_config'];
+                          'user_vips','admin_log','bans'];
         for (var i = 0; i < openTables.length; i++) {
             try {
                 var r = await fetch(SUPABASE_URL + '/rest/v1/' + openTables[i] + '?limit=1', {headers: hds});
                 results.push([openTables[i], r.ok ? '✅' : '❌ HTTP' + r.status]);
             } catch(e) { results.push([openTables[i], '❌']); }
+        }
+        // 2b. 已加固表 (对 anon 锁定属正常, 通过 token RPC 访问)
+        var lockedTables = ['messages','activation_codes','system_config'];
+        for (var li = 0; li < lockedTables.length; li++) {
+            try {
+                var lr = await fetch(SUPABASE_URL + '/rest/v1/' + lockedTables[li] + '?limit=1', {headers: hds});
+                results.push(['🔒 ' + lockedTables[li] + ' (应锁定)', lr.ok ? '⚠️ 未锁定' : '🔒 已锁定']);
+            } catch(e) { results.push(['🔒 ' + lockedTables[li] + ' (应锁定)', '🔒 已锁定']); }
         }
 
         // 3. user_accounts 安全列 (绝不能用 select=* — 敏感列已被保护, 会整体被拒)
@@ -4571,7 +4580,8 @@
     }
     function showAdminMessages(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
-        fetch(SUPABASE_URL+'/rest/v1/messages?select=*&order=created_at.desc&limit=100',{headers:_h()}).then(function(r){return r.json();}).then(function(msgs){
+        _post(SUPABASE_URL+'/rest/v1/rpc/admin_recent_messages', {p_token:_token, p_limit:100}).then(function(msgs){
+            msgs = Array.isArray(msgs) ? msgs : [];
             var h = '<div style="max-height:300px;overflow-y:auto;">';
             for (var i=0;i<msgs.length;i++) h += '<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:10px;"><b>'+esc(msgs[i].from_user)+'</b> → '+esc(msgs[i].to_user)+': '+esc(msgs[i].content)+' <span style="color:var(--vmuted);">'+new Date(msgs[i].created_at).toLocaleString('zh-CN')+'</span></div>';
             h += '</div>';
