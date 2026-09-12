@@ -50,6 +50,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FULL_RESOLVE_LIMIT: '8000'
+          FULL_RESOLVE_BUDGET: '360'
         run: |
           MODE="${{ github.event.inputs.mode }}"
           if [ -z "$MODE" ]; then MODE="full"; fi
@@ -79,6 +81,6 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           MP4_WORKERS: '20'
           SB_WORKERS: '16'
-          RESOLVE_LIMIT: '6000'
+          RESOLVE_LIMIT: '20000'
           RESOLVE_BUDGET: '900'
         run: python -u scraper/main.py resolve
