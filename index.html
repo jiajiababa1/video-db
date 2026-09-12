@@ -2455,7 +2455,7 @@
         if (activeSection === 'ranking' || activeSection === 'trending') {
             params+='&order=views.desc.nullslast&limit='+sz+'&offset='+f;
         } else {
-            params+='&order=created_at.'+sortOrder+'&limit='+sz+'&offset='+f;
+            params+='&order=has_mp4.desc.nullslast,created_at.'+sortOrder+',video_id.desc&limit='+sz+'&offset='+f;
         }
 
         var h=_h();
