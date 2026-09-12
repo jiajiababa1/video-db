@@ -42,6 +42,10 @@ jobs:
         run: |
           pip install playwright
           python -m playwright install chromium || true
+      - name: 检查 scraper/main.py 非空
+        run: |
+          if [ ! -s scraper/main.py ]; then echo "::error::scraper/main.py 为空 (0 字节), 无法运行! 请重新上传 main.py 内容后再试。"; exit 1; fi
+          echo "main.py 行数: $(wc -l < scraper/main.py)"
       - name: 运行爬虫
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -49,7 +53,7 @@ jobs:
         run: |
           MODE="${{ github.event.inputs.mode }}"
           if [ -z "$MODE" ]; then MODE="full"; fi
-          python scraper/main.py "$MODE"
+          python -u scraper/main.py "$MODE"
 
   # ====== 独立 MP4 解析 (每小时 :25) ======
   resolve:
@@ -65,6 +69,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install "httpx[http2]" curl_cffi || pip install httpx
+      - name: 检查 scraper/main.py 非空
+        run: |
+          if [ ! -s scraper/main.py ]; then echo "::error::scraper/main.py 为空 (0 字节), 无法运行! 请重新上传 main.py 内容后再试。"; exit 1; fi
+          echo "main.py 行数: $(wc -l < scraper/main.py)"
       - name: 批量解析 MP4
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -73,4 +81,4 @@ jobs:
           SB_WORKERS: '16'
           RESOLVE_LIMIT: '6000'
           RESOLVE_BUDGET: '900'
-        run: python scraper/main.py resolve
+        run: python -u scraper/main.py resolve
