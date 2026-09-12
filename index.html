@@ -2414,7 +2414,7 @@
     }
 
     // ============ Supabase API ============
-    function _h(){return{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json'};}
+    function _h(){var _lt='';try{_lt=localStorage.getItem('login_token')||sessionStorage.getItem('login_token')||'';}catch(e){}return{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json','x-login-token':_lt};}
 
     function formatNum(n) {
         if (n >= 10000) return (n/10000).toFixed(1).replace(/\.0$/,'') + '万';
