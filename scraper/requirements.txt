@@ -1,5 +1,11 @@
+# ===== 爬虫依赖 =====
+# 必需: HTTP 抓取列表页/搜索页 + 读写 Supabase (scraper/main.py v11 全程用 httpx)
+httpx
+
+# 可选: 仅当列表页 HTTP 请求被 Cloudflare 拦截时, main.py 才会自动回退用浏览器抓取
 playwright
+
+# 以下为仓库内其他脚本/历史版本可能用到, scraper/main.py 不依赖:
 beautifulsoup4
 lxml
-httpx
 curl-cffi>=0.7
