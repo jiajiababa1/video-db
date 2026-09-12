@@ -1235,6 +1235,16 @@
                 <input type="password" id="loginPassword" placeholder="密码 (4+字符)" autocomplete="current-password" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;margin-bottom:8px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
                 <input type="password" id="loginPassword2" placeholder="确认密码 (仅注册时填写)" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);display:none;margin-bottom:8px;box-sizing:border-box;">
             </div>
+            <div id="captchaSection" style="display:none;margin-bottom:10px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <img id="captchaImg" alt="验证码" title="点击图片刷新" onclick="loadCaptcha()" style="width:135px;height:45px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:#fff;cursor:pointer;object-fit:contain;flex-shrink:0;transition:opacity 0.2s;">
+                    <button type="button" id="captchaRefreshBtn" class="btn-cancel" style="font-size:10px;padding:7px 12px;flex-shrink:0;" onclick="loadCaptcha()">↻ 换一张</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                    <input type="text" id="captchaAnswer" placeholder="请输入运算结果 (可为负数)" inputmode="numeric" autocomplete="off" style="flex:1;min-width:0;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:14px;outline:none;font-family:var(--font-sans);box-sizing:border-box;">
+                    <button type="button" id="captchaSignBtn" class="btn-cancel" title="切换正负号" style="font-size:14px;padding:8px 14px;flex-shrink:0;" onclick="toggleCaptchaSign()">±</button>
+                </div>
+            </div>
             <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--vmuted);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="loginRemember" checked> 记住登录 (30天自动登录)</label>
             <div class="actions">
                 <button class="btn-cancel" id="loginModeSwitch" onclick="toggleLoginMode()" style="font-size:10px;">注册新账号</button>
@@ -2159,6 +2169,13 @@
     // ============================================================
     var SUPABASE_URL='https://fejspvbckgkbmfyoxiub.supabase.co';
     var SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
+    // 注册真人验证 (xxapi 验证码) — https://xxapi.cn/doc/captcha
+    // 生成: GET /api/captcha?type=math|digit|string  ->  {id, url}
+    // 校验: 由服务端 Supabase 函数 _captcha_verify() 完成 (见 src/sql/18_captcha_guard.sql),
+    //       前端只负责生成图片, 并把 {id,答案} 随 register_account 一起提交, 无法绕过。
+    var CAPTCHA_API='https://v2.xxapi.cn/api/captcha';
+    var CAPTCHA_TYPE='math'; // 可改为 'digit'(纯数字) 或 'string'(字母数字)
+    var CAPTCHA_KEY=''; // 可选: xxapi 限流时填 API key, 以 Authorization: Bearer <key> 发送
     var PAGE_SIZE=24, page=1, total=0, loading=false, hasMore=true;
     var sq='', st=null, sortOrder='desc', activeSection='', activeAuthor='';
     var lastTrigger=0, COOLDOWN=3600000;
@@ -5768,23 +5785,68 @@
     var _loginMode = 'login'; // 'login' | 'register'
 
 
+    // ============ 注册真人验证 (中文数字运算验证码) ============
+    var _captchaId = '';
+    var _captchaLoading = false;
+
+    async function loadCaptcha() {
+        if (_captchaLoading) return;
+        var img = document.getElementById('captchaImg');
+        var ans = document.getElementById('captchaAnswer');
+        _captchaId = '';
+        _captchaLoading = true;
+        if (img) { img.style.opacity = '0.35'; img.removeAttribute('src'); }
+        if (ans) { ans.value = ''; ans.placeholder = '验证码加载中...'; }
+        try {
+            var opts = CAPTCHA_KEY ? { headers: { 'Authorization': 'Bearer ' + CAPTCHA_KEY } } : undefined;
+            var resp = await fetch(CAPTCHA_API + '?type=' + encodeURIComponent(CAPTCHA_TYPE) + '&t=' + Date.now(), opts);
+            var j = await resp.json();
+            if (!j || j.code !== 200 || !j.data || !j.data.url || !j.data.id) throw new Error((j && j.msg) || '加载失败');
+            _captchaId = j.data.id;
+            if (img) { img.src = j.data.url; img.style.opacity = '1'; }
+            if (ans) ans.placeholder = '请输入运算结果 (可为负数)';
+        } catch (e) {
+            if (img) img.style.opacity = '0.35';
+            if (ans) ans.placeholder = '验证码加载失败, 请点"换一张"重试';
+        } finally {
+            _captchaLoading = false;
+        }
+    }
+
+    // 移动端数字键盘没有负号, 用此按钮切换正负 (数学题答案可能为负)
+    function toggleCaptchaSign() {
+        var ans = document.getElementById('captchaAnswer');
+        if (!ans) return;
+        var v = ans.value || '';
+        ans.value = (v.charAt(0) === '-') ? v.slice(1) : ('-' + v);
+        try { ans.focus(); } catch (e) {}
+    }
+
+
     // 账号密码分区的按钮/标题状态
     function _applyPassMode() {
         var title = document.getElementById('loginTitle');
         var btn = document.getElementById('loginBtn');
         var switchBtn = document.getElementById('loginModeSwitch');
         var pw2 = document.getElementById('loginPassword2');
+        var cap = document.getElementById('captchaSection');
         if (_loginMode === 'register') {
             title.textContent = '📝 注册新账号';
             btn.textContent = '注册';
             btn.onclick = doRegister;
             if (pw2) pw2.style.display = 'block';
+            if (cap) {
+                var firstShow = cap.style.display === 'none' || !cap.style.display;
+                cap.style.display = 'block';
+                if (firstShow) loadCaptcha();
+            }
             switchBtn.textContent = '已有账号? 登录';
         } else {
             title.textContent = '🔐 账号登录';
             btn.textContent = '登录';
             btn.onclick = doLogin;
             if (pw2) pw2.style.display = 'none';
+            if (cap) cap.style.display = 'none';
             switchBtn.textContent = '注册新账号';
         }
     }
@@ -5805,12 +5867,16 @@
         if (!/^[a-zA-Z0-9_一-鿿]+$/.test(user)) { resultEl.textContent = '❌ 用户名只能包含中英文数字下划线'; resultEl.style.color='#c08080'; return; }
         if (!pass || pass.length < 4) { resultEl.textContent = '❌ 密码至少4个字符'; resultEl.style.color='#c08080'; return; }
         if (pass !== pass2) { resultEl.textContent = '❌ 两次密码不一致'; resultEl.style.color='#c08080'; return; }
+        var answer = (document.getElementById('captchaAnswer').value || '').trim();
+        if (!_captchaId) { resultEl.textContent = '❌ 验证码未加载, 请点"换一张"'; resultEl.style.color='#c08080'; return; }
+        if (!/^-?\d{1,6}$/.test(answer)) { resultEl.textContent = '❌ 请输入验证码的运算结果'; resultEl.style.color='#c08080'; return; }
         resultEl.textContent = '注册中...'; resultEl.style.color = 'var(--vmuted)';
         try {
-            var j = await _post(SUPABASE_URL + '/rest/v1/rpc/register_account', {p_username: user, p_password: pass, p_device_id: getDeviceId()});
+            // 验证码在服务端校验 (register_account 内调 _captcha_verify), 前端无法绕过
+            var j = await _post(SUPABASE_URL + '/rest/v1/rpc/register_account', {p_username: user, p_password: pass, p_device_id: getDeviceId(), p_captcha_id: _captchaId, p_captcha_key: answer});
             if (!j || !j.length || !j[0].ok) {
                 resultEl.textContent = '❌ ' + ((j && j.length && j[0].message) || '注册失败');
-                resultEl.style.color = '#c08080'; return;
+                resultEl.style.color = '#c08080'; loadCaptcha(); return;
             }
             var acc = j[0];
             _username = user; _loggedIn = true;
@@ -5825,7 +5891,7 @@
             resultEl.textContent = '✅ 注册成功! 已自动登录';
             resultEl.style.color = 'var(--green)';
             setTimeout(closeLoginDialog, 800);
-        } catch(e) { resultEl.textContent = '❌ 出错了: ' + (e && e.message ? e.message : String(e)); resultEl.style.color = '#c08080'; }
+        } catch(e) { resultEl.textContent = '❌ 出错了: ' + (e && e.message ? e.message : String(e)); resultEl.style.color = '#c08080'; loadCaptcha(); }
     }
 
     function showLoginDialog() {
