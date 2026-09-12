@@ -1127,7 +1127,7 @@
                     <button class="vid-btn ghost" id="helpBtn" onclick="showShortcutHelp()" title="快捷键帮助">⌨️</button>
                     <button class="vid-btn ghost" id="sortBtn" onclick="toggleSort()" title="排序">↓ 最新</button>
                     <button class="vid-btn primary" id="refreshBtn">更新</button>
-                    <button class="vid-btn ghost" id="playableFilter" onclick="togglePlayableFilter()" title="筛选可播放/全部">🔇 全部</button>
+                    <button class="vid-btn ghost active" id="playableFilter" onclick="togglePlayableFilter()" title="筛选可播放/全部">✅ 可播</button>
                     <button class="vid-btn ghost" id="resolveBtn" onclick="batchResolveMp4()" title="解析当前页未缓存的 MP4">🎬 解析</button>
                 </div>
             </div>
@@ -1483,7 +1483,7 @@
     var lastTrigger=0, COOLDOWN=3600000;
     var compactView=false;
     var lastScrapeTime=null;
-    var playableFilter='all'; // 'all' | 'playable' | 'unplayable' (默认全部: 未解析与已解析按时间顺序混排)
+    var playableFilter='playable'; // 'all' | 'playable' | 'unplayable' (默认仅可播: 未解析视频点开无法播放, 不再混入列表)
 
     // ============ 偏好持久化 ============
     function savePrefs() {
@@ -1499,6 +1499,8 @@
             if (typeof p.compactView === 'boolean') compactView = p.compactView;
             if (p.sortOrder === 'asc' || p.sortOrder === 'desc') sortOrder = p.sortOrder;
             if (p.playableFilter === 'all' || p.playableFilter === 'playable' || p.playableFilter === 'unplayable') playableFilter = p.playableFilter;
+            // 迁移: 旧版默认"全部"会把未解析(点开播不了)的视频混进列表 → 用户从未手动切换过筛选时, 改为"仅可播"
+            if (localStorage.getItem('vid_playable_explicit') !== '1') playableFilter = 'playable';
         } catch(e) {}
     }
     function applyPrefsUI() {
@@ -2168,6 +2170,7 @@
         if(playableFilter==='all'){playableFilter='playable';btn.textContent='✅ 可播';btn.classList.add('active');}
         else if(playableFilter==='playable'){playableFilter='unplayable';btn.textContent='⚠️ 失效';btn.classList.add('active');}
         else{playableFilter='all';btn.textContent='🔇 全部';btn.classList.remove('active');}
+        localStorage.setItem('vid_playable_explicit','1'); // 用户已手动选择, 不再被默认迁移覆盖
         savePrefs();
         loadVids(true);
     }
