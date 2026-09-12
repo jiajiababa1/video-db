@@ -694,6 +694,7 @@ def sb_pending(limit):
             + "?select=video_id,monsnode_video_id"
             + "&has_mp4=is.false"
             + "&monsnode_video_id=not.is.null"
+            + "&removed=not.is.true"
             + "&order=mp4_checked_at.asc.nullsfirst,video_id.asc"
             + "&limit=" + str(take)
             + "&offset=" + str(offset)
@@ -795,8 +796,9 @@ _RPC_BULK = {"state": None}  # None=未探测, True=可用, False=不可用
 
 
 def sb_write_results(results):
-    """results: {mid: (video_id, mp4_or_None)}
-    成功 → mp4 字段 + has_mp4=true; 失败 → 只更新 mp4_checked_at (让它排到队尾)。
+    """results: {mid: (video_id, mp4 | DELETED_MARK | None)}
+    成功 → mp4 字段 + has_mp4=true; 源站已删除 → removed=true (从站点隐藏, 不再重试);
+    其它失败 → 只更新 mp4_checked_at (让它排到队尾)。
 
     首选一次性 RPC apply_mp4_results 批量写回 (一条 SQL 更新上千行, 极快,
     大幅降低请求数/超时风险); 若数据库还没有这个函数, 自动回退逐条 PATCH
@@ -804,11 +806,16 @@ def sb_write_results(results):
     if not results:
         return 0, 0
     now = datetime.now(timezone.utc).isoformat()
-    hit = sum(1 for _, mp in results.values() if mp)
+    live = {mid: (vid, mp) for mid, (vid, mp) in results.items() if mp and mp != DELETED_MARK}
+    deleted = {mid: vid for mid, (vid, mp) in results.items() if mp == DELETED_MARK}
+    hit = len(live)
+    fail = len(results) - hit
 
     if _RPC_BULK["state"] is not False:
         payload = []
         for mid, (vid, mp4) in results.items():
+            if mp4 == DELETED_MARK:
+                continue
             rec = {"video_id": vid}
             if mp4:
                 rec["mp4_url"] = mp4
@@ -829,7 +836,8 @@ def sb_write_results(results):
             client.close()
             if rpc_ok:
                 _RPC_BULK["state"] = True
-                return hit, len(results) - hit
+                _mark_deleted(deleted, now)
+                return hit, fail
         except Exception as e:
             log(f"  批量 RPC 异常: {str(e)[:120]}", "WARN")
         if _RPC_BULK["state"] is None:
@@ -840,7 +848,12 @@ def sb_write_results(results):
     with ThreadPoolExecutor(max_workers=SB_WORKERS) as ex:
         futs = []
         for mid, (vid, mp4) in results.items():
-            if mp4:
+            if mp4 == DELETED_MARK:
+                futs.append((ex.submit(_sb_patch_one, vid, {
+                    "removed": True, "needs_rescrape": False,
+                    "mp4_checked_at": now, "updated_at": now,
+                }), False))
+            elif mp4:
                 futs.append((ex.submit(_sb_patch_one, vid, {
                     "duration": mp4, "mp4_url": mp4, "has_mp4": True,
                     "needs_rescrape": False, "retry_count": 0,
@@ -859,6 +872,22 @@ def sb_write_results(results):
             except Exception:
                 pass
     return ok, fail
+
+
+def _mark_deleted(deleted, now):
+    """把源站已删除的视频标记 removed=true 从站点隐藏 (不再反复重试占用解析配额)。"""
+    if not deleted:
+        return
+    with ThreadPoolExecutor(max_workers=SB_WORKERS) as ex:
+        futs = [ex.submit(_sb_patch_one, vid, {
+            "removed": True, "needs_rescrape": False,
+            "mp4_checked_at": now, "updated_at": now,
+        }) for vid in deleted.values()]
+        for f in futs:
+            try:
+                f.result()
+            except Exception:
+                pass
 
 
 def sb_save_status(stats):
@@ -880,9 +909,19 @@ def sb_save_status(stats):
 
 
 # ---------------------------------------------------------------- MP4 解析
+DELETED_MARK = "__deleted__"   # twjn.php 明确回复「源站已删除」时使用
+_DELETED_HINTS = ("this data has been deleted", "data does not exist", "has been deleted")
+
+
 def resolve_one(fetcher, mid):
     url = f"{BASE_URL}/twjn.php?v={mid}"
-    return _extract_mp4(fetcher.fetch_resolve(url, tries=2, referer=BASE_URL + "/"))
+    txt = fetcher.fetch_resolve(url, tries=2, referer=BASE_URL + "/")
+    mp4 = _extract_mp4(txt)
+    if mp4:
+        return mp4
+    if txt and any(h in txt.lower() for h in _DELETED_HINTS):
+        return DELETED_MARK
+    return None
 
 
 def resolve_batch(fetcher, items, budget):
@@ -942,7 +981,7 @@ def resolve_pending(fetcher, limit, budget, tag="解析"):
         remaining = max(5, budget - (time.time() - t0))
         ok_before = fetcher._stats["ok"]
         results = resolve_batch(fetcher, items, remaining)
-        hit = sum(1 for _, mp in results.values() if mp)
+        hit = sum(1 for _, mp in results.values() if mp and mp != DELETED_MARK)
         if fetcher._stats["ok"] == ok_before and hit == 0 and fetcher.resolve_mode is not None:
             log(f"[{tag}] 首批 {len(chunk)} 条全部抓取失败 — 传输层已失效, 提前结束"
                 f" (未写入无效结果, 队列保持不变)", "ERROR")
