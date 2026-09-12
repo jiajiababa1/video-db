@@ -477,6 +477,28 @@
         }
         .toast.on { opacity:1; }
 
+        /* ============ 解析进度面板 ============ */
+        .resolve-progress {
+            position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom, 0px));
+            transform:translateX(-50%) translateY(24px);
+            width:min(420px, 92vw);
+            background:rgba(14,14,18,0.94);
+            border:1px solid #2a2822; border-radius:8px;
+            box-shadow:0 8px 32px rgba(0,0,0,0.6); padding:12px 14px; z-index:1000;
+            opacity:0; pointer-events:none; transition:opacity 0.25s, transform 0.25s;
+            font-family:monospace; box-sizing:border-box; text-align:left;
+        }
+        .resolve-progress.on { opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
+        .rp-head { display:flex; align-items:center; gap:8px; font-size:12px; color:#e4e0d8; margin-bottom:8px; }
+        .rp-spin { width:14px; height:14px; border:2px solid #2a2822; border-top-color:#c8a45c; border-radius:50%; animation:spin 0.7s linear infinite; flex-shrink:0; }
+        .rp-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .rp-cancel { margin-left:auto; background:transparent; border:1px solid #2a2822; color:#9a948a; border-radius:4px; font-size:11px; padding:2px 10px; cursor:pointer; flex-shrink:0; }
+        .rp-cancel:hover { color:#e4e0d8; border-color:#c8a45c; }
+        .rp-bar { height:6px; border-radius:3px; background:#1a1a18; overflow:hidden; }
+        .rp-bar > i { display:block; height:100%; width:0; background:#c8a45c; transition:width 0.2s linear; }
+        .rp-info { display:flex; justify-content:space-between; gap:8px; font-size:10px; color:#a8a294; margin-top:6px; }
+        .rp-cur { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:right; color:#c8a45c; }
+
         /* ============ 下拉刷新指示器 ============ */
         .pull-indicator {
             text-align:center; padding:0; height:0; overflow:hidden;
@@ -1153,6 +1175,18 @@
             <div id="sentinel"></div>
         </div>
         <div class="toast" id="toast"></div>
+        <div class="resolve-progress" id="resolveProgress">
+            <div class="rp-head">
+                <span class="rp-spin"></span>
+                <span class="rp-title" id="rpTitle">🎬 正在解析视频...</span>
+                <button class="rp-cancel" id="rpCancel" onclick="cancelResolve()">取消</button>
+            </div>
+            <div class="rp-bar"><i id="rpBar"></i></div>
+            <div class="rp-info">
+                <span id="rpStats">0 / 0</span>
+                <span class="rp-cur" id="rpCur"></span>
+            </div>
+        </div>
         <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
         <!-- 内联视频播放器模板 (点击卡片后展开) -->
         <template id="inlinePlayerTemplate">
@@ -2896,7 +2930,7 @@
     window.addEventListener('touchend',function(){
         if ($pull.classList.contains('active')) {
             $pull.classList.remove('active');
-            triggerScraper(); loadVids(true);
+            loadVids(true); // 下拉刷新仅刷新本地列表, 不触发抓取
         }
         pulling = false;
     });
@@ -2983,34 +3017,57 @@
 
     // ============ 批量解析 MP4 (后台, 使用 twjn.php) ============
     var resolveRunning = false;
+    var _resolveCancel = false;
+    function cancelResolve() { _resolveCancel = true; toast('将在当前视频结束后停止'); }
+    function _rpEl() { return document.getElementById('resolveProgress'); }
+    function rpTitle(t) { var el = document.getElementById('rpTitle'); if (el) el.textContent = t; }
+    function rpShow(total) {
+        var el = _rpEl(); if (!el) return;
+        var bar = document.getElementById('rpBar'); if (bar) bar.style.width = '0%';
+        var st = document.getElementById('rpStats'); if (st) st.textContent = '0 / ' + total;
+        var cu = document.getElementById('rpCur'); if (cu) cu.textContent = '';
+        el.classList.add('on');
+    }
+    function rpProgress(done, total, ok, fail, cur) {
+        var el = _rpEl(); if (!el) return;
+        var bar = document.getElementById('rpBar'); if (bar) bar.style.width = (total ? Math.round(done / total * 100) : 0) + '%';
+        var st = document.getElementById('rpStats'); if (st) st.textContent = '成功 ' + ok + ' · 失败 ' + fail + ' · ' + done + '/' + total;
+        if (cur !== undefined) { var cu = document.getElementById('rpCur'); if (cu) cu.textContent = cur ? ('当前: ' + cur) : ''; }
+    }
+    function rpHide() { var el = _rpEl(); if (el) el.classList.remove('on'); }
     async function batchResolveMp4() {
         if (resolveRunning) { toast('正在解析中, 请稍后...'); return; }
-        resolveRunning = true;
+        resolveRunning = true; _resolveCancel = false;
         var btn = document.getElementById('resolveBtn');
-        btn.disabled = true;
-        btn.textContent = '解析中...';
+        if (btn) { btn.disabled = true; btn.textContent = '解析中...'; }
+        rpTitle('🎬 查询待解析视频...');
+        rpShow(0);
 
         try {
             // 获取有 monsnode_video_id 但没有 MP4 的视频
             var hds = _h();
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id,monsnode_video_id&or=(duration.is.null,duration.not.ilike.*video.twimg.com*)&monsnode_video_id=not.is.null&order=created_at.desc&limit=50', { headers: hds });
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id,monsnode_video_id&or=(duration.is.null,duration.not.ilike.*video.twimg.com*)&monsnode_video_id=not.is.null&order=mp4_checked_at.asc.nullsfirst,video_id.asc&limit=60', { headers: hds });
             if (!resp.ok) throw new Error('查询失败');
             var videos = await resp.json();
             if (!videos.length) {
-                toast('所有视频已缓存 MP4');
-                btn.disabled = false;
-                btn.textContent = '🎬 解析';
+                rpTitle('✅ 没有待解析的视频'); toast('所有视频已缓存 MP4');
+                setTimeout(rpHide, 1500);
+                if (btn) { btn.disabled = false; btn.textContent = '🎬 解析'; }
                 resolveRunning = false;
                 return;
             }
 
-            toast('开始解析 ' + videos.length + ' 个视频 (twjn.php)...');
-            var resolved = 0, checked = 0;
+            var total = videos.length;
+            rpShow(total);
+            rpTitle('🎬 正在解析视频');
+            var resolved = 0, failed = 0, checked = 0;
 
-            for (var i = 0; i < videos.length; i++) {
+            for (var i = 0; i < total; i++) {
+                if (_resolveCancel) break;
                 var v = videos[i];
-                checked++;
-                if (!v.monsnode_video_id) continue;
+                rpProgress(checked, total, resolved, failed, v.video_id);
+                if (btn) btn.textContent = '解析 ' + checked + '/' + total;
+                if (!v.monsnode_video_id) { checked++; continue; }
 
                 var mp4Url = await resolveViaTwjn(v.monsnode_video_id);
                 var patchData = { mp4_checked_at: new Date().toISOString(), updated_at: new Date().toISOString() };
@@ -3021,28 +3078,33 @@
                     resolved++;
                 } else {
                     patchData.needs_rescrape = true;
+                    failed++;
                 }
+                checked++;
                 try {
                     await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
                         method: 'PATCH', headers: hds,
                         body: JSON.stringify(patchData)
                     });
+                    if (!mp4Url) await fetch(SUPABASE_URL + '/rest/v1/rpc/increment_retry', { method: 'POST', headers: hds, body: JSON.stringify({ p_video_id: v.video_id }) });
                 } catch(e) {}
-
-                if (checked % 5 === 0) {
-                    btn.textContent = resolved + '/' + checked;
-                    await new Promise(function(r){setTimeout(r, 1000);});
-                }
+                rpProgress(checked, total, resolved, failed, '');
             }
 
-            toast('完成! 解析 ' + resolved + '/' + checked + ' 个 MP4');
+            if (_resolveCancel) {
+                rpTitle('⏹ 已取消'); toast('已取消解析 (成功 ' + resolved + '/' + checked + ')');
+                setTimeout(rpHide, 2000);
+            } else {
+                rpTitle('✅ 解析完成'); toast('完成! 解析 ' + resolved + '/' + checked + ' 个 MP4');
+                setTimeout(rpHide, 2500);
+            }
             if (resolved > 0) loadVids(true);
         } catch(e) {
-            toast('解析失败: ' + (e.message || '网络错误'));
+            rpTitle('❌ 解析失败'); toast('解析失败: ' + (e.message || '网络错误'));
+            setTimeout(rpHide, 2500);
         }
 
-        btn.disabled = false;
-        btn.textContent = '🎬 解析';
+        if (btn) { btn.disabled = false; btn.textContent = '🎬 解析'; }
         resolveRunning = false;
     }
 
@@ -4116,8 +4178,11 @@
         try { var cr = await fetch(SUPABASE_URL + '/rest/v1/videos?limit=1', {headers:hds}); connOK = cr.ok; } catch(e) {}
         results.push(['📡 Supabase连接', connOK ? '✅' : '❌']);
 
-        // 2. 公开表: 应可读
-        var openTables = ['videos','scrape_status','announcements','site_pages','scraped_videos','friends','messages','cloud_favorites','user_follows'];
+        // 2. 客户端直接读写的公开表 (应可访问)
+        var openTables = ['videos','scrape_status','announcements','site_pages','scraped_videos',
+                          'friends','messages','cloud_favorites','user_follows',
+                          'cloud_user_data','cloud_user_config','works','board_groups','board_messages',
+                          'user_vips','activation_codes','admin_log','bans','system_config'];
         for (var i = 0; i < openTables.length; i++) {
             try {
                 var r = await fetch(SUPABASE_URL + '/rest/v1/' + openTables[i] + '?limit=1', {headers: hds});
@@ -4125,33 +4190,30 @@
             } catch(e) { results.push([openTables[i], '❌']); }
         }
 
-        // 3. 敏感表: 应被锁定 (401/403)
-        var lockedTables = ['user_vips','activation_codes','admin_log','bans','system_config','sessions'];
-        for (var j = 0; j < lockedTables.length; j++) {
-            try {
-                var r2 = await fetch(SUPABASE_URL + '/rest/v1/' + lockedTables[j] + '?limit=1', {headers: hds});
-                results.push([lockedTables[j], (r2.status === 401 || r2.status === 403) ? '🔒 已锁定' : '⚠️ 可访问' + r2.status]);
-            } catch(e) { results.push([lockedTables[j], '🔒 已锁定']); }
-        }
-
-        // 4. user_accounts 安全列: 应可读 (不含敏感列)
+        // 3. user_accounts 安全列 (绝不能用 select=* — 敏感列已被保护, 会整体被拒)
         try {
-            var safe = await _get(SUPABASE_URL + '/rest/v1/user_accounts?select=username,vip_level,verified&limit=1');
-            results.push(['👤 user_accounts 安全列', (safe && safe.length) ? '✅' : '❌']);
+            var safe = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?select=username,vip_level,verified&limit=1', {headers: hds});
+            results.push(['👤 user_accounts 安全列', safe.ok ? '✅' : '❌ HTTP' + safe.status]);
         } catch(e) { results.push(['👤 user_accounts 安全列', '❌']); }
 
-        // 5. 敏感列 is_admin: 应被拒绝读取
+        // 4. 敏感列 password_hash 必须不可读
         try {
-            var sens = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?select=is_admin&limit=1', {headers: hds});
-            results.push(['🔒 is_admin 列', (sens.status === 400 || sens.status === 403) ? '🔒 不可读' : '⚠️ 可读!' + sens.status]);
-        } catch(e) { results.push(['🔒 is_admin 列', '🔒 不可读']); }
+            var sens = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?select=password_hash&limit=1', {headers: hds});
+            results.push(['🔒 password_hash 列', (sens.status===400||sens.status===401||sens.status===403) ? '🔒 已保护' : '⚠️ 可读!']);
+        } catch(e) { results.push(['🔒 password_hash 列', '🔒 已保护']); }
 
-        // 6. 管理员 kuo (只读安全列)
+        // 5. 会话表必须对 anon 锁定
         try {
-            var adm = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.kuo&select=username,vip_level,verified&limit=1');
+            var ss = await fetch(SUPABASE_URL + '/rest/v1/sessions?limit=1', {headers: hds});
+            results.push(['🔒 sessions 表', (ss.status===400||ss.status===401||ss.status===403) ? '🔒 已锁定' : '⚠️ 可访问']);
+        } catch(e) { results.push(['🔒 sessions 表', '🔒 已锁定']); }
+
+        // 6. 管理员账号
+        try {
+            var adm = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.kuo&select=username,vip_level,is_admin,verified&limit=1');
             if (adm && adm.length > 0) {
                 var a = adm[0];
-                results.push(['👑 管理员 kuo', '✅ ' + a.vip_level + (a.verified?' 🔵':'')]);
+                results.push(['👑 管理员 kuo', '✅ ' + (a.vip_level||'vip') + (a.is_admin?' 👑':'') + (a.verified?' 🔵':'')]);
             } else { results.push(['👑 管理员 kuo', '❌ 不存在']); }
         } catch(e) { results.push(['👑 管理员 kuo', '❌']); }
 
@@ -4162,12 +4224,14 @@
             results.push(['🔑 动态密码锁', locked ? '✅ 服务端校验' : '⚠️ 异常']);
         } catch(e) { results.push(['🔑 动态密码锁', '❌']); }
 
-        var failCount = results.filter(function(x){return x[1].indexOf('❌')===0 || x[1].indexOf('⚠️')===0;}).length;
-        var h = '<b>' + (failCount===0?'✅ 全部正常':'❌ '+failCount+' 项异常') + '</b><br>';
+        var failCount = results.filter(function(x){return x[1].indexOf('❌')===0;}).length;
+        var warnCount = results.filter(function(x){return x[1].indexOf('⚠️')===0;}).length;
+        var h = '<b>' + (failCount===0 ? (warnCount===0 ? '✅ 全部正常' : '✅ 正常 ('+warnCount+' 项提示)') : '❌ '+failCount+' 项异常') + '</b><br>';
         h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px 8px;font-size:10px;font-family:monospace;max-height:350px;overflow-y:auto;">';
         for (var k = 0; k < results.length; k++) {
-            var bad = results[k][1].indexOf('❌')===0 || results[k][1].indexOf('⚠️')===0;
-            h += '<div style="color:'+(bad?'#c08080':'var(--green)')+'">'+results[k][1]+'</div><div>'+results[k][0]+'</div>';
+            var v = results[k][1];
+            var col = v.indexOf('❌')===0 ? '#c08080' : (v.indexOf('⚠️')===0 ? '#c8a45c' : 'var(--green)');
+            h += '<div style="color:'+col+'">'+v+'</div><div>'+results[k][0]+'</div>';
         }
         h += '</div>';
         if (failCount > 0) {
@@ -4587,6 +4651,7 @@
             '<option value="del_section">按栏目批量删除</option>' +
             '<option value="del_author">按作者批量删除</option>' +
             '<option value="del_old">删除30天前的视频</option>' +
+            '<option value="reset_retry">重置死链池 (复活永久失败视频)</option>' +
             '</select>' +
             '<input id="videoMgmtParam" placeholder="栏目名或作者名 (如 trending / @作者)" style="width:100%;padding:8px;margin-bottom:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:2px;font-size:12px;">' +
             '<button class="cheat-btn danger" onclick="doVideoMgmt()" style="width:100%;">确认执行</button>' +
@@ -4611,7 +4676,8 @@
             'del_old': ['videos_del_old_30d', '确定删除30天前未更新且无法播放的视频？此操作不可撤销！'],
             'rescrape_section': ['videos_rescrape_section', '确定标记栏目 "' + param + '" 所有视频为重爬？'],
             'del_section': ['videos_del_section', '确定删除栏目 "' + param + '" 的所有视频？此操作不可撤销！'],
-            'del_author': ['videos_del_author', '确定删除作者 "' + param + '" 的所有视频？此操作不可撤销！']
+            'del_author': ['videos_del_author', '确定删除作者 "' + param + '" 的所有视频？此操作不可撤销！'],
+            'reset_retry': ['videos_reset_retry', '确定重置 300 条已放弃死链的重试计数？(它们将在下轮爬虫中重新尝试)']
         };
         var entry = map[action];
         if (!entry) { r.textContent = '未知操作'; return; }
