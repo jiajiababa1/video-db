@@ -844,10 +844,44 @@
         .vpi-related-item:hover { background:rgba(200,164,92,0.06); color:var(--vtext); }
         .vpi-related-item .ri-thumb { width:40px; height:24px; border-radius:2px; object-fit:cover; flex-shrink:0; background:#0a0a0c; }
         .vpi-related-item .ri-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        /* 侧栏信息绝不挤压播放器: 某些视频 source_section 是 "a|b|c|d..." 长串 (不可断行),
+           曾把 .vpi-player-wrap 挤到 25px 宽 → 视频变成看不见的小条, 也无法全屏 */
+        .vpi-info { flex:0 1 auto; max-width:min(260px, 42%); overflow:hidden; }
+        .vpi-info > span, .vpi-info > div { max-width:100%; overflow-wrap:anywhere; word-break:break-word; }
+        .vpi-player-wrap { flex:1 1 auto; min-width:0; }
+        /* 卡片底部信息同样防溢出 */
+        .vid-foot > span { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .ar-meta { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         @media(max-width:640px) {
             .vpi-body { flex-direction:column; }
+            .vpi-info { max-width:none; }
             .vpi-player-wrap video, .vpi-player-wrap img { max-height:35vh; max-height:35dvh; }
         }
+
+        /* ============ 影院全屏模式 (Fullscreen API 不可用时兜底: iOS / 受限 iframe) ============ */
+        .vid-player-inline.cinema {
+            position:fixed; inset:0; z-index:2147483000; margin:0; border:0; border-radius:0;
+            background:#000; display:flex; flex-direction:column; overflow:hidden;
+            animation:none; box-shadow:none;
+        }
+        .vid-player-inline.cinema .vpi-top { flex:0 0 auto; background:rgba(8,8,10,0.92); }
+        .vid-player-inline.cinema .vpi-body { flex:1 1 auto; min-height:0; padding:0; gap:0; }
+        .vid-player-inline.cinema .vpi-player-wrap {
+            flex:1 1 auto; display:flex; align-items:center; justify-content:center; min-height:0;
+        }
+        .vid-player-inline.cinema .vpi-player-wrap video,
+        .vid-player-inline.cinema .vpi-player-wrap img {
+            width:auto; height:auto; max-width:100%; max-height:100%; border-radius:0; object-fit:contain;
+        }
+        .vid-player-inline.cinema .vpi-info { display:none; }
+        .vpi-cinema-exit { display:none; }
+        .vid-player-inline.cinema .vpi-cinema-exit {
+            display:block; position:absolute; top:calc(10px + env(safe-area-inset-top, 0px)); right:12px; z-index:12;
+            padding:8px 14px; border-radius:var(--radius-sm); border:1px solid var(--vborder);
+            background:rgba(10,10,14,0.8); color:var(--vtext); cursor:pointer; font-size:12px; font-family:var(--font-mono);
+        }
+        .vid-player-inline.cinema .vpi-cinema-exit:hover { border-color:var(--vprimary); color:var(--vprimary); }
+        body.cinema-lock { overflow:hidden; }
 
         /* ============ 登录验证遮罩 ============ */
         .auth-overlay {
@@ -1093,7 +1127,7 @@
 
         /* ============ 多选工具栏 ============ */
         .ms-toolbar {
-            position:fixed; bottom:0; left:0; right:0; z-index:70;
+            position:fixed; bottom:0; left:0; right:0; z-index:150;
             background:rgba(8,8,10,0.72); backdrop-filter:var(--glass-blur);
             -webkit-backdrop-filter:var(--glass-blur);
             border-top:1px solid var(--glass-dark-border);
@@ -1681,20 +1715,22 @@
                 <span class="rp-cur" id="rpCur"></span>
             </div>
         </div>
-        <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+        <button class="scroll-top" id="scrollTop" onclick="smoothScrollTo(0)">↑</button>
         <!-- 内联视频播放器模板 (点击卡片后展开) -->
         <template id="inlinePlayerTemplate">
             <div class="vid-player-inline">
+                <button class="vpi-cinema-exit" onclick="exitCinema()">✕ 退出全屏</button>
                 <div class="vpi-top">
                     <span class="vpi-title"></span>
                     <div class="vpi-actions">
                         <button class="vpi-btn" onclick="window.open(this.dataset.url,'_blank')" data-url="" title="在 monsnode 打开">↗️ 原站</button>
                         <button class="vpi-btn" onclick="var a=document.createElement('a');a.href=this.dataset.url;a.download='';a.click()" data-url="" title="下载 MP4">⬇️ 下载</button>
+                        <button class="vpi-btn vpi-fs" onclick="togglePlayerFullscreen()" title="全屏 (F)">⛶ 全屏</button>
                         <button class="vpi-btn" onclick="cycleSpeed()" title="播放速度">⏩ 1x</button>
                         <button class="vpi-btn" onclick="toggleLoop()" title="循环播放">🔁</button>
                         <button class="vpi-btn" onclick="screenshotVideo()" title="截图保存当前画面">📷 截图</button>
                         <button class="vpi-btn" onclick="shareVideo()" title="分享视频">🔗 分享</button>
-                        <button class="vpi-btn" onclick="if(document.pictureInPictureElement){document.exitPictureInPicture();}else{var v=this.closest('.vid-player-inline').querySelector('video');if(v)v.requestPictureInPicture().catch(function(){});}" title="画中画">📺 PiP</button>
+                        <button class="vpi-btn" onclick="togglePiP(this)" title="画中画">📺 PiP</button>
                         <button class="vpi-btn vpi-fav" onclick="toggleInlineFav()" title="收藏">☆</button>
                         <button class="vpi-btn vpi-wl" onclick="toggleInlineWl()" title="稍后观看">📌</button>
                         <button class="vpi-btn vpi-close" onclick="closeInlinePlayer()">✕ 收起</button>
@@ -2051,7 +2087,9 @@
         if(document.body.classList.contains('dark-mode')){
             // ESC: 关闭内联播放器 或 返回游戏
             if(e.keyCode===27){
-                if(currentInlinePlayer){
+                if(currentInlinePlayer && currentInlinePlayer.classList.contains('cinema')){
+                    exitCinema();
+                } else if(currentInlinePlayer){
                     closeInlinePlayer();
                 } else {
                     goBackToGame();
@@ -2065,7 +2103,7 @@
                 var vid = currentInlinePlayer.querySelector('video');
                 if(vid){
                     if(e.keyCode===32){e.preventDefault();if(vid.paused){var sp=vid.play();if(sp&&sp.catch)sp.catch(function(){});}else vid.pause();} // Space = 暂停/播放
-                    else if(e.keyCode===70){e.preventDefault();if(document.fullscreenElement){document.exitFullscreen();}else{vid.requestFullscreen().catch(function(){});}} // F = 全屏
+                    else if(e.keyCode===70){e.preventDefault();togglePlayerFullscreen();} // F = 全屏
                     else if(e.keyCode===37){e.preventDefault();vid.currentTime=Math.max(0,vid.currentTime-5);} // ← 后退5秒
                     else if(e.keyCode===39){e.preventDefault();vid.currentTime=Math.min(vid.duration,vid.currentTime+5);} // → 前进5秒
                     else if(e.keyCode===38){e.preventDefault();vid.volume=Math.min(1,vid.volume+0.1);showVolumeToast(vid);} // ↑ 音量+
@@ -3405,7 +3443,7 @@
             return;
         }
         _savedScrollY = window.scrollY;
-        closeInlinePlayer();
+        closeInlinePlayer(true);
 
         var tmpl = document.getElementById('inlinePlayerTemplate');
         var player = tmpl.content.cloneNode(true).querySelector('.vid-player-inline');
@@ -3430,7 +3468,8 @@
 
         var views = parseInt(v.views) || 0;
         player.querySelector('.vpi-views').textContent = views > 0 ? '👁 ' + formatNum(views) : '';
-        player.querySelector('.vpi-section').textContent = v.source_section ? '#' + v.source_section : '';
+        var _sec = firstSection(v.source_section);
+        player.querySelector('.vpi-section').textContent = _sec ? '#' + _sec : '';
 
         // 插入到卡片正下方
         cardEl.parentNode.insertBefore(player, cardEl.nextSibling);
@@ -3440,7 +3479,8 @@
         currentInlineOpenAt = Date.now();
         syncFavWlButtons(v.video_id);
 
-        player.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+        // 确保播放器真的滚动到可视区 (原生平滑滚动在本环境会被丢弃, 用自实现滚动)
+        scrollElIntoView(player, 'nearest');
 
         var wrap = player.querySelector('.vpi-player-wrap');
         wrap.innerHTML = '<div class="vpi-spinner"></div>';
@@ -3540,7 +3580,7 @@
             if (e.key === ' ') { e.preventDefault(); if (video.paused) { var kp = video.play(); if (kp && kp.catch) kp.catch(function(){}); } else video.pause(); }
             else if (e.key === 'ArrowLeft') video.currentTime -= 5;
             else if (e.key === 'ArrowRight') video.currentTime += 5;
-            else if (e.key === 'f') { if (video.requestFullscreen) video.requestFullscreen(); }
+            else if (e.key === 'f') { e.preventDefault(); togglePlayerFullscreen(); }
             else if (e.key === 'm') { video.muted = !video.muted; }
         });
         var _userMustTap = false;
@@ -3604,6 +3644,12 @@
         }
         var _spawnAt = Date.now();
         video.addEventListener('playing', function () { var ov = wrap.querySelector('.vpi-tapplay'); if (ov) ov.remove(); var st = wrap.querySelector('.vpi-stall'); if (st) st.remove(); wrap.style.minHeight = ''; });
+        // 视频就位后尺寸会变化 → 若播放器仍未进入视野则再定位一次 (只在其刚打开时)
+        setTimeout(function () {
+            if (!currentInlinePlayer || !currentInlinePlayer.contains(video)) return;
+            if (Date.now() - currentInlineOpenAt > 2500) return;
+            scrollElIntoView(currentInlinePlayer, 'nearest');
+        }, 350);
         // 已能解码却仍暂停(常见于 play() 被 load() 打断 / 自动播放被静默拦截) → 自动补一次 play()
         video.addEventListener('canplay', function () {
             if (Date.now() - _spawnAt > 15000) return;
@@ -3639,7 +3685,8 @@
         }
     }
 
-    function closeInlinePlayer() {
+    function closeInlinePlayer(skipRestore) {
+        exitCinema();
         if (currentInlinePlayer) {
             var vids = currentInlinePlayer.querySelectorAll('video');
             for (var i = 0; i < vids.length; i++) { try { vids[i].pause(); } catch(e) {} }
@@ -3651,13 +3698,150 @@
         currentInlineMp4 = '';
         currentInlineOpenAt = 0;
         if (_luckyCleanup) _luckyCleanup();
-        // 恢复滚动位置
-        if (_savedScrollY > 0) {
-            requestAnimationFrame(function() {
-                window.scrollTo({top: _savedScrollY, behavior: 'instant'});
-                _savedScrollY = 0;
-            });
+        // 恢复滚动位置 (切换播放器时不恢复, 交给滚动定位逻辑)
+        if (!skipRestore && _savedScrollY > 0) {
+            var target = _savedScrollY;
+            _savedScrollY = 0;
+            requestAnimationFrame(function() { window.scrollTo({top: target, behavior: 'instant'}); });
         }
+    }
+
+    // ============ 滚动工具 ============
+    // 平台上 body 设了 scroll-behavior:smooth, 而本页(受限 iframe / 部分移动端)原生平滑滚动会被静默丢弃
+    // → scrollIntoView({behavior:'smooth'}) 完全不动, 表现为"点了卡片没反应"(播放器开在了屏幕外)
+    // 所以这里自己用 rAF 逐帧 window.scrollTo(即时) 实现平滑滚动, 稳定可靠。
+    var _scrollRAF = null;
+    function smoothScrollTo(targetY, duration) {
+        if (_scrollRAF) cancelAnimationFrame(_scrollRAF);
+        var startY = window.scrollY || document.documentElement.scrollTop || 0;
+        var maxY = Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
+        targetY = Math.max(0, Math.min(targetY, maxY));
+        var dist = targetY - startY;
+        if (Math.abs(dist) < 2) { window.scrollTo(0, targetY); return; }
+        duration = duration || Math.min(520, 220 + Math.abs(dist) * 0.25);
+        var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+        function step() {
+            var t = (((window.performance && performance.now) ? performance.now() : Date.now()) - t0) / duration;
+            if (t >= 1) { window.scrollTo(0, targetY); _scrollRAF = null; return; }
+            var e = 1 - Math.pow(1 - t, 3);
+            window.scrollTo(0, Math.round(startY + dist * e));
+            _scrollRAF = requestAnimationFrame(step);
+        }
+        _scrollRAF = requestAnimationFrame(step);
+    }
+    // 把元素滚动到可视区域内 (block: 'nearest' | 'center' | 'start')
+    function scrollElIntoView(el, block) {
+        if (!el || !el.isConnected) return;
+        var r = el.getBoundingClientRect();
+        var vh = window.innerHeight;
+        var margin = 12;
+        if (block === 'center') { smoothScrollTo(window.scrollY + r.top - (vh - r.height) / 2); return; }
+        if (r.top >= margin && r.bottom <= vh - margin) return; // 已完全可见
+        if (r.height > vh - margin * 2) { smoothScrollTo(window.scrollY + r.top - margin); return; }
+        if (r.top < margin) { smoothScrollTo(window.scrollY + r.top - margin); return; }
+        smoothScrollTo(window.scrollY + r.bottom - vh + margin);
+    }
+
+    // ============ 全屏 (原生 Fullscreen API 不可用时退化为"影院模式"CSS 全屏) ============
+    var _cinemaHome = null;
+    function _fsEl() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+    function exitCinema() {
+        var p = document.querySelector('.vid-player-inline.cinema');
+        if (!p) { _cinemaHome = null; document.body.classList.remove('cinema-lock'); return; }
+        p.classList.remove('cinema');
+        // 放回卡片下方原位 (进入影院时被移到 body 以避开带 transform 的祖先元素)
+        if (_cinemaHome && _cinemaHome.parent && _cinemaHome.parent.isConnected) {
+            try { _cinemaHome.parent.insertBefore(p, _cinemaHome.next); } catch (e) { _cinemaHome.parent.appendChild(p); }
+        }
+        _cinemaHome = null;
+        document.body.classList.remove('cinema-lock');
+        var btn0 = p.querySelector('.vpi-fs');
+        if (btn0) btn0.textContent = '⛶ 全屏';
+    }
+    function enterCinema() {
+        var p = currentInlinePlayer;
+        if (!p || !p.isConnected) return;
+        // 祖先若有 transform/filter (例如 .view-video 的 scale), position:fixed 会相对该祖先而不是视口
+        // → 把播放器临时挂到 body, 保证真正铺满全屏
+        _cinemaHome = {parent: p.parentNode, next: p.nextSibling};
+        document.body.appendChild(p);
+        p.classList.add('cinema');
+        document.body.classList.add('cinema-lock');
+        var v = p.querySelector('video');
+        if (v && v.paused) { try { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } catch (e) {} }
+        var btn = p.querySelector('.vpi-fs');
+        if (btn) btn.textContent = '⤡ 退出全屏';
+        toast('已进入全屏 (Esc 退出)');
+    }
+    function togglePlayerFullscreen() {
+        if (_fsEl()) {
+            var ex = document.exitFullscreen || document.webkitExitFullscreen;
+            if (ex) { try { ex.call(document); } catch (e) {} }
+            return;
+        }
+        if (currentInlinePlayer && currentInlinePlayer.classList.contains('cinema')) { exitCinema(); return; }
+        if (!currentInlinePlayer) return;
+        var el = currentInlinePlayer;
+        var video = el.querySelector('video');
+        var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+        if (req && document.fullscreenEnabled) {
+            var ok = false;
+            try {
+                var pr = req.call(el);
+                if (pr && pr.catch) pr.catch(function () { if (!_fsEl()) enterCinema(); });
+                else if (!pr) ok = !!_fsEl();
+                ok = true;
+            } catch (e) { ok = false; }
+            if (ok) { _syncFsBtn(); return; }
+        }
+        // iOS Safari: 只有 video 自身能全屏 (webkitEnterFullscreen)
+        if (video && video.webkitEnterFullscreen) { try { video.webkitEnterFullscreen(); return; } catch (e) {} }
+        enterCinema();
+    }
+    function _syncFsBtn() {
+        if (!currentInlinePlayer) return;
+        var btn = currentInlinePlayer.querySelector('.vpi-fs');
+        if (btn) btn.textContent = _fsEl() ? '⤡ 退出全屏' : '⛶ 全屏';
+    }
+    function togglePiP(btn) {
+        var player = (btn && btn.closest('.vid-player-inline')) || currentInlinePlayer;
+        var video = player && player.querySelector('video');
+        try {
+            if (document.pictureInPictureElement) { document.exitPictureInPicture(); return; }
+            if (!video || !video.requestPictureInPicture) { toast('该浏览器不支持画中画'); return; }
+            var pr = video.requestPictureInPicture();
+            if (pr && pr.catch) pr.catch(function () { toast('画中画不可用'); });
+        } catch (e) { toast('画中画不可用'); }
+    }
+    document.addEventListener('fullscreenchange', _syncFsBtn);
+    document.addEventListener('webkitfullscreenchange', _syncFsBtn);
+    // 进入全屏后, 若用户切换视频/收起播放器, 退出影院态
+    window.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') exitCinema();
+    });
+
+    // ============ source_section 显示清洗 ============
+    // 爬虫会把同一视频写入的多个栏目用 "|" 拼成一串 (如 "trending|home|latest|3d|7d|30d..."),
+    // 直接显示既是乱码, 又因为不可断行把播放器布局挤爆。这里只取第一个有效栏目。
+    function firstSection(raw) {
+        if (!raw) return '';
+        var s = String(raw).split(/[|,，]/)[0].trim();
+        if (s.length > 20) s = s.slice(0, 20);
+        return s;
+    }
+
+    // ============ 点作者名 → 打开该作者的作品页 ============
+    // 之前直接调 showUserProfile, 但视频作者基本都不是注册用户, 查不到记录就静默返回 → "点了没反应"
+    async function openAuthorFromCard(author) {
+        if (!author) return;
+        toast('@' + author);
+        if (_loggedIn) {
+            try {
+                var d = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.' + escUrl(author) + '&select=username&limit=1');
+                if (d && (Array.isArray(d) ? d.length : true)) { showUserProfile(author); return; }
+            } catch (e) {}
+        }
+        showAuthorPage(author);
     }
 
     var $grid=document.getElementById('videoGrid');
@@ -3773,7 +3957,9 @@
         }
         updateHash();
         // 滚动到顶部
-        window.scrollTo({top: 0, behavior: 'smooth'});
+        closeInlinePlayer(true);
+        _savedScrollY = 0;
+        smoothScrollTo(0);
         loadVids(true);
     }
 
@@ -3792,7 +3978,9 @@
         if (allTab) allTab.classList.add('active');
         activeSection = '';
         updateHash();
-        window.scrollTo({top: 0, behavior: 'smooth'});
+        closeInlinePlayer(true);
+        _savedScrollY = 0;
+        smoothScrollTo(0);
         loadVids(true);
     }
 
@@ -4296,7 +4484,8 @@
             ? '<img src="' + esc(pu) + '" alt="" loading="lazy" decoding="async" onerror="var p=this.parentElement;this.style.display=\'none\';var n=p&&p.querySelector(\'.vid-noimg\');if(n)n.style.display=\'flex\';">'
             : '';
         var noImgDisplay = pu ? 'display:none;' : '';
-        var sectionLabel = v.source_section ? '<span style="color:#6b6760;font-size:10px;">#' + esc(v.source_section) + '</span>' : '';
+        var _secTxt = firstSection(v.source_section);
+        var sectionLabel = _secTxt ? '<span style="color:#6b6760;font-size:10px;">#' + esc(_secTxt) + '</span>' : '';
         // 播放状态标记 (用 data-status 属性方便 JS 更新)
         var statusText, statusColor, statusTitle, statusClass;
         if (!hasMp4 && needsRescrape) {
@@ -4325,7 +4514,7 @@
             '<div class="vid-noimg" style="' + noImgDisplay + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>' +
             '<div class="vid-body"><div class="vid-title">' + esc(maskTitle(v.title || v.video_id)) + '</div>' +
             '<div class="vid-foot">' + (v.rank ? '<span style="color:#c8a45c;font-weight:700;font-size:12px;">#' + esc(v.rank) + '</span>' : '<span class="vid-badge">' + esc(v.video_id) + '</span>') +
-            (v.author ? '<span class="vid-author" data-author="' + esc(v.author) + '" onclick="event.stopPropagation();event.preventDefault();showUserProfile(this.getAttribute(\'data-author\'))">@' + esc(v.author) + '</span>' : '') +
+            (v.author ? '<span class="vid-author" data-author="' + esc(v.author) + '" title="查看 @' + esc(v.author) + ' 的作品" onclick="event.stopPropagation();event.preventDefault();openAuthorFromCard(this.getAttribute(\'data-author\'))">@' + esc(v.author) + '</span>' : '') +
             viewsHtml + sectionLabel + statusLabel + histBadgeHtml + resumeBadgeHtml +
             '<button class="vid-copy" onclick="event.stopPropagation();markForRescrape(\'' + esc(v.video_id) + '\',this,\'' + esc(v.monsnode_video_id || '') + '\')" title="标记重爬">🔄</button>' +
             '<button class="vid-copy" onclick="event.stopPropagation();copyLink(\'' + esc(v.video_url || '') + '\',this)" title="复制链接">🔗</button></div></div>';
@@ -4455,7 +4644,7 @@
         row.innerHTML =
             thumbHtml +
             '<span class="ar-title">' + esc(title) + '</span>' +
-            '<span class="ar-meta">' + (v.source_section||'') + '</span>' +
+            '<span class="ar-meta">' + esc(firstSection(v.source_section)) + '</span>' +
             '<span class="ar-meta">' + date + '</span>' +
             '<span class="ar-status" title="'+(hasMp4?'已缓存':'点击解析')+'">' + statusIcon + '</span>' +
             '<div class="ar-loading"></div>';
@@ -4472,6 +4661,10 @@
     // ============ 键盘关闭播放器 ============
 
     function render(vids, append){
+        // 整页重渲染时退出多选: 否则旧卡片的选中态消失但捕获型点击拦截仍在, 会变成"看不到工具栏、点卡片却打不开"的死局
+        if(!append && multiselectOn) exitMultiselect();
+        // 整页重渲染会销毁已展开的播放器 → 清理状态, 避免残留 currentInline* 指向脱离 DOM 的节点
+        if(!append && currentInlinePlayer) { closeInlinePlayer(true); _savedScrollY = 0; }
         if(!append){$grid.innerHTML='';}
         if(!vids.length&&!append){
             $grid.innerHTML='<div class="empty-state" style="grid-column:1/-1;"><span class="icon">📭</span><p class="title">'+(sq?'没找到匹配的视频':(activeAuthor?'该作者暂无作品':'暂无视频数据'))+'</p><p class="desc">'+(activeAuthor?'试试查看其他作者':(sq?'试试其他关键词':'点顶部「更新」按钮触发爬虫获取数据'))+'</p></div>';
@@ -4490,6 +4683,11 @@
             var f=document.createDocumentFragment();
             for(var i=0;i<vids.length;i++)f.appendChild(card(vids[i]));
             $grid.appendChild(f);
+        }
+        // 追加渲染时, 若处于多选态, 给新卡片补上 .multiselect (保持多选一致)
+        if (multiselectOn) {
+            var _mc = $grid.querySelectorAll('.vid-card:not(.multiselect)');
+            for (var _mi = 0; _mi < _mc.length; _mi++) _mc[_mi].classList.add('multiselect');
         }
         hasMore=vids.length>=PAGE_SIZE;
         var lmi = document.getElementById('loadMoreIndicator');
@@ -4682,7 +4880,7 @@
         // 优先打开网格中已渲染的卡片
         var card = document.querySelector('.vid-card[data-vid="' + id + '"]');
         if (card && card.isConnected) {
-            card.scrollIntoView({behavior: 'smooth', block: 'center'});
+            scrollElIntoView(card, 'center');
             card.click();
             return;
         }
@@ -5332,14 +5530,14 @@
             if (!data.length) { toast('❌ 视频不存在'); return; }
             v = data[0];
         } catch(e) { toast('❌ 加载失败'); return; }
-        closeInlinePlayer();
+        closeInlinePlayer(true);
+        _savedScrollY = 0;
         var cards = document.querySelectorAll('.vid-card');
         for (var i = 0; i < cards.length; i++) {
             var vid = cards[i].dataset.vid;
             var badge = cards[i].querySelector('.vid-badge');
             if (!vid && badge) vid = badge.textContent.toLowerCase();
             if (vid === videoId && cards[i].isConnected) {
-                cards[i].scrollIntoView({behavior: 'smooth', block: 'center'});
                 showInlinePlayer(v, cards[i]);
                 return;
             }
@@ -5415,13 +5613,15 @@
         // 点击卡片切换选中
         _msClickHandler = function(e) {
             var card = e.target.closest('.vid-card');
-            if (!card) return;
+            // 只有确实处于多选态(卡片带 .multiselect)才拦截点击, 否则放行给普通打开播放器逻辑
+            if (!card || !card.classList.contains('multiselect')) return;
             if (e.target.closest('.vid-copy, .vid-fav, .vid-author')) return;
             e.preventDefault(); e.stopPropagation();
             toggleCardSelect(card);
         };
         $grid.addEventListener('click', _msClickHandler, true);
         updateMsCount();
+        toast('已进入多选模式 · 点按卡片勾选, Esc 退出');
     }
     var _msClickHandler = null;
     function exitMultiselect() {
@@ -5485,16 +5685,28 @@
         } catch(e) { toast('下载失败: ' + (e.message || '网络错误')); }
         exitMultiselect();
     }
-    // 长按进入多选
-    var _msPressTimer;
+    // 长按进入多选 (须长按 800ms 且手指基本不动, 避免普通点按被误判为长按)
+    var _msPressTimer = null, _msPressX = 0, _msPressY = 0;
+    function _cancelMsPress() { if (_msPressTimer) { clearTimeout(_msPressTimer); _msPressTimer = null; } }
     document.addEventListener('touchstart', function(e) {
         if (!document.body.classList.contains('dark-mode') || multiselectOn) return;
         var card = e.target.closest('.vid-card');
         if (!card) return;
-        _msPressTimer = setTimeout(function() { enterMultiselect(); }, 600);
+        var t = e.touches && e.touches[0];
+        _msPressX = t ? t.clientX : 0; _msPressY = t ? t.clientY : 0;
+        _msPressTimer = setTimeout(function() { _msPressTimer = null; enterMultiselect(); }, 800);
     }, {passive: true});
-    document.addEventListener('touchend', function() { clearTimeout(_msPressTimer); });
-    document.addEventListener('touchmove', function() { clearTimeout(_msPressTimer); });
+    document.addEventListener('touchend', _cancelMsPress);
+    document.addEventListener('touchcancel', _cancelMsPress);
+    document.addEventListener('touchmove', function(e) {
+        if (!_msPressTimer) return;
+        var t = e.touches && e.touches[0];
+        if (t && (Math.abs(t.clientX - _msPressX) > 10 || Math.abs(t.clientY - _msPressY) > 10)) _cancelMsPress();
+    }, {passive: true});
+    // 多选模式下 Esc / 点击工具栏外空白均可退出, 避免被卡住
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && multiselectOn) exitMultiselect();
+    });
 
     // ============ 收藏导出/导入 ============
     function exportFavorites() {
@@ -5934,6 +6146,7 @@
             var data = await _get(SUPABASE_URL + '/rest/v1/user_accounts?username=eq.'+escUrl(username)+'&select=username,verified,vip_level,created_at&limit=1');
             if (data) {
                 data = Array.isArray(data) ? data : [data];
+                if (!data.length) { showAuthorPage(username); return; } // 非注册用户 → 直接看作品, 避免"点了没反应"
                 if (data && data.length) {
                     var p = data[0];
                     var _c1 = 0, _c2 = 0;
@@ -7828,7 +8041,7 @@
                 h += '</div></div>';
                 $grid.innerHTML = h;
                 $grid.classList.remove('compact', 'large', 'author-list');
-                window.scrollTo({top:0,behavior:'smooth'});
+                smoothScrollTo(0);
             }
         });
     }
