@@ -965,6 +965,62 @@
     "https://api.codetabs.com/v1/proxy?quest="
   ];
   function proxyUrl(url, i){ return PROXY_LIST[i % PROXY_LIST.length] + encodeURIComponent(url); }
+  function canPlayNativeHls(v){
+    try {
+      return !!(v.canPlayType && (v.canPlayType("application/vnd.apple.mpegurl") || v.canPlayType("application/x-mpegURL")));
+    } catch(e){ return false; }
+  }
+  // HLS 视频源的播放策略，按顺序尝试，全部失败才显示错误面板：
+  //   原生：Safari / iOS 系统自带 HLS 支持，直接交给系统播放器 —— 不经过 fetch，
+  //         不会被 CORS/CDN 拦（hls.js 在 iOS 上常报 networkError/manifestLoadError）
+  //   js  ：hls.js —— 给桌面 Chrome/Firefox 等没有原生 HLS 的浏览器用
+  function playHls(v, url, token){
+    var steps = canPlayNativeHls(v) ? ["native", "js"] : ["js", "native"];
+    hlsStep(v, url, token, steps, 0);
+  }
+  function hlsStep(v, url, token, steps, i){
+    if(token !== state.videoToken) return;
+    if(i >= steps.length){
+      state.videoRetry = false;
+      state.advance = null;
+      showErr("HLS 播放失败：该视频源可能已被删除，或 CDN 拒绝了本次请求。");
+      return;
+    }
+    var next = function(){ hlsStep(v, url, token, steps, i + 1); };
+    if(steps[i] === "native"){
+      diag("HLS（系统原生）：开始");
+      playFile(v, url, token, 0, true, next);
+      return;
+    }
+    diag("HLS（hls.js）：开始");
+    vLoadShow(true, "正在缓冲…");
+    import("https://esm.sh/hls.js@1.5.17").then(function(mod){
+      if(token !== state.videoToken) return;
+      var Hls = mod.default || mod.Hls;
+      if(!(Hls && Hls.isSupported())){
+        diag("该浏览器不支持 hls.js");
+        next();
+        return;
+      }
+      if(state.hls){ try { state.hls.destroy(); } catch(e){} state.hls = null; }
+      var hls = new Hls({enableWorker:false});
+      state.hls = hls;
+      hls.on(Hls.Events.ERROR, function(ev, data){
+        if(token !== state.videoToken || !data || !data.fatal) return;
+        try { hls.destroy(); } catch(e){}
+        if(state.hls === hls) state.hls = null;
+        diag("HLS 播放失败：" + (data.type || "") + "/" + (data.details || ""));
+        next();
+      });
+      hls.loadSource(url);
+      hls.attachMedia(v);
+      tryPlay(v, token);
+    }).catch(function(){
+      if(token !== state.videoToken) return;
+      diag("hls.js 加载失败");
+      next();
+    });
+  }
   function attachVideo(it){
     var v = $("videoEl");
     if(state.hls){ try { state.hls.destroy(); } catch(e){} state.hls = null; }
@@ -986,44 +1042,32 @@
       return;
     }
     if(/\.m3u8($|\?)/i.test(url)){
-      vLoadShow(true, "正在缓冲…");
-      import("https://esm.sh/hls.js@1.5.17").then(function(mod){
-        if(token !== state.videoToken) return;
-        var Hls = mod.default || mod.Hls;
-        if(Hls && Hls.isSupported()){
-          var hls = new Hls({enableWorker:false});
-          state.hls = hls; hls.loadSource(url); hls.attachMedia(v);
-          hls.on(Hls.Events.ERROR, function(ev, data){
-            if(token !== state.videoToken || !data || !data.fatal) return;
-            state.videoRetry = false;
-            diag("HLS 播放失败：" + (data.type || "") + "/" + (data.details || ""));
-            showErr();
-          });
-        } else { loadInto(v, url); }
-        tryPlay(v, token);
-      }).catch(function(){
-        if(token !== state.videoToken) return;
-        loadInto(v, url);
-      });
+      playHls(v, url, token);
     } else {
       playFile(v, url, token, 0);
     }
   }
-  function playFile(v, url, token, attempt){
+  function playFile(v, url, token, attempt, noBlob, onFail){
     state.videoRetry = true;
+    var lbl = noBlob ? "HLS" : "直连";
     var target = url;
     if(attempt === 1){
       // 直连重试：加时间戳绕开偶发的缓存/一次性失败
       target = url + (url.indexOf("?") === -1 ? "?" : "&") + "_r=" + Date.now();
     }
     vLoadShow(true, attempt === 0 ? "正在缓冲…" : "正在重试直连…");
-    diag("直连" + (attempt ? "重试" : "") + "：开始");
+    diag(lbl + (attempt ? "重试" : "") + "：开始");
     var advanced = false;
     var advance = function(why){
       if(advanced || token !== state.videoToken) return;
       advanced = true;
-      diag("直连" + (attempt ? "重试" : "") + "失败" + (why ? "（" + why + "）" : ""));
-      if(attempt < 1) playFile(v, url, token, attempt + 1);
+      diag(lbl + (attempt ? "重试" : "") + "失败" + (why ? "（" + why + "）" : ""));
+      if(attempt < 1) playFile(v, url, token, attempt + 1, noBlob, onFail);
+      else if(noBlob){
+        state.videoRetry = false;
+        state.advance = null;
+        if(onFail) onFail(); else showErr();
+      }
       else blobFallback(v, url, token, 0);
     };
     state.advance = advance;
