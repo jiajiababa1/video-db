@@ -47,12 +47,23 @@ jobs:
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"key\":\"site_code_hash\",\"value\":\"$HASH\",\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
-      # 只部署 index.html —— scraper/、*.sql、totp 页等源码不再公开暴露
-      - name: 准备部署目录 (仅 index.html)
+      # 发布目录白名单: 只有下面 cp 进来的文件会公开。要新增页面, 在下面加一行 cp 即可。
+      # 注意: 部署后 URL 形如 https://<用户名>.github.io/<仓库名>/<文件名>.html
+      - name: 准备部署目录 (index.html + 额外页面)
         run: |
+          set -euo pipefail
           rm -rf _site
           mkdir -p _site
-          cp index.html _site/index.html
+          # 白名单: 下面列出的文件会被公开。不存在时只警告, 不会让部署失败。
+          for f in index.html index2.html k9m2x7.html; do
+            if [ -f "$f" ]; then
+              cp "$f" "_site/$f"
+              echo "已发布: $f"
+            else
+              echo "::warning::仓库里没有 $f, 已跳过"
+            fi
+          done
+          # 如确实需要公开 TOTP 页面, 把 totp.html 加进上面的列表 (会暴露给所有人, 内含密钥请谨慎)
 
       - uses: actions/upload-pages-artifact@v5
         with:
