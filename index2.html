@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>视频库 · VidBase</title>
+<meta name="description" content="基于 Supabase 数据库的视频浏览站：瀑布流网格、标题搜索、作者页、分区筛选、收藏与观看历史、内置播放器。">
+<script>
+  // ---- 独立运行配置（原本在 main.pjs 中）----
+  window.supabaseUrl = "https://fejspvbckgkbmfyoxiub.supabase.co";
+  window.supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14";
+  window.videoTable = "videos";
+  window.pageSize = 24;
+  window.ageGate = true;
+  window.generatorName = "twot-wot-wt"; // 用于“复制链接”
+</script>
+</head>
+<body>
+<style>
+  [hidden]{display:none !important}
+  :root{
+    --bg:#0a0a0e; --bg-soft:#101017; --card:#15151d; --card-hi:#1c1c26;
+    --line:#262633; --fg:#ededf3; --dim:#9898a8; --dim2:#6c6c7d;
+    --accent:#ff2e63; --accent2:#ff7ba0; --ok:#31d68a;
+    --radius:14px; --shadow:0 18px 40px -20px rgba(0,0,0,.9);
+  }
+  *{box-sizing:border-box}
+  html{color-scheme:dark}
+  body{
+    margin:0; background:var(--bg); color:var(--fg); text-align:left;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","Hiragino Sans",Roboto,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background:
+      radial-gradient(900px 500px at 12% -10%, rgba(255,46,99,.16), transparent 65%),
+      radial-gradient(700px 500px at 92% 0%, rgba(90,120,255,.12), transparent 60%);
+  }
+  a{color:inherit; text-decoration:none}
+  button,input,select{font:inherit; color:inherit}
+  ::selection{background:var(--accent); color:#fff}
+
+  /* ---------- header ---------- */
+  #topbar{
+    position:sticky; top:0; z-index:40;
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    background:rgba(10,10,14,.82); border-bottom:1px solid var(--line);
+  }
+  .bar{
+    max-width:1560px; margin:0 auto; padding:10px 16px;
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap; row-gap:8px;
+  }
+  .brand{display:flex; align-items:center; gap:9px; font-weight:800; letter-spacing:.02em; font-size:18px; flex:none}
+  .brand .dot{
+    width:12px; height:12px; border-radius:50%;
+    background:linear-gradient(135deg,var(--accent),#7b5cff);
+    box-shadow:0 0 14px rgba(255,46,99,.75);
+  }
+  .brand small{font-weight:600; font-size:11px; color:var(--dim); letter-spacing:.16em; margin-left:2px}
+  .search{flex:1 1 auto; display:flex; align-items:center; gap:8px; max-width:640px;
+    background:var(--bg-soft); border:1px solid var(--line); border-radius:999px; padding:6px 6px 6px 14px; transition:border-color .15s, box-shadow .15s}
+  .search:focus-within{border-color:rgba(255,46,99,.65); box-shadow:0 0 0 3px rgba(255,46,99,.12)}
+  .search input{flex:1; background:none; border:0; outline:none; padding:6px 0; font-size:14px}
+  .search input::placeholder{color:var(--dim2)}
+  .btn{
+    border:1px solid var(--line); background:var(--card); color:var(--fg);
+    border-radius:10px; padding:8px 13px; cursor:pointer; font-size:13.5px; font-weight:600;
+    transition:background .15s, border-color .15s, transform .12s; white-space:nowrap;
+  }
+  .btn:hover{background:var(--card-hi); border-color:#333344}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),#ff5f8a); border-color:transparent; color:#fff}
+  .btn.ghost{background:transparent}
+  .btn.sm{padding:6px 10px; font-size:12.5px}
+  .icon-btn{
+    display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); background:var(--card);
+    border-radius:10px; padding:8px 11px; cursor:pointer; font-size:13px; font-weight:600; color:var(--dim);
+    transition:.15s;
+  }
+  .icon-btn:hover{color:var(--fg); background:var(--card-hi)}
+  .icon-btn.on{color:var(--fg); border-color:rgba(255,46,99,.55); background:rgba(255,46,99,.12)}
+  .icon-btn svg{width:16px; height:16px; display:block}
+  .actions{display:flex; gap:8px; margin-left:auto; flex:none}
+
+  /* ---------- chips ---------- */
+  .chips{
+    display:flex; gap:8px; overflow-x:auto; padding:2px 16px 12px; max-width:1560px; margin:0 auto;
+    scrollbar-width:none;
+    -webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent 100%);
+    mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent 100%);
+  }
+  .chips::-webkit-scrollbar{display:none}
+  .chip{
+    flex:none; border:1px solid var(--line); background:var(--card); color:var(--dim);
+    padding:7px 14px; border-radius:999px; font-size:13px; font-weight:600; cursor:pointer; transition:.15s;
+  }
+  .chip:hover{color:var(--fg); background:var(--card-hi)}
+  .chip.on{background:linear-gradient(135deg,var(--accent),#ff5f8a); border-color:transparent; color:#fff}
+  .chip .n{font-size:11px; opacity:.7; margin-left:5px; font-weight:700}
+
+  /* ---------- toolbar ---------- */
+  main{max-width:1560px; margin:0 auto; padding:16px 16px 90px; position:relative; z-index:1}
+  .toolbar{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px}
+  .toolbar .title{font-size:17px; font-weight:700}
+  .toolbar .title em{color:var(--accent2); font-style:normal}
+  .toolbar .count{color:var(--dim); font-size:13px; padding-left:12px; border-left:1px solid var(--line)}
+  .toolbar .count:empty{border-left:0; padding-left:0}
+  .toolbar .spacer{flex:1}
+  select.select{
+    background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer; outline:none;
+  }
+  #banner{
+    display:none; margin:0 0 16px; padding:12px 14px; border-radius:12px; font-size:13.5px;
+    background:rgba(255,46,99,.1); border:1px solid rgba(255,46,99,.4); color:#ffc9d7;
+  }
+  #banner.show{display:block}
+
+  /* ---------- grid ---------- */
+  .grid{
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:14px;
+  }
+  @media (max-width:680px){
+    .grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px}
+    .bar{padding:8px 12px; gap:8px}
+    .search{order:3; flex:1 1 100%; max-width:none}
+    .chips{padding:0 12px 10px}
+    main{padding:12px 12px 80px}
+    .actions .label{display:none}
+    #sortChip .label{display:inline}
+    .brand small{display:none}
+    .brand{font-size:16px}
+    .icon-btn{padding:8px 9px}
+    .toolbar{margin-bottom:12px}
+  }
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;
+    display:flex; flex-direction:column; transition:transform .16s, border-color .16s, box-shadow .16s;
+    content-visibility:auto; contain-intrinsic-size:230px 340px;
+  }
+  .card:hover{transform:translateY(-3px); border-color:#38384a; box-shadow:var(--shadow)}
+  .thumb{position:relative; display:block; aspect-ratio:4/5; background:#0d0d12; overflow:hidden}
+  .thumb.dead{background:linear-gradient(135deg,#14141b,#1f1f29)}
+  .thumb.dead::after{
+    content:"缩略图已失效"; position:absolute; left:0; right:0; top:50%; transform:translateY(-50%);
+    text-align:center; color:#5a5a68; font-size:11.5px; letter-spacing:1.2px; font-weight:600;
+  }
+  .thumb img{width:100%; height:100%; object-fit:cover; display:block; transition:filter .2s, transform .35s; }
+  .card:hover .thumb img{transform:scale(1.04)}
+  body.blurOn .thumb img{filter:blur(22px) saturate(1.15)}
+  body.blurOn .card:hover .thumb img{filter:none}
+  .thumb .veil{position:absolute; inset:0; background:linear-gradient(180deg,rgba(0,0,0,0) 45%,rgba(0,0,0,.72))}
+  .thumb .play{
+    position:absolute; inset:0; margin:auto; width:44px; height:44px; border-radius:50%;
+    background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.28); display:flex; align-items:center; justify-content:center;
+    opacity:0; transition:opacity .16s; backdrop-filter:blur(4px);
+  }
+  .card:hover .play{opacity:1}
+  .thumb .tag{
+    position:absolute; left:8px; top:8px; background:rgba(0,0,0,.62); border:1px solid rgba(255,255,255,.14);
+    padding:3px 7px; border-radius:7px; font-size:10.5px; font-weight:700; letter-spacing:.02em; backdrop-filter:blur(4px);
+  }
+  .thumb .views{
+    position:absolute; right:8px; bottom:8px; background:rgba(0,0,0,.62); border:1px solid rgba(255,255,255,.14);
+    padding:3px 7px; border-radius:7px; font-size:10.5px; font-weight:700; backdrop-filter:blur(4px);
+  }
+  .thumb .fav{
+    position:absolute; right:8px; top:8px; width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.14); cursor:pointer; opacity:0; transition:.15s; color:#fff;
+  }
+  .card:hover .thumb .fav{opacity:1}
+  .thumb .fav.on{opacity:1; color:var(--accent)}
+  .thumb .fav svg{width:15px; height:15px}
+  .meta{padding:9px 10px 11px; display:flex; flex-direction:column; gap:6px}
+  .meta .t{font-size:13px; line-height:1.38; font-weight:600;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word}
+  .meta .sub{display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--dim); min-width:0}
+  .meta .sub .a{color:var(--accent2); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:58%}
+  .meta .sub .a:hover{text-decoration:underline}
+  .meta .sub .tags{margin-left:auto; white-space:nowrap; color:var(--dim2)}
+
+  /* ---------- skeleton / loading ---------- */
+  .sk{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
+  .sk .b{aspect-ratio:4/5; background:linear-gradient(100deg,#15151d 30%,#20202c 50%,#15151d 70%); background-size:200% 100%; animation:sh 1.25s infinite}
+  .sk .l{height:11px; margin:11px 10px; border-radius:6px; background:linear-gradient(100deg,#1a1a24 30%,#24242f 50%,#1a1a24 70%); background-size:200% 100%; animation:sh 1.25s infinite}
+  .sk .l.s{width:52%}
+  @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  #more{display:flex; justify-content:center; padding:26px 0 10px}
+  #sentinel{height:1px}
+  .spinner{
+    width:20px; height:20px; border-radius:50%; border:2px solid rgba(255,255,255,.18); border-top-color:var(--accent);
+    animation:spin .8s linear infinite; display:inline-block; vertical-align:-4px;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .empty{text-align:center; color:var(--dim); padding:70px 10px; font-size:14px}
+  .empty b{display:block; font-size:17px; color:var(--fg); margin-bottom:8px}
+
+  /* ---------- player ---------- */
+  .overlay{
+    position:fixed; inset:0; z-index:80; display:flex; align-items:flex-start; justify-content:center;
+    background:rgba(4,4,7,.86); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    padding:3vh 14px; overflow-y:auto; animation:fade .18s ease;
+  }
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .pbox{
+    width:min(1120px,100%); background:#0e0e14; border:1px solid var(--line); border-radius:18px; overflow:hidden;
+    box-shadow:0 40px 80px -30px #000; animation:pop .2s ease;
+  }
+  @keyframes pop{from{transform:translateY(12px) scale(.99); opacity:0}to{transform:none; opacity:1}}
+  .stage{position:relative; background:#000; display:flex; align-items:center; justify-content:center; min-height:200px}
+  .stage video{width:100%; max-height:74vh; display:block; background:#000; outline:none}
+  .stage .veil{position:absolute; inset:0; pointer-events:none}
+  .pclose{
+    position:absolute; right:12px; top:12px; z-index:3; width:36px; height:36px; border-radius:10px; cursor:pointer;
+    background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.18); color:#fff; display:flex; align-items:center; justify-content:center;
+  }
+  .pclose:hover{background:rgba(255,46,99,.85)}
+  .perr{
+    position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+    background:rgba(6,6,9,.92); color:var(--dim); text-align:center; padding:20px; font-size:13.5px;
+  }
+  .perr.show{display:flex}
+  .vload{
+    position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+    background:rgba(0,0,0,.42); color:#e8e8ee; font-size:12.5px; font-weight:600; letter-spacing:.4px; pointer-events:none;
+  }
+  .vload.show{display:flex}
+  .vload i{
+    width:30px; height:30px; border-radius:50%; display:block;
+    border:3px solid rgba(255,255,255,.22); border-top-color:#fff; animation:spin .8s linear infinite;
+  }
+  .pinfo{padding:14px 18px 18px; display:flex; flex-direction:column; gap:12px}
+  .pinfo h1{margin:0; font-size:15.5px; line-height:1.5; font-weight:600; word-break:break-word; text-align:left}
+  .prow{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12.5px; color:var(--dim)}
+  .prow .who{color:var(--accent2); font-weight:700; font-size:13px}
+  .nav-btn{
+    background:var(--card); border:1px solid var(--line); border-radius:50px; padding:6px 12px; cursor:pointer;
+    font-size:12.5px; font-weight:600; color:var(--dim);
+  }
+  .nav-btn:hover{color:var(--fg); background:var(--card-hi)}
+  .related h3{margin:4px 0 10px; font-size:14px; font-weight:700}
+  .grid.mini{grid-template-columns:repeat(auto-fill,minmax(126px,1fr)); gap:10px}
+  .grid.mini .meta .t{font-size:11.5px; -webkit-line-clamp:2}
+  .grid.mini .meta .sub{display:none}
+
+  /* ---------- gate ---------- */
+  #gate{
+    position:fixed; inset:0; z-index:120; display:flex; align-items:center; justify-content:center; padding:20px;
+    background:radial-gradient(800px 500px at 50% 0%,rgba(255,46,99,.14),transparent 70%),#08080b;
+  }
+  .gatebox{width:min(460px,100%); background:var(--card); border:1px solid var(--line); border-radius:18px; padding:26px 22px; text-align:center}
+  .gatebox .dot{width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,var(--accent),#7b5cff); margin:0 auto 14px; box-shadow:0 0 18px rgba(255,46,99,.7)}
+  .gatebox h2{margin:0 0 8px; font-size:20px}
+  .gatebox p{margin:0 0 18px; color:var(--dim); font-size:13.5px; line-height:1.6}
+  .gatebox .row{display:flex; gap:10px; justify-content:center; margin-top:14px}
+
+  /* ---------- toast ---------- */
+  #toast{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(14px); z-index:200;
+    background:#1b1b25; border:1px solid var(--line); color:var(--fg); padding:10px 16px; border-radius:12px;
+    font-size:13px; font-weight:600; opacity:0; pointer-events:none; transition:.2s; box-shadow:var(--shadow);
+  }
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+  #top{
+    position:fixed; right:18px; bottom:18px; z-index:60; width:42px; height:42px; border-radius:50%;
+    background:var(--card); border:1px solid var(--line); color:var(--fg); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; opacity:0; pointer-events:none; transition:.2s;
+  }
+  #top.show{opacity:1; pointer-events:auto}
+</style>
+
+<header id="topbar">
+  <div class="bar">
+    <a class="brand" href="#/"><span class="dot"></span>VidBase<small>视频库</small></a>
+    <form class="search" id="searchForm" role="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9898a8" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.6-3.6"></path></svg>
+      <input id="searchInput" type="search" placeholder="搜索标题关键词，回车确认…" autocomplete="off" spellcheck="false">
+      <button class="btn primary sm" type="submit" style="border-radius:999px">搜索</button>
+    </form>
+    <div class="actions">
+      <button class="icon-btn" id="sortChip" title="切换排序（最新 / 最早 / 随机）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16M7 19.5L4.2 16.7M7 19.5l2.8-2.8M17 20V4M17 4.5l-2.8 2.8M17 4.5l2.8 2.8"></path></svg>
+        <span class="label" id="sortLabel">最新</span>
+      </button>
+      <a class="icon-btn" href="#/fav" title="我的收藏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l8.8 8.8 8.8-8.8a5.5 5.5 0 0 0 0-7.8z"></path></svg>
+        <span class="label">收藏</span>
+      </a>
+      <a class="icon-btn" href="#/hist" title="观看历史">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3.2 2"></path></svg>
+        <span class="label">历史</span>
+      </a>
+      <button class="icon-btn" id="blurBtn" title="模糊 / 取消模糊缩略图">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"></path><circle cx="12" cy="12" r="2.8"></circle><path d="M4 20L20 4"></path></svg>
+      </button>
+    </div>
+  </div>
+  <nav class="chips" id="chips"></nav>
+</header>
+
+<main>
+  <div class="toolbar">
+    <div class="title" id="viewTitle">全部视频</div>
+    <div class="count" id="viewCount"></div>
+    <div class="spacer"></div>
+    <button class="btn sm ghost" id="clearBtn" hidden>清空全部</button>
+  </div>
+  <div id="banner"></div>
+  <div class="grid" id="grid"></div>
+  <div id="moreWrap" hidden><div id="more"><button class="btn" id="moreBtn">加载更多</button></div></div>
+  <div id="sentinel"></div>
+</main>
+
+<div class="overlay" id="player" hidden>
+  <div class="pbox" role="dialog" aria-modal="true">
+    <div class="stage">
+      <button class="pclose" id="pClose" title="关闭 (Esc)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
+      <video id="videoEl" controls playsinline preload="metadata" referrerpolicy="no-referrer"></video>
+      <div class="vload" id="vLoad"><i></i><span id="vLoadTxt">正在缓冲…</span></div>
+      <div class="perr" id="videoErr">
+        <div style="font-size:15px;color:#fff;font-weight:700">该视频源无法播放</div>
+        <div>推文媒体可能已被删除，或 CDN 拒绝了本次请求。</div>
+        <a class="btn primary" id="errLink" target="_blank" rel="noopener noreferrer">前往源站查看</a>
+      </div>
+    </div>
+    <div class="pinfo">
+      <h1 id="pTitle"></h1>
+      <div class="prow">
+        <a class="who" id="pAuthor" href="#"></a>
+        <span id="pMeta"></span>
+      </div>
+      <div class="prow">
+        <button class="nav-btn" id="pPrev">上一个</button>
+        <button class="nav-btn" id="pNext">下一个</button>
+        <button class="nav-btn" id="pFav">收藏</button>
+        <button class="nav-btn" id="pCopy">复制链接</button>
+        <a class="nav-btn" id="pSource" target="_blank" rel="noopener noreferrer">原站页面</a>
+      </div>
+      <div class="related">
+        <h3>同一作者的其他视频</h3>
+        <div class="grid mini" id="relatedGrid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="gate" hidden>
+  <div class="gatebox">
+    <div class="dot"></div>
+    <h2>成人内容警告</h2>
+    <p>本站为数据库内容浏览器，所有内容来自第三方采集数据，可能包含成人向素材。请确认你已年满 18 岁，并自愿继续浏览。</p>
+    <div class="row">
+      <button class="btn primary" id="gateOk">我已满 18 岁，继续</button>
+      <a class="btn ghost" href="https://perchance.org" id="gateOut">离开</a>
+    </div>
+  </div>
+</div>
+
+<button id="top" title="回到顶部">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
+</button>
+
+<div id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  var R = (typeof root !== "undefined" && root) ? root : window;
+  var cfg = {
+    url: String(R.supabaseUrl || "").replace(/\/+$/, ""),
+    key: String(R.supabaseAnonKey || ""),
+    table: String(R.videoTable || "videos"),
+    pageSize: Number(R.pageSize) || 48,
+    ageGate: R.ageGate !== false
+  };
+
+  var SELECT = "select=id,title,thumbnail_url,video_url,mp4_url,author,views,source_section,created_at,monsnode_video_id";
+
+  var SECTIONS = [
+    {key:"", label:"全部"},
+    {key:"latest", label:"最新"},
+    {key:"24h", label:"24 小时"},
+    {key:"3d", label:"3 天"},
+    {key:"7d", label:"7 天"},
+    {key:"30d", label:"30 天"},
+    {key:"ranking", label:"排行榜"},
+    {key:"trending", label:"热门"},
+    {key:"home", label:"首页"}
+  ];
+  var SORTS = [{key:"newest",label:"最新"},{key:"oldest",label:"最早"},{key:"random",label:"随机"}];
+  var SECTION_LABEL = {latest:"最新", "24h":"24小时", "3d":"3天", "7d":"7天", "30d":"30天", ranking:"排行榜", trending:"热门", home:"首页", search:"搜索"};
+
+  var state = {
+    kind:"browse", section:"", q:"", author:"",
+    sort:"newest", items:[], offset:0, total:0,
+    loading:false, done:false, pendingReset:false, listHash:"#/", playerId:null, hls:null, videoToken:0, videoRetry:false, blobUrl:null,
+    playlist:[], relatedItems:[]
+  };
+  var settings = {ageOk:false, blur:false, sort:"newest"};
+
+  var $ = function(id){ return document.getElementById(id); };
+  var gridEl = $("grid"), sentinel = $("sentinel");
+  var toastTimer = null;
+
+  /* ============ tiny helpers ============ */
+  function esc(s){ return String(s == null ? "" : s); }
+  function fmtNum(n){ return (Number(n)||0).toLocaleString("zh-CN"); }
+  function toast(msg){
+    var t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 2200);
+  }
+  var decTa = document.createElement("textarea");
+  function decodeEntities(s){
+    decTa.innerHTML = s;
+    return decTa.value;
+  }
+  function cleanTitle(t, fallbackId){
+    var s = decodeEntities(esc(t).replace(/\r/g, " "))
+      .replace(/https?:\/\/(?:t\.co|twitter\.com|x\.com)\/\S+/gi, " ");
+    s = s.replace(/[ \t\u3000]+/g, " ").replace(/\n{2,}/g, "\n").trim();
+    if(!s) s = "未命名视频 · " + (fallbackId || "");
+    return s;
+  }
+  function shortTitle(t){
+    var s = cleanTitle(t, "");
+    return s.length > 90 ? s.slice(0, 88) + "…" : s;
+  }
+  function sectionTags(str){
+    if(!str) return [];
+    var out = [], seen = {};
+    str.split("|").forEach(function(s){
+      s = s.trim();
+      if(!s || seen[s] || !SECTION_LABEL[s] || s === "search") return;
+      seen[s] = 1; out.push(s);
+    });
+    return out.slice(0, 2).map(function(s){ return SECTION_LABEL[s]; });
+  }
+  function thumbSmall(u){
+    return thumbCandidates(u)[0];
+  }
+  function thumbCandidates(u){
+    u = esc(u);
+    if(!u) return [""];
+    var out = [];
+    if(/^https:\/\/pbs\.twimg\.com\//.test(u)){
+      if(u.indexOf("?") === -1){
+        out.push(u + "?name=small", u + "?name=medium", u);
+      } else {
+        out.push(u);
+        if(/name=small/.test(u)) out.push(u.replace(/name=small/, "name=medium"));
+        out.push(u.replace(/\?.*$/, ""));
+      }
+    } else {
+      out.push(u);
+      out.push(u.replace(/\?.*$/, ""));
+    }
+    return out.filter(function(x, i){ return x && out.indexOf(x) === i; });
+  }
+  function viewCount(v){
+    if(v == null) return 0;
+    var s = String(v).trim();
+    if(!/^\d+$/.test(s)) return 0;
+    return parseInt(s, 10) || 0;
+  }
+  function fmtViews(n){
+    if(n >= 100000000) return (n/100000000).toFixed(1).replace(/\.0$/,"") + "亿";
+    if(n >= 10000) return (n/10000).toFixed(1).replace(/\.0$/,"") + "万";
+    return String(n);
+  }
+  function val(v){
+    return encodeURIComponent(String(v == null ? "" : v));
+  }
+  function encodeQS(o){
+    return Object.keys(o).map(function(k){ return k + "=" + encodeURIComponent(o[k]); }).join("&");
+  }
+
+  /* ============ local storage (kv-plugin, with in-memory fallback) ============ */
+  var mem = {};
+  var store = {
+    get: function(folder, key, dflt){
+      return Promise.resolve()
+        .then(function(){ return (R.kv && R.kv[folder]) ? R.kv[folder].get(key) : Promise.reject(new Error("no kv")); })
+        .then(function(v){ return (v === undefined || v === null) ? dflt : v; })
+        .catch(function(){ var v = mem[folder + "/" + key]; return (v === undefined || v === null) ? dflt : v; });
+    },
+    set: function(folder, key, val){
+      mem[folder + "/" + key] = val;
+      try { if(R.kv && R.kv[folder]) return Promise.resolve(R.kv[folder].set(key, val)).catch(function(){}); } catch(e){}
+      return Promise.resolve();
+    },
+    del: function(folder, key){
+      delete mem[folder + "/" + key];
+      try { if(R.kv && R.kv[folder]) return Promise.resolve(R.kv[folder].delete(key)).catch(function(){}); } catch(e){}
+      return Promise.resolve();
+    },
+    entries: function(folder){
+      return Promise.resolve()
+        .then(function(){
+          if(!R.kv || !R.kv[folder]) throw new Error("no kv");
+          return R.kv[folder].entries();
+        })
+        .then(function(e){
+          if(!e) return [];
+          if(Array.isArray(e)){
+            return e.map(function(x){ return Array.isArray(x) ? {key:x[0], value:x[1]} : {key:x && x.key, value:x && x.value}; });
+          }
+          return Object.keys(e).map(function(k){ return {key:k, value:e[k]}; });
+        })
+        .catch(function(){
+          return Object.keys(mem).filter(function(k){ return k.indexOf(folder + "/") === 0; })
+            .map(function(k){ return {key:k.slice(folder.length + 1), value:mem[k]}; });
+        });
+    }
+  };
+  function saveSettings(){ store.set("settings", "ui", JSON.parse(JSON.stringify(settings))); }
+
+  /* ============ supabase REST ============ */
+  function sbUrl(qs){ return cfg.url + "/rest/v1/" + cfg.table + "?" + qs; }
+  function sbHeaders(extra){
+    var h = {apikey:cfg.key, Authorization:"Bearer " + cfg.key, Accept:"application/json"};
+    if(extra) for(var k in extra) h[k] = extra[k];
+    return h;
+  }
+  function sbGet(qs, opts){
+    opts = opts || {};
+    var headers = sbHeaders(opts.count ? {Prefer:"count=exact"} : null);
+    if(opts.range) headers.Range = opts.range[0] + "-" + opts.range[1];
+    return fetch(sbUrl(qs), {headers:headers}).then(function(res){
+      if(res.status === 416) return {data:[], total:null, stop:true};
+      if(!res.ok){
+        return res.text().then(function(t){
+          var msg = t;
+          try { msg = JSON.parse(t).message || t; } catch(e){}
+          var err = new Error("数据库请求失败 (" + res.status + ")： " + msg);
+          err.status = res.status;
+          throw err;
+        });
+      }
+      var cr = res.headers.get("content-range");
+      var total = (cr && cr.indexOf("/") > -1) ? Number(cr.split("/")[1]) : null;
+      return res.json().then(function(data){
+        return {data:data, total:(isNaN(total) ? null : total)};
+      });
+    });
+  }
+  function filters(){
+    var f = ["removed=eq.false"];
+    if(state.section) f.push("source_section=like.*" + state.section + "*");
+    if(state.q) f.push("title=ilike.*" + val(state.q.replace(/\*/g, "")) + "*");
+    if(state.author) f.push("author=eq." + val(state.author));
+    return f;
+  }
+  function listQuery(limit, offset){
+    var q = SELECT + "&" + filters().join("&");
+    if(state.sort === "oldest") q += "&order=id.asc";
+    else q += "&order=id.desc";
+    return q + "&offset=" + offset + "&limit=" + limit;
+  }
+  function randOff(total){
+    return Math.floor(Math.random() * Math.max(1, total - cfg.pageSize + 1));
+  }
+  function countFor(f){
+    return sbGet("select=id&" + f.join("&") + "&limit=1", {count:true}).then(function(res){
+      return res.total || 0;
+    });
+  }
+  function randomSeed(f){
+    if(state.total > 0) return Promise.resolve(randOff(state.total));
+    return countFor(f).then(function(n){ return randOff(n); });
+  }
+  function banner(msg){
+    var b = $("banner");
+    if(!msg){ b.classList.remove("show"); b.textContent = ""; return; }
+    b.textContent = msg; b.classList.add("show");
+  }
+
+  /* ============ rendering ============ */
+  var HEART = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l8.8 8.8 8.8-8.8a5.5 5.5 0 0 0 0-7.8z"></path></svg>';
+  var PLAY = '<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13l11-6.5z"></path></svg>';
+
+  function makeCard(it){
+    var card = document.createElement("article");
+    card.className = "card";
+    card.dataset.id = it.id;
+
+    var a = document.createElement("a");
+    a.className = "thumb";
+    a.href = "#/v/" + it.id;
+
+    var img = document.createElement("img");
+    img.loading = "lazy"; img.decoding = "async"; img.referrerPolicy = "no-referrer"; img.alt = "";
+    var cands = thumbCandidates(it.thumbnail_url), ti = 0;
+    img.src = cands[0] || "";
+    img.onerror = function(){
+      ti++;
+      if(ti < cands.length){ img.src = cands[ti]; return; }
+      img.onerror = null;
+      img.removeAttribute("src");
+      a.classList.add("dead");
+    };
+    a.appendChild(img);
+
+    var veil = document.createElement("span"); veil.className = "veil"; a.appendChild(veil);
+
+    var tags = sectionTags(it.source_section);
+    if(tags.length){
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = tags[0];
+      a.appendChild(tag);
+    }
+    var vc = viewCount(it.views);
+    if(vc > 0){
+      var v = document.createElement("span"); v.className = "views"; v.textContent = fmtViews(vc); a.appendChild(v);
+    }
+    var play = document.createElement("span"); play.className = "play"; play.innerHTML = PLAY; a.appendChild(play);
+
+    var fav = document.createElement("button");
+    fav.className = "fav"; fav.type = "button"; fav.title = "收藏"; fav.innerHTML = HEART;
+    fav.addEventListener("click", function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      toggleFav(it, fav);
+    });
+    a.appendChild(fav);
+
+    var meta = document.createElement("div"); meta.className = "meta";
+    var t = document.createElement("div"); t.className = "t"; t.textContent = cleanTitle(it.title, it.monsnode_video_id);
+    var sub = document.createElement("div"); sub.className = "sub";
+    if(it.author){
+      var au = document.createElement("a"); au.className = "a"; au.href = "#/a/" + encodeURIComponent(it.author);
+      au.textContent = "@" + it.author; sub.appendChild(au);
+    } else {
+      var an = document.createElement("span"); an.className = "a"; an.textContent = "匿名"; sub.appendChild(an);
+    }
+    var tg = document.createElement("span"); tg.className = "tags";
+    tg.textContent = tags.length > 1 ? tags.join(" · ") : "";
+    sub.appendChild(tg);
+    meta.appendChild(t); meta.appendChild(sub);
+    card.appendChild(a); card.appendChild(meta);
+    return card;
+  }
+
+  var favCache = {};
+  function toggleFav(it, btn){
+    var key = String(it.id);
+    if(favCache[key]){
+      delete favCache[key];
+      store.del("favs", key);
+      if(btn) btn.classList.remove("on");
+      toast("已取消收藏");
+      if(state.kind === "fav") renderLocal("fav");
+    } else {
+      var rec = slim(it); rec.ts = Date.now();
+      favCache[key] = rec;
+      store.set("favs", key, rec);
+      if(btn) btn.classList.add("on");
+      toast("已加入收藏");
+    }
+  }
+  function slim(it){
+    return {
+      id:it.id, title:it.title, thumbnail_url:it.thumbnail_url, video_url:it.video_url,
+      mp4_url:it.mp4_url, author:it.author, views:it.views,
+      source_section:it.source_section, monsnode_video_id:it.monsnode_video_id
+    };
+  }
+
+  function skeletons(n){
+    var frag = document.createDocumentFragment();
+    for(var i = 0; i < n; i++){
+      var d = document.createElement("div"); d.className = "sk";
+      d.innerHTML = '<div class="b"></div><div class="l"></div><div class="l s"></div>';
+      frag.appendChild(d);
+    }
+    gridEl.appendChild(frag);
+  }
+  function renderCards(items, append){
+    if(!append) gridEl.textContent = "";
+    var frag = document.createDocumentFragment();
+    items.forEach(function(it){
+      var c = makeCard(it);
+      if(favCache[String(it.id)]) c.querySelector(".fav").classList.add("on");
+      frag.appendChild(c);
+    });
+    gridEl.appendChild(frag);
+  }
+
+  /* ============ browse ============ */
+  function setToolbar(){
+    var titles = {browse:"全部视频", section:"分区 · ", search:"搜索：", author:"作者：", fav:"我的收藏", hist:"观看历史"};
+    if(state.kind === "browse"){
+      var s = SECTIONS.filter(function(x){ return x.key === state.section; })[0];
+      $("viewTitle").textContent = state.section ? ("分区 · " + (s ? s.label : state.section)) : "全部视频";
+    } else if(state.kind === "search"){
+      $("viewTitle").innerHTML = "";
+      $("viewTitle").appendChild(document.createTextNode("搜索："));
+      var em = document.createElement("em"); em.textContent = state.q; $("viewTitle").appendChild(em);
+    } else if(state.kind === "author"){
+      $("viewTitle").innerHTML = "";
+      $("viewTitle").appendChild(document.createTextNode("作者："));
+      var em2 = document.createElement("em"); em2.textContent = "@" + state.author; $("viewTitle").appendChild(em2);
+    } else if(state.kind === "fav"){
+      $("viewTitle").textContent = "我的收藏";
+    } else if(state.kind === "hist"){
+      $("viewTitle").textContent = "观看历史";
+    }
+    $("viewCount").textContent = (state.kind === "fav" || state.kind === "hist")
+      ? (state.items.length ? "共 " + state.items.length + " 个" : "")
+      : (state.total ? "共 " + fmtNum(state.total) + " 个视频" : "");
+    $("sortChip").hidden = (state.kind === "fav" || state.kind === "hist");
+    $("sortLabel").textContent = (SORTS.filter(function(s){ return s.key === state.sort; })[0] || {label:"最新"}).label;
+    $("clearBtn").hidden = !(state.kind === "fav" || state.kind === "hist");
+  }
+  function setChips(){
+    var wrap = $("chips");
+    wrap.textContent = "";
+    SECTIONS.forEach(function(s){
+      var b = document.createElement("button");
+      b.className = "chip" + (state.kind === "browse" && state.section === s.key ? " on" : "");
+      b.type = "button"; b.textContent = s.label;
+      b.addEventListener("click", function(){ location.hash = s.key ? ("#/s/" + s.key) : "#/"; });
+      wrap.appendChild(b);
+    });
+  }
+
+  function resetList(){
+    state.items = []; state.offset = 0; state.done = false; state.total = 0;
+    gridEl.textContent = ""; banner("");
+    $("moreWrap").hidden = true;
+  }
+
+  function applyResult(res, reset){
+    if(state.pendingReset) return;
+    if(res.stop){ state.done = true; $("moreWrap").hidden = state.sort !== "random"; return; }
+    if(res.total != null) state.total = res.total;
+    var seen = {};
+    state.items.forEach(function(x){ seen[x.id] = 1; });
+    var fresh = res.data.filter(function(d){ return !seen[d.id]; });
+    renderCards(fresh, !reset);
+    state.items = state.items.concat(fresh);
+    state.offset = reset ? res.data.length : (state.offset + res.data.length);
+    if(res.data.length < cfg.pageSize) state.done = true;
+    if(state.sort === "random") state.done = true;
+    if(state.items.length === 0){
+      var e = document.createElement("div"); e.className = "empty";
+      var b = document.createElement("b"); b.textContent = "没有找到匹配的视频";
+      e.appendChild(b);
+      e.appendChild(document.createTextNode("换个关键词，或切换到其他分区试试。"));
+      gridEl.appendChild(e);
+    }
+    $("moreWrap").hidden = state.done && state.sort !== "random";
+    $("moreBtn").textContent = state.sort === "random" ? "换一批（随机）" : "加载更多";
+    setToolbar();
+  }
+
+  function runLoad(reset){
+    var f = filters();
+    var wantCount = state.total === 0 || !!reset;
+    var seedP = (reset && state.sort === "random") ? randomSeed(f) : Promise.resolve(0);
+    if(reset) skeletons(Math.min(12, cfg.pageSize));
+    return seedP.then(function(seed){
+      if(state.pendingReset) return;
+      var off = (reset && state.sort === "random") ? seed : state.offset;
+      return sbGet(listQuery(cfg.pageSize, off), {count:wantCount}).then(function(res){
+        applyResult(res, reset);
+      });
+    });
+  }
+
+  function loadPage(reset){
+    if(reset) state.pendingReset = true;
+    if(state.loading) return Promise.resolve();
+    if(state.pendingReset){ state.pendingReset = false; reset = true; }
+    if(!reset){
+      if(state.done) return Promise.resolve();
+      if(state.total > 0 && state.offset >= state.total){
+        state.done = true;
+        $("moreWrap").hidden = state.sort !== "random";
+        return Promise.resolve();
+      }
+    }
+    state.loading = true;
+    if(reset){ resetList(); }
+    return runLoad(reset).catch(function(err){
+      if(state.pendingReset) return;
+      banner(esc(err && err.message ? err.message : err));
+      if(reset) gridEl.textContent = "";
+    }).then(function(){
+      state.loading = false;
+      if(state.pendingReset) loadPage(true);
+    });
+  }
+
+  /* ============ local lists (favorites / history) ============ */
+  function renderLocal(kind){
+    state.kind = kind; state.playerId = null;
+    resetList();
+    setChips(); setToolbar();
+    store.entries(kind === "fav" ? "favs" : "hist").then(function(list){
+      var items = list.map(function(x){ return x.value; }).filter(Boolean)
+        .sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); });
+      state.items = items;
+      if(!items.length){
+        var e = document.createElement("div"); e.className = "empty";
+        var b = document.createElement("b");
+        b.textContent = kind === "fav" ? "还没有收藏" : "还没有观看记录";
+        e.appendChild(b);
+        e.appendChild(document.createTextNode(kind === "fav" ? "点击视频缩略图右上角的爱心即可收藏。" : "播放过的视频会自动出现在这里。"));
+        gridEl.appendChild(e);
+      } else {
+        renderCards(items, false);
+      }
+      $("moreWrap").hidden = true;
+      setToolbar();
+    });
+  }
+  function pushHistory(it){
+    var rec = slim(it); rec.ts = Date.now();
+    store.set("hist", String(it.id), rec);
+    store.entries("hist").then(function(list){
+      if(list.length <= 400) return;
+      list.sort(function(a, b){ return (a.value && a.value.ts || 0) - (b.value && b.value.ts || 0); });
+      list.slice(0, list.length - 400).forEach(function(x){ store.del("hist", x.key); });
+    });
+  }
+
+  /* ============ player ============ */
+  function findItem(id){
+    var pools = [state.items, state.relatedItems];
+    for(var p = 0; p < pools.length; p++){
+      for(var i = 0; i < pools[p].length; i++) if(String(pools[p][i].id) === String(id)) return pools[p][i];
+    }
+    return null;
+  }
+  function buildPlaylist(item){
+    for(var i = 0; i < state.items.length; i++){
+      if(String(state.items[i].id) === String(item.id)){ state.playlist = state.items; return; }
+    }
+    for(var j = 0; j < state.relatedItems.length; j++){
+      if(String(state.relatedItems[j].id) === String(item.id)){
+        var arr = state.relatedItems.slice();
+        arr.sort(function(a, b){ return (Number(b.id) || 0) - (Number(a.id) || 0); });
+        state.playlist = arr;
+        return;
+      }
+    }
+    state.playlist = [item];
+  }
+  function vLoadShow(on, txt){
+    var el = $("vLoad");
+    if(txt != null) $("vLoadTxt").textContent = txt;
+    el.classList.toggle("show", !!on);
+  }
+  function revokeBlob(){
+    if(state.blobUrl){ try { URL.revokeObjectURL(state.blobUrl); } catch(e){} state.blobUrl = null; }
+  }
+  function loadInto(v, url){
+    v.removeAttribute("src");
+    v.src = url;
+    try { v.load(); } catch(e){}
+    var p = v.play(); if(p && p.catch) p.catch(function(){});
+  }
+  function attachVideo(it){
+    var v = $("videoEl");
+    if(state.hls){ try { state.hls.destroy(); } catch(e){} state.hls = null; }
+    revokeBlob();
+    $("videoErr").classList.remove("show");
+    state.videoToken = (state.videoToken || 0) + 1;
+    var token = state.videoToken;
+    v.pause(); v.removeAttribute("src"); v.load();
+    v.poster = esc(it.thumbnail_url);
+    var url = esc(it.mp4_url);
+    if(!url){ vLoadShow(false); $("videoErr").classList.add("show"); return; }
+    if(/\.m3u8($|\?)/i.test(url)){
+      vLoadShow(true, "正在缓冲…");
+      import("https://esm.sh/hls.js@1.5.17").then(function(mod){
+        if(token !== state.videoToken) return;
+        var Hls = mod.default || mod.Hls;
+        if(Hls && Hls.isSupported()){
+          var hls = new Hls({enableWorker:false});
+          state.hls = hls; hls.loadSource(url); hls.attachMedia(v);
+        } else { loadInto(v, url); }
+        var p = v.play(); if(p && p.catch) p.catch(function(){});
+      }).catch(function(){
+        if(token !== state.videoToken) return;
+        loadInto(v, url);
+      });
+    } else {
+      playFile(v, url, token, 0);
+    }
+  }
+  function playFile(v, url, token, attempt){
+    state.videoRetry = true;
+    vLoadShow(true, attempt ? "正在重新连接…" : "正在缓冲…");
+    loadInto(v, url);
+    setTimeout(function(){
+      if(token !== state.videoToken) return;
+      if(v.readyState > 0 || v.networkState === 2) return;
+      if(attempt < 2){ playFile(v, url, token, attempt + 1); return; }
+      blobFallback(v, url, token);
+    }, attempt === 0 ? 2600 : 4000);
+  }
+  function blobFallback(v, url, token){
+    vLoadShow(true, "正在直接获取视频…");
+    fetch(url).then(function(r){
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      return r.blob();
+    }).then(function(b){
+      if(token !== state.videoToken) return;
+      if(!b || b.size < 1024) throw new Error("文件为空");
+      revokeBlob();
+      state.blobUrl = URL.createObjectURL(b);
+      loadInto(v, state.blobUrl);
+    }).catch(function(){
+      if(token !== state.videoToken) return;
+      state.videoRetry = false;
+      vLoadShow(false);
+      $("videoErr").classList.add("show");
+    });
+  }
+  function showVideo(id){
+    var it = findItem(id);
+    var done = function(item){
+      if(!item){ banner("找不到该视频（可能已被删除）。"); location.hash = state.listHash; return; }
+      state.playerId = item.id;
+      $("player").hidden = false;
+      document.body.style.overflow = "hidden";
+      $("pTitle").textContent = cleanTitle(item.title, item.monsnode_video_id);
+      var au = $("pAuthor");
+      if(item.author){
+        au.textContent = "@" + item.author; au.href = "#/a/" + encodeURIComponent(item.author); au.hidden = false;
+      } else { au.hidden = true; }
+      var bits = [];
+      var vc = viewCount(item.views);
+      if(vc > 0) bits.push(fmtViews(vc) + " 次观看");
+      if(item.monsnode_video_id) bits.push("monsnode #" + item.monsnode_video_id);
+      $("pMeta").textContent = bits.join(" · ");
+      var src = $("pSource"), link = esc(item.video_url);
+      if(link){ src.href = link; src.hidden = false; } else { src.hidden = true; }
+      $("errLink").href = link || "#";
+      var fb = $("pFav");
+      fb.textContent = favCache[String(item.id)] ? "已收藏" : "收藏";
+      buildPlaylist(item);
+      $("pPrev").disabled = !prevNext(-1);
+      $("pNext").disabled = !prevNext(1);
+      attachVideo(item);
+      pushHistory(item);
+      loadRelated(item);
+    };
+    if(it) return Promise.resolve(done(it));
+    return sbGet(SELECT + "&id=eq." + encodeURIComponent(id) + "&limit=1").then(function(res){
+      done(res.data && res.data[0]);
+    }).catch(function(err){
+      banner(esc(err && err.message ? err.message : err));
+    });
+  }
+  function prevNext(dir){
+    if(state.playerId == null) return null;
+    var list = state.playlist && state.playlist.length ? state.playlist : state.items;
+    var idx = -1;
+    for(var i = 0; i < list.length; i++) if(String(list[i].id) === String(state.playerId)){ idx = i; break; }
+    if(idx === -1) return null;
+    var n = list[idx + dir];
+    return n || null;
+  }
+  function loadRelated(item){
+    var rEl = $("relatedGrid");
+    rEl.textContent = "";
+    state.relatedItems = [];
+    if(!item.author) return;
+    sbGet(SELECT + "&removed=eq.false&author=eq." + val(item.author) + "&order=id.desc&limit=13").then(function(res){
+      var rows = res.data.filter(function(x){ return String(x.id) !== String(item.id); }).slice(0, 12);
+      if(!rows.length) return;
+      state.relatedItems = rows.slice();
+      rows.forEach(function(it){
+        rEl.appendChild(makeCard(it));
+      });
+    }).catch(function(){});
+  }
+  function closePlayer(restore){
+    if(state.hls){ try { state.hls.destroy(); } catch(e){} state.hls = null; }
+    state.videoToken = (state.videoToken || 0) + 1;
+    state.videoRetry = false;
+    revokeBlob();
+    vLoadShow(false);
+    var v = $("videoEl");
+    try { v.pause(); v.removeAttribute("src"); v.load(); } catch(e){}
+    $("player").hidden = true;
+    $("relatedGrid").textContent = "";
+    document.body.style.overflow = "";
+    state.playlist = []; state.relatedItems = [];
+    state.playerId = null;
+    if(restore !== false) location.hash = state.listHash;
+  }
+  function step(dir){
+    var n = prevNext(dir);
+    if(!n){ toast(dir > 0 ? "已经是最后一个了" : "已经是第一个了"); return; }
+    location.hash = "#/v/" + n.id;
+  }
+
+  /* ============ router ============ */
+  function parseHash(){
+    var h = location.hash.replace(/^#\/?/, "");
+    var parts = h.split("/").map(function(p){ try { return decodeURIComponent(p); } catch(e){ return p; } });
+    if(parts[0] === "v" && parts[1]) return {name:"video", id:parts[1]};
+    if(parts[0] === "s") return {name:"section", section:parts[1] || ""};
+    if(parts[0] === "q") return {name:"search", q:parts.slice(1).join("/")};
+    if(parts[0] === "a") return {name:"author", author:parts.slice(1).join("/")};
+    if(parts[0] === "fav") return {name:"fav"};
+    if(parts[0] === "hist") return {name:"hist"};
+    return {name:"home", section:""};
+  }
+  function route(){
+    var r = parseHash();
+    if(r.name === "video"){
+      if(!$("player").hidden && String(state.playerId) === String(r.id)) return;
+      showVideo(r.id);
+      return;
+    }
+    if(!$("player").hidden) closePlayer(false);
+
+    if(r.name === "fav" || r.name === "hist"){
+      state.listHash = location.hash;
+      renderLocal(r.name);
+      return;
+    }
+    var changed = false;
+    if(r.name === "home" || r.name === "section"){
+      changed = !(state.kind === "browse" && state.section === (r.section || "") && state.total !== 0);
+      state.kind = "browse"; state.section = r.section || ""; state.q = ""; state.author = "";
+    } else if(r.name === "search"){
+      changed = !(state.kind === "search" && state.q === r.q && state.total !== 0);
+      state.kind = "search"; state.q = r.q; state.author = ""; state.section = "";
+    } else if(r.name === "author"){
+      changed = !(state.kind === "author" && state.author === r.author && state.total !== 0);
+      state.kind = "author"; state.author = r.author; state.q = ""; state.section = "";
+    }
+    state.listHash = location.hash;
+    setChips(); setToolbar();
+    $("searchInput").value = (state.kind === "search") ? state.q : "";
+    if(changed) loadPage(true);
+  }
+
+  /* ============ init ============ */
+  function initFavCache(){
+    return store.entries("favs").then(function(list){
+      list.forEach(function(x){ if(x.value) favCache[x.key] = x.value; });
+    });
+  }
+  function bind(){
+    $("searchForm").addEventListener("submit", function(ev){
+      ev.preventDefault();
+      var q = $("searchInput").value.trim();
+      location.hash = q ? ("#/q/" + encodeURIComponent(q)) : "#/";
+    });
+    $("sortChip").addEventListener("click", function(){
+      var i = 0;
+      for(var k = 0; k < SORTS.length; k++) if(SORTS[k].key === state.sort) i = k;
+      state.sort = SORTS[(i + 1) % SORTS.length].key;
+      settings.sort = state.sort; saveSettings();
+      setToolbar();
+      if(state.kind === "browse" || state.kind === "search" || state.kind === "author") loadPage(true);
+    });
+    $("blurBtn").addEventListener("click", function(){
+      settings.blur = !settings.blur;
+      applyBlur(); saveSettings();
+      toast(settings.blur ? "缩略图已模糊（悬停可临时查看）" : "缩略图已显示");
+    });
+    $("moreBtn").addEventListener("click", function(){
+      if(state.sort === "random") loadPage(true); else loadPage(false);
+    });
+    $("clearBtn").addEventListener("click", function(){
+      var kind = state.kind;
+      if(!window.confirm(kind === "fav" ? "清空全部收藏？" : "清空全部观看历史？")) return;
+      store.entries(kind === "fav" ? "favs" : "hist").then(function(list){
+        return Promise.all(list.map(function(x){ return store.del(kind === "fav" ? "favs" : "hist", x.key); }));
+      }).then(function(){
+        if(kind === "fav") favCache = {};
+        renderLocal(kind);
+        toast("已清空");
+      });
+    });
+    $("pClose").addEventListener("click", function(){ closePlayer(true); });
+    $("pPrev").addEventListener("click", function(){ step(-1); });
+    $("pNext").addEventListener("click", function(){ step(1); });
+    $("pFav").addEventListener("click", function(){
+      var it = findItem(state.playerId);
+      if(!it) return;
+      toggleFav(it, null);
+      $("pFav").textContent = favCache[String(it.id)] ? "已收藏" : "收藏";
+    });
+    $("pCopy").addEventListener("click", function(){
+      var link = "https://perchance.org/" + (window.generatorName || "") + "#/v/" + state.playerId;
+      var ta = document.createElement("textarea");
+      ta.value = link; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); toast("链接已复制"); } catch(e){ toast(link); }
+      document.body.removeChild(ta);
+    });
+    $("player").addEventListener("mousedown", function(ev){ if(ev.target === $("player")) closePlayer(true); });
+    $("videoEl").addEventListener("error", function(){
+      vLoadShow(false);
+      if(!state.videoRetry && $("videoEl").src) $("videoErr").classList.add("show");
+    });
+    $("videoEl").addEventListener("loadeddata", function(){ state.videoRetry = false; vLoadShow(false); });
+    $("videoEl").addEventListener("playing", function(){ state.videoRetry = false; vLoadShow(false); });
+    $("videoEl").addEventListener("waiting", function(){
+      var v = $("videoEl");
+      setTimeout(function(){ if(!v.paused && v.readyState < 3 && !v.error) vLoadShow(true, "正在缓冲…"); }, 900);
+    });
+    $("videoEl").addEventListener("ended", function(){ var n = prevNext(1); if(n) location.hash = "#/v/" + n.id; });
+    document.addEventListener("keydown", function(ev){
+      var tag = (ev.target && ev.target.tagName) || "";
+      if(ev.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA" && $("player").hidden){
+        ev.preventDefault(); $("searchInput").focus(); return;
+      }
+      if($("player").hidden) return;
+      if(ev.key === "Escape") closePlayer(true);
+      else if(ev.key === "ArrowLeft") step(-1);
+      else if(ev.key === "ArrowRight") step(1);
+    });
+    window.addEventListener("hashchange", function(){ if(location.hash === "#") location.hash = "#/"; route(); });
+    $("top").addEventListener("click", function(){ window.scrollTo({top:0, behavior:"smooth"}); });
+    window.addEventListener("scroll", function(){
+      $("top").classList.toggle("show", window.scrollY > 900);
+    }, {passive:true});
+    $("gateOk").addEventListener("click", function(){
+      settings.ageOk = true; saveSettings();
+      $("gate").hidden = true;
+    });
+    if("IntersectionObserver" in window){
+      var io = new IntersectionObserver(function(entries){
+        if(entries[0].isIntersecting && !state.loading && !state.done && (state.kind === "browse" || state.kind === "search" || state.kind === "author")) loadPage(false);
+      }, {rootMargin:"700px"});
+      io.observe(sentinel);
+    }
+  }
+  function applyBlur(){ document.body.classList.toggle("blurOn", !!settings.blur); $("blurBtn").classList.toggle("on", !!settings.blur); }
+
+  function boot(){
+    if(!cfg.url || !cfg.key){
+      banner("缺少 Supabase 配置，请在 main.pjs 中填写 supabaseUrl 与 supabaseAnonKey。");
+      return;
+    }
+    if(cfg.ageGate && !settings.ageOk) $("gate").hidden = false;
+    applyBlur(); setChips(); setToolbar();
+    bind();
+    initFavCache().then(function(){
+      state.sort = (SORTS.filter(function(s){ return s.key === settings.sort; })[0]) ? settings.sort : "newest";
+      route();
+      if(!location.hash) location.hash = "#/";
+    });
+  }
+
+  store.get("settings", "ui", null).then(function(s){
+    if(s && typeof s === "object"){
+      settings.ageOk = !!s.ageOk;
+      settings.blur = !!s.blur;
+      if(s.sort) settings.sort = s.sort;
+    }
+    if(!location.hash) location.hash = "#/";
+    boot();
+  });
+})();
+</script>
+
+</body>
+</html>
