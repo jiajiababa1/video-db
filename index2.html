@@ -229,6 +229,18 @@
     width:30px; height:30px; border-radius:50%; display:block;
     border:3px solid rgba(255,255,255,.22); border-top-color:#fff; animation:spin .8s linear infinite;
   }
+  .bigplay{
+    position:absolute; inset:0; margin:auto; width:74px; height:74px; z-index:2; padding:0 0 0 4px;
+    border-radius:50%; border:0; cursor:pointer; background:rgba(255,46,99,.92);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 14px 34px -10px rgba(0,0,0,.85); transition:transform .15s, background .15s;
+  }
+  .bigplay:hover{background:var(--accent); transform:scale(1.05)}
+  .mutehint{
+    position:absolute; left:50%; top:14px; transform:translateX(-50%); z-index:2; pointer-events:none;
+    background:rgba(0,0,0,.68); border:1px solid rgba(255,255,255,.16); color:#fff;
+    font-size:12px; font-weight:600; padding:6px 12px; border-radius:999px; white-space:nowrap;
+  }
   .pinfo{padding:14px 18px 18px; display:flex; flex-direction:column; gap:12px}
   .pinfo h1{margin:0; font-size:15.5px; line-height:1.5; font-weight:600; word-break:break-word; text-align:left}
   .prow{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12.5px; color:var(--dim)}
@@ -317,7 +329,11 @@
       <button class="pclose" id="pClose" title="关闭 (Esc)">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
       </button>
-      <video id="videoEl" controls playsinline preload="metadata" referrerpolicy="no-referrer"></video>
+      <video id="videoEl" controls playsinline preload="auto" referrerpolicy="no-referrer"></video>
+      <button class="bigplay" id="bigPlay" type="button" title="播放" hidden>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13l11-6.5z"></path></svg>
+      </button>
+      <div class="mutehint" id="muteHint" hidden>🔇 已静音播放 · 点击画面开启声音</div>
       <div class="vload" id="vLoad"><i></i><span id="vLoadTxt">正在缓冲…</span></div>
       <div class="perr" id="videoErr">
         <div style="font-size:15px;color:#fff;font-weight:700">该视频源无法播放</div>
@@ -855,23 +871,55 @@
   function revokeBlob(){
     if(state.blobUrl){ try { URL.revokeObjectURL(state.blobUrl); } catch(e){} state.blobUrl = null; }
   }
+  function bigPlay(on){
+    var b = $("bigPlay");
+    if(b) b.hidden = !on;
+  }
+  function tryPlay(v, token){
+    var p = null;
+    try { p = v.play(); } catch(e){}
+    if(!p || !p.catch) return;
+    p.catch(function(err){
+      if(token !== state.videoToken) return;
+      var name = err && err.name;
+      if(name === "NotAllowedError" || name === "SecurityError"){
+        v.muted = true;
+        var p2 = null;
+        try { p2 = v.play(); } catch(e){}
+        if(p2 && p2.catch) p2.catch(function(){ if(token === state.videoToken) bigPlay(true); });
+        if(token === state.videoToken) toast("自动播放被浏览器拦截，已静音播放，点击画面开启声音");
+      } else if(name === "NotSupportedError"){
+        bigPlay(true);
+      }
+    });
+  }
   function loadInto(v, url){
+    try { v.pause(); } catch(e){}
     v.removeAttribute("src");
     v.src = url;
     try { v.load(); } catch(e){}
-    var p = v.play(); if(p && p.catch) p.catch(function(){});
+    tryPlay(v, state.videoToken);
   }
+  // 直连受阻时的中转线路 (部分地区/网络直连 video.twimg.com 会被拦截)
+  var PROXY_LIST = [
+    "https://api.allorigins.win/raw?url=",
+    "https://api.codetabs.com/v1/proxy?quest="
+  ];
+  function proxyUrl(url, i){ return PROXY_LIST[i % PROXY_LIST.length] + encodeURIComponent(url); }
   function attachVideo(it){
     var v = $("videoEl");
     if(state.hls){ try { state.hls.destroy(); } catch(e){} state.hls = null; }
     revokeBlob();
+    bigPlay(false);
+    state.advance = null;
     $("videoErr").classList.remove("show");
     state.videoToken = (state.videoToken || 0) + 1;
     var token = state.videoToken;
+    v.muted = false;
     v.pause(); v.removeAttribute("src"); v.load();
     v.poster = esc(it.thumbnail_url);
     var url = esc(it.mp4_url);
-    if(!url){ vLoadShow(false); $("videoErr").classList.add("show"); return; }
+    if(!url){ vLoadShow(false); bigPlay(false); $("videoErr").classList.add("show"); return; }
     if(/\.m3u8($|\?)/i.test(url)){
       vLoadShow(true, "正在缓冲…");
       import("https://esm.sh/hls.js@1.5.17").then(function(mod){
@@ -880,8 +928,15 @@
         if(Hls && Hls.isSupported()){
           var hls = new Hls({enableWorker:false});
           state.hls = hls; hls.loadSource(url); hls.attachMedia(v);
+          hls.on(Hls.Events.ERROR, function(ev, data){
+            if(token !== state.videoToken || !data || !data.fatal) return;
+            state.videoRetry = false;
+            vLoadShow(false);
+            bigPlay(true);
+            $("videoErr").classList.add("show");
+          });
         } else { loadInto(v, url); }
-        var p = v.play(); if(p && p.catch) p.catch(function(){});
+        tryPlay(v, token);
       }).catch(function(){
         if(token !== state.videoToken) return;
         loadInto(v, url);
@@ -892,18 +947,29 @@
   }
   function playFile(v, url, token, attempt){
     state.videoRetry = true;
-    vLoadShow(true, attempt ? "正在重新连接…" : "正在缓冲…");
-    loadInto(v, url);
+    var viaProxy = attempt >= 2;
+    var target = viaProxy ? proxyUrl(url, attempt - 2) : url;
+    vLoadShow(true, attempt === 0 ? "正在缓冲…" : (viaProxy ? "直连受阻，正在切换中转线路…" : "正在重新连接…"));
+    var advanced = false;
+    var advance = function(){
+      if(advanced || token !== state.videoToken) return;
+      advanced = true;
+      if(attempt < 2 + PROXY_LIST.length) playFile(v, url, token, attempt + 1);
+      else blobFallback(v, url, token, 0);
+    };
+    state.advance = advance;
+    loadInto(v, target);
     setTimeout(function(){
-      if(token !== state.videoToken) return;
-      if(v.readyState > 0 || v.networkState === 2) return;
-      if(attempt < 2){ playFile(v, url, token, attempt + 1); return; }
-      blobFallback(v, url, token);
-    }, attempt === 0 ? 2600 : 4000);
+      if(advanced || token !== state.videoToken) return;
+      if(v.readyState > 0) return;
+      if(!v.error && v.networkState === 2) return;
+      advance();
+    }, attempt === 0 ? 4000 : 5000);
   }
-  function blobFallback(v, url, token){
-    vLoadShow(true, "正在直接获取视频…");
-    fetch(url).then(function(r){
+  function blobFallback(v, url, token, attempt){
+    var target = attempt === 0 ? url : proxyUrl(url, attempt - 1);
+    vLoadShow(true, attempt === 0 ? "正在直接获取视频…" : "正在通过中转线路获取视频…");
+    fetch(target).then(function(r){
       if(!r.ok) throw new Error("HTTP " + r.status);
       return r.blob();
     }).then(function(b){
@@ -914,8 +980,11 @@
       loadInto(v, state.blobUrl);
     }).catch(function(){
       if(token !== state.videoToken) return;
+      if(attempt < 1 + PROXY_LIST.length){ blobFallback(v, url, token, attempt + 1); return; }
       state.videoRetry = false;
+      state.advance = null;
       vLoadShow(false);
+      bigPlay(false);
       $("videoErr").classList.add("show");
     });
   }
@@ -982,8 +1051,11 @@
     if(state.hls){ try { state.hls.destroy(); } catch(e){} state.hls = null; }
     state.videoToken = (state.videoToken || 0) + 1;
     state.videoRetry = false;
+    state.advance = null;
     revokeBlob();
     vLoadShow(false);
+    bigPlay(false);
+    $("muteHint").hidden = true;
     var v = $("videoEl");
     try { v.pause(); v.removeAttribute("src"); v.load(); } catch(e){}
     $("player").hidden = true;
@@ -1098,17 +1170,41 @@
       document.body.removeChild(ta);
     });
     $("player").addEventListener("mousedown", function(ev){ if(ev.target === $("player")) closePlayer(true); });
+    $("bigPlay").addEventListener("click", function(){
+      var v = $("videoEl");
+      if(!v.currentSrc) return;
+      if(v.paused){
+        v.muted = false;
+        bigPlay(false);
+        var p = v.play(); if(p && p.catch) p.catch(function(){});
+      } else { v.pause(); }
+    });
+    $("videoEl").addEventListener("click", function(){
+      var v = $("videoEl");
+      if(v.muted) v.muted = false;
+    });
+    $("videoEl").addEventListener("volumechange", function(){
+      var v = $("videoEl");
+      $("muteHint").hidden = !(v.muted && !v.paused);
+    });
     $("videoEl").addEventListener("error", function(){
+      var v = $("videoEl");
+      if(state.videoRetry && state.advance){ state.advance(); return; }
       vLoadShow(false);
-      if(!state.videoRetry && $("videoEl").src) $("videoErr").classList.add("show");
+      bigPlay(true);
+      if(v.src) $("videoErr").classList.add("show");
     });
     $("videoEl").addEventListener("loadeddata", function(){ state.videoRetry = false; vLoadShow(false); });
-    $("videoEl").addEventListener("playing", function(){ state.videoRetry = false; vLoadShow(false); });
+    $("videoEl").addEventListener("playing", function(){ state.videoRetry = false; state.advance = null; bigPlay(false); vLoadShow(false); });
+    $("videoEl").addEventListener("pause", function(){
+      var v = $("videoEl");
+      bigPlay(!!v.currentSrc && !v.ended && v.currentTime === 0);
+    });
     $("videoEl").addEventListener("waiting", function(){
       var v = $("videoEl");
       setTimeout(function(){ if(!v.paused && v.readyState < 3 && !v.error) vLoadShow(true, "正在缓冲…"); }, 900);
     });
-    $("videoEl").addEventListener("ended", function(){ var n = prevNext(1); if(n) location.hash = "#/v/" + n.id; });
+    $("videoEl").addEventListener("ended", function(){ bigPlay(false); var n = prevNext(1); if(n) location.hash = "#/v/" + n.id; });
     document.addEventListener("keydown", function(ev){
       var tag = (ev.target && ev.target.tagName) || "";
       if(ev.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA" && $("player").hidden){
