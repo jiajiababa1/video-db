@@ -607,6 +607,27 @@ def crawl_av4(fetcher, deadline, seen):
         time.sleep(0.35)
     return vids
 
+# ---------------------------------------------------------------- AV4 直链回填
+# 外链详情页多为静态 HTML (WP retrotube 等), 直链 mp4 直接嵌在 <video>/<source> 里:
+# 有 Cloudflare 墙的站会抓失败 -> 记为 miss, 只更新 mp4_checked_at, 下轮继续轮换, 不写脏数据。
+RE_AV4_MP4 = re.compile(r'https?://[^\s"'<>]+\.mp4[^\s"'<>]*', re.I)
+RE_AV4_SOURCE = re.compile(r'<source[^>]+src="([^"]+)"', re.I)
+
+def av4_extract_mp4(html_text):
+    if not html_text:
+        return ""
+    m = RE_AV4_MP4.search(html_text)
+    if m:
+        return htmlmod.unescape(m.group(0)).replace("&amp;", "&")[:1000]
+    s = RE_AV4_SOURCE.search(html_text)
+    if s:
+        u = htmlmod.unescape(s.group(1)).replace("&amp;", "&").strip()
+        if u.startswith("//"):
+            u = "https:" + u
+        if u.startswith("http"):
+            return u[:1000]
+    return ""
+
 def find_more(html_text):
     """返回页面底部 'More' 按钮指向的相对 URL (无则 None)"""
     if not html_text:
@@ -1058,6 +1079,96 @@ def resolve_pending(fetcher, limit, budget, tag="解析"):
 
 
 # ---------------------------------------------------------------- 主流程
+AV4_RESOLVE_LIMIT = _env_int("AV4_RESOLVE_LIMIT", 500)
+AV4_RESOLVE_BUDGET = _env_int("AV4_RESOLVE_BUDGET", 600)
+
+def sb_av4_pending(limit):
+    rows, offset = [], 0
+    while len(rows) < limit:
+        take = min(1000, limit - len(rows))
+        url = (SUPABASE_URL + "/rest/v1/videos"
+            + "?select=video_id,video_url"
+            + "&source_section=eq.av4"
+            + "&has_mp4=is.false"
+            + "&removed=not.is.true"
+            + "&order=mp4_checked_at.asc.nullsfirst,video_id.asc"
+            + "&limit=" + str(take) + "&offset=" + str(offset))
+        try:
+            r = httpx.get(url, headers=sb_headers(), timeout=60)
+        except Exception as e:
+            log(f"查询av4待解析异常: {e}", "WARN")
+            break
+        if r.status_code != 200:
+            log(f"查询av4待解析失败: HTTP {r.status_code} {r.text[:120]}", "WARN")
+            break
+        batch = r.json()
+        if not batch:
+            break
+        rows.extend(batch)
+        offset += len(batch)
+        if len(batch) < take:
+            break
+    return [x for x in rows if (x.get("video_url") or "").startswith("http")]
+
+def sb_write_av4(touched):
+    if not touched:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    recs = []
+    for vid, mp4 in touched:
+        if mp4:
+            recs.append({"video_id": vid, "duration": mp4, "mp4_url": mp4, "has_mp4": True,
+                         "needs_rescrape": False, "playable": True, "mp4_checked_at": now})
+        else:
+            recs.append({"video_id": vid, "has_mp4": False, "needs_rescrape": False, "mp4_checked_at": now})
+    saved, client = 0, httpx.Client(timeout=60)
+    try:
+        for i in range(0, len(recs), BATCH_SIZE):
+            batch = recs[i:i + BATCH_SIZE]
+            try:
+                r = client.post(SUPABASE_URL + "/rest/v1/rpc/upsert_videos",
+                                headers=sb_headers(True), json={"videos": batch})
+                if r.status_code in (200, 201, 204):
+                    saved += len(batch)
+                else:
+                    log(f"  av4写回失败 HTTP {r.status_code}: {r.text[:120]}", "WARN")
+            except Exception as e:
+                log(f"  av4写回异常: {str(e)[:100]}", "WARN")
+    finally:
+        client.close()
+    return saved
+
+def resolve_av4(fetcher, limit, budget, tag="av4直链"):
+    targets = sb_av4_pending(limit)
+    if not targets:
+        log(f"[{tag}] 没有待挖直链的av4视频")
+        return 0
+    log(f"[{tag}] 待处理 {len(targets)} 条")
+    t0, touched, hits, done = time.time(), [], 0, 0
+    for tg in targets:
+        if time.time() - t0 > budget:
+            log(f"[{tag}] 时间预算用完, 已处理 {done}/{len(targets)}")
+            break
+        vid, url = tg["video_id"], tg["video_url"]
+        try:
+            h = fetcher.fetch(url, referer=url)
+        except Exception:
+            h = None
+        mp4 = av4_extract_mp4(h)
+        touched.append((vid, mp4))
+        done += 1
+        if mp4:
+            hits += 1
+            log(f"  [{tag}] {vid} -> {mp4[:70]}")
+        if done % 20 == 0:
+            log(f"  [{tag}] 进度 {done}/{len(targets)} (命中 {hits})")
+            time.sleep(0.5)
+    if touched:
+        n = sb_write_av4(touched)
+        log(f"[{tag}] 完成: 命中 {hits}, 写回 {n}")
+        return hits
+    return 0
+
 def scrape_all():
     stats = {
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -1111,6 +1222,7 @@ def scrape_all():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, FULL_RESOLVE_LIMIT, FULL_RESOLVE_BUDGET, tag="解析"
         )
+        stats["mp4_resolved"] += resolve_av4(fetcher, AV4_RESOLVE_LIMIT, AV4_RESOLVE_BUDGET)
     except Exception as e:
         import traceback
         log(f"抓取流程异常: {e}", "ERROR")
@@ -1136,6 +1248,7 @@ def resolve_only():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, RESOLVE_LIMIT, RESOLVE_BUDGET, tag="解析"
         )
+        stats["mp4_resolved"] += resolve_av4(fetcher, AV4_RESOLVE_LIMIT, AV4_RESOLVE_BUDGET)
     except Exception as e:
         import traceback
         log(f"解析流程异常: {e}", "ERROR")
