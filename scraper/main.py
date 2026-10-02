@@ -610,7 +610,7 @@ def crawl_av4(fetcher, deadline, seen):
 # ---------------------------------------------------------------- AV4 直链回填
 # 外链详情页多为静态 HTML (WP retrotube 等), 直链 mp4 直接嵌在 <video>/<source> 里:
 # 有 Cloudflare 墙的站会抓失败 -> 记为 miss, 只更新 mp4_checked_at, 下轮继续轮换, 不写脏数据。
-RE_AV4_MP4 = re.compile(r'https?://[^\s"'<>]+\.mp4[^\s"'<>]*', re.I)
+RE_AV4_MP4 = re.compile(r"https?://[^\s\"'<>]+\.mp4[^\s\"'<>]*", re.I)
 RE_AV4_SOURCE = re.compile(r'<source[^>]+src="([^"]+)"', re.I)
 
 def av4_extract_mp4(html_text):
