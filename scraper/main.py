@@ -44,6 +44,7 @@ import base64
 import random
 import threading
 import html as htmlmod
+import hashlib
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, quote_plus, quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -544,6 +545,68 @@ def parse_cards(html_text, source_url, section):
     return out
 
 
+# ---------------------------------------------------------------- AV4 外链聚合
+# https://jp.av4us.asia/hot/LONG- 是外链聚合页 (站内/客户端/云端三端共用同一解析与 ID 方案)。
+# video_id: "av4_" + sha1(real_url)[:12]。外链无 twjn 可解析, resolve 队列会自动跳过。
+AV4_LIST_URLS = [u.strip() for u in os.environ.get("AV4_URLS", "https://jp.av4us.asia/hot/LONG-").split(",") if u.strip()]
+RE_AV4 = re.compile(r'<div class="vid"><a title="([^"]*)" href="([^"]+)"[\s\S]*?<img[^>]*src="([^"]+)"[\s\S]*?<div class="dwc">([\s\S]*?)</div>', re.S)
+
+def _av4_real(href):
+    if href.startswith("/v/"):
+        return "http" + href[3:]
+    return href
+
+def parse_av4(html_text, source_url):
+    out, seen = [], set()
+    for m in RE_AV4.finditer(html_text or ""):
+        title = re.sub(r"\s*\[[^\]]*\]\s*$", "", m.group(1) or "").strip()
+        real = _av4_real(m.group(2) or "")
+        if not real.startswith("http"):
+            continue
+        thumb = m.group(3) or ""
+        if thumb.startswith("//"):
+            thumb = "https:" + thumb
+        dwc = re.sub(r"<[^>]*>", "", (m.group(4) or "").replace("&nbsp;", " "))
+        dwc = re.sub(r"^[\s]+", "", dwc).strip()
+        vid = "av4_" + hashlib.sha1(real.encode()).hexdigest()[:12]
+        if vid in seen:
+            continue
+        seen.add(vid)
+        out.append({
+            "video_id": vid,
+            "monsnode_video_id": "",
+            "title": title,
+            "thumbnail": thumb,
+            "author": "",
+            "url": real,
+            "duration": dwc,
+            "source_page": source_url,
+            "source_section": "av4",
+            "has_mp4": False,
+            "needs_rescrape": False,
+        })
+    return out
+
+def crawl_av4(fetcher, deadline, seen):
+    vids = []
+    for url in AV4_LIST_URLS:
+        if time.time() > deadline:
+            break
+        try:
+            h = fetcher.fetch(url, referer=url)
+        except Exception:
+            h = None
+        if not h:
+            continue
+        cards = parse_av4(h, url)
+        new = [c for c in cards if c["video_id"] not in seen]
+        for c in new:
+            seen.add(c["video_id"])
+        vids.extend(new)
+        log(f"  [av4] {url} -> {len(cards)} cards, +{len(new)} new")
+        time.sleep(0.35)
+    return vids
+
 def find_more(html_text):
     """返回页面底部 'More' 按钮指向的相对 URL (无则 None)"""
     if not html_text:
@@ -746,7 +809,7 @@ def sb_save(videos):
             "thumbnail_url": (v.get("thumbnail") or "")[:1000],
             "video_url": urljoin(BASE_URL, v.get("url", ""))[:1000],
             "author": (v.get("author") or "")[:200],
-            "duration": "",
+            "duration": (v.get("duration") or "")[:50],
             "mp4_url": "",
             "views": "",
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
@@ -755,8 +818,8 @@ def sb_save(videos):
             "vote_up": 0,
             "vote_down": 0,
             "scraped_at": now,
-            "has_mp4": False,
-            "needs_rescrape": True,
+            "has_mp4": bool(v.get("has_mp4", False)),
+            "needs_rescrape": bool(v.get("needs_rescrape", True)),
         })
 
     saved = 0
@@ -1027,6 +1090,14 @@ def scrape_all():
         tr = crawl_section_page(fetcher, "trending", BASE_URL + "/trending", 6, deadline, seen)
         all_v.extend(tr)
 
+        log("阶段2c: av4 外链聚合")
+        try:
+            av4 = crawl_av4(fetcher, deadline, seen)
+            all_v.extend(av4)
+            log(f"  av4合计 +{len(av4)} 条")
+        except Exception as e:
+            log(f"  av4抓取异常: {e}", "WARN")
+
         log("阶段3: 关键词搜索 (历史库)")
         sr = crawl_search(fetcher, deadline, seen)
         all_v.extend(sr)
@@ -1105,6 +1176,12 @@ def selftest():
             log(f"  [{tier:10s}] twjn: ⚠️ 有响应但没解析出 mp4")
         else:
             log(f"  [{tier:10s}] twjn: ❌ 失败/被 Cloudflare 拦截")
+    try:
+        _avh = fetcher._get(fetcher.mode or Fetcher.RAW_TIERS[0], AV4_LIST_URLS[0], AV4_LIST_URLS[0])
+        _avn = len(parse_av4(_avh or "", AV4_LIST_URLS[0]))
+        log("  [av4] 外链聚合 cards: " + str(_avn) if _avh and _avn else "  [av4] 外链聚合: 失败/0卡片")
+    except Exception as e:
+        log(f"  [av4] 异常: {type(e).__name__}", "WARN")
     j = fetcher._probe_jina()
     log(f"  [{'jina':10s}] twjn: {'✅ OK (仅解析可用)' if j else '❌ 失败'}")
     ok = fetcher.mode is not None or fetcher.resolve_mode is not None or j
