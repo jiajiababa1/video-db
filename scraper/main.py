@@ -1211,6 +1211,7 @@ def resolve_av4(fetcher, limit, budget, tag="av4直链"):
         return 0
     log(f"[{tag}] 待处理 {len(targets)} 条")
     t0, touched, hits, done = time.time(), [], 0, 0
+    miss_log_n, dom = 0, {}
     for tg in targets:
         if time.time() - t0 > budget:
             log(f"[{tag}] 时间预算用完, 已处理 {done}/{len(targets)}")
@@ -1223,12 +1224,30 @@ def resolve_av4(fetcher, limit, budget, tag="av4直链"):
         mp4 = av4_extract_mp4(h)
         touched.append((vid, mp4))
         done += 1
+        try:
+            d = url.split("/")[2]
+        except Exception:
+            d = "?"
+        st = dom.get(d, [0, 0, 0, 0])
         if mp4:
             hits += 1
+            st[0] += 1
             log(f"  [{tag}] {vid} -> {mp4[:70]}")
+        else:
+            reason = "fetch_fail" if not h else ("blocked" if _looks_blocked(h) else "no_match")
+            st[{"fetch_fail": 1, "blocked": 2, "no_match": 3}[reason]] += 1
+            if miss_log_n < 15:
+                miss_log_n += 1
+                log(f"  [{tag}] miss {vid} {d} ({reason}, 页 {(len(h) if h else 0)} 字节)")
+        dom[d] = st
         if done % 20 == 0:
             log(f"  [{tag}] 进度 {done}/{len(targets)} (命中 {hits})")
             time.sleep(0.5)
+    if dom:
+        for d in sorted(dom, key=lambda k: -(dom[k][1] + dom[k][2] + dom[k][3])):
+            s = dom[d]
+            if s[1] + s[2] + s[3]:
+                log(f"  [{tag}] 域名小结 {d}: 命中 {s[0]}, 抓取失败 {s[1]}, 被墙 {s[2]}, 无匹配 {s[3]}")
     if touched:
         n = sb_write_av4(touched)
         log(f"[{tag}] 完成: 命中 {hits}, 写回 {n}")
