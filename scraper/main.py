@@ -239,6 +239,7 @@ class Fetcher:
         self._tls = threading.local()
         self._pw_lock = threading.Lock()
         self._pw_disabled = False
+        self._pw = None  # (playwright, browser, context) 常驻复用
         self._probe_lock = threading.Lock()
         self._jina_lock = threading.Lock()
         self._jina_last = 0.0
@@ -455,7 +456,8 @@ class Fetcher:
 
     def _playwright_fetch(self, url):
         """用真实浏览器拿页面。只在 HTTP 被 CF 拦截时调用。
-        用 wait_until='commit' 避免外部 CDN 拖死 domcontentloaded。"""
+        浏览器常驻复用 (失败才重建), 并拦截图片/媒体/字体提速。
+        用 wait_until='commit' 避免外部广告 CDN 拖死加载。"""
         with self._pw_lock:
             if self._pw_disabled:
                 return None
@@ -465,7 +467,8 @@ class Fetcher:
                 self._pw_disabled = True
                 return None
             try:
-                with sync_playwright() as p:
+                if not self._pw:
+                    p = sync_playwright().start()
                     b = p.chromium.launch(headless=True, args=[
                         "--no-sandbox", "--disable-setuid-sandbox",
                         "--disable-dev-shm-usage", "--disable-gpu",
@@ -483,18 +486,42 @@ class Fetcher:
                         )
                     except Exception:
                         pass
-                    pg = ctx.new_page()
+                    try:
+                        ctx.route("**/*.{png,jpg,jpeg,gif,webp,svg,ico,mp4,webm,m3u8,ts,woff,woff2,ttf,css}",
+                                  lambda r: r.abort())
+                    except Exception:
+                        pass
+                    self._pw = (p, b, ctx)
+                pg = self._pw[2].new_page()
+                try:
                     pg.goto(url, wait_until="commit", timeout=30000)
-                    pg.wait_for_timeout(3500)
+                    pg.wait_for_timeout(3000)
                     text = pg.content()
-                    b.close()
-                    if text and len(text) > 500 and not _looks_blocked(text):
-                        return text
+                finally:
+                    pg.close()
+                if text and len(text) > 500 and not _looks_blocked(text):
+                    return text
             except Exception as e:
                 log(f"  Playwright 回退失败: {str(e)[:100]}", "WARN")
+                self._pw_quit()
             return None
 
+    def _pw_quit(self):
+        pw = getattr(self, "_pw", None)
+        self._pw = None
+        if pw:
+            for c in (pw[2], pw[1]):
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            try:
+                pw[0].stop()
+            except Exception:
+                pass
+
     def close(self):
+        self._pw_quit()
         for c in (self.client, getattr(self, "proxy_client", None), getattr(self._tls, "curl", None)):
             try:
                 if c:
@@ -608,25 +635,64 @@ def crawl_av4(fetcher, deadline, seen):
     return vids
 
 # ---------------------------------------------------------------- AV4 直链回填
-# 外链详情页多为静态 HTML (WP retrotube 等), 直链 mp4 直接嵌在 <video>/<source> 里:
-# 有 Cloudflare 墙的站会抓失败 -> 记为 miss, 只更新 mp4_checked_at, 下轮继续轮换, 不写脏数据。
+# 外链详情页分三类:
+#  A. 静态直给 (pornolomka/chezcathy/getducked 等 WP 站): <video>/<source> 里直接嵌 mp4。
+#  B. JSON 给流: clariontoday/incofoods/faadforum 系在 ld+json VideoObject.contentUrl 里放
+#     m3u8; 9188porn 系 (maccms) 在播放器 JSON "url" 里放 m3u8/mp4 (斜杠被转义为 \/)。
+#  C. JS/墙 (javwind Cloudflare, mtd4u 跳转盾, javvhub 正片走 ajax): 静态抓不到 -> miss,
+#     只更新 mp4_checked_at, 下轮继续轮换。javvhub 静态 HTML 里只有一个前贴片广告 mp4,
+#     必须用 BAD 规则拦下, 宁可 miss 不写脏数据。
+# >>AV4EXTRACT-START
 RE_AV4_MP4 = re.compile(r"https?://[^\s\"'<>]+\.mp4[^\s\"'<>]*", re.I)
+RE_AV4_M3U8 = re.compile(r"https?://[^\s\"'<>]+\.m3u8[^\s\"'<>]*", re.I)
 RE_AV4_SOURCE = re.compile(r'<source[^>]+src="([^"]+)"', re.I)
+RE_AV4_VIDEO_SRC = re.compile(r'<video[^>]+src=["\']([^"\']+)', re.I)
+RE_AV4_OGVIDEO = re.compile(r'<meta[^>]+property=["\']og:video(?::secure_url)?["\'][^>]+content=["\']([^"\']+)', re.I)
+RE_AV4_CONTENTURL = re.compile(r'"contentUrl"\s*:\s*"([^"]+)"', re.I)
+RE_AV4_PLAYERURL = re.compile(r'"url"\s*:\s*"((?:https?:)?\\?/\\?/[^"]+?\.(?:m3u8|mp4)[^"]*)"', re.I)
+RE_AV4_BAD = re.compile(r"/ad/|/ads/|advert|thumb|preview|sample|trailer|poster|screenshot|/blank|loading|play\.php", re.I)
+
+def _av4_clean(u):
+    if not u:
+        return ""
+    u = htmlmod.unescape(u).replace("\\/", "/").replace("&amp;", "&").strip()
+    if u.startswith("//"):
+        u = "https:" + u
+    return u[:1000]
 
 def av4_extract_mp4(html_text):
+    """按权威度依次提取, 首个通过过滤的胜出:
+    1) JSON-LD VideoObject contentUrl (B 类站内直给)
+    2) maccms 播放器 JSON "url"
+    3) og:video
+    4) <video src> / <source src>
+    5) 裸 m3u8
+    6) 裸 mp4"""
     if not html_text:
         return ""
-    m = RE_AV4_MP4.search(html_text)
+    m = RE_AV4_CONTENTURL.search(html_text)
     if m:
-        return htmlmod.unescape(m.group(0)).replace("&amp;", "&")[:1000]
-    s = RE_AV4_SOURCE.search(html_text)
-    if s:
-        u = htmlmod.unescape(s.group(1)).replace("&amp;", "&").strip()
-        if u.startswith("//"):
-            u = "https:" + u
+        u = _av4_clean(m.group(1))
         if u.startswith("http"):
-            return u[:1000]
+            return u
+    m = RE_AV4_PLAYERURL.search(html_text)
+    if m:
+        u = _av4_clean(m.group(1))
+        if u.startswith("http") and not RE_AV4_BAD.search(u):
+            return u
+    for rx in (RE_AV4_OGVIDEO, RE_AV4_VIDEO_SRC, RE_AV4_SOURCE):
+        m = rx.search(html_text)
+        if m:
+            u = _av4_clean(m.group(1))
+            if u.startswith("http") and not RE_AV4_BAD.search(u):
+                return u
+    for rx in (RE_AV4_M3U8, RE_AV4_MP4):
+        for m in rx.finditer(html_text):
+            u = _av4_clean(m.group(0))
+            if u.startswith("http") and not RE_AV4_BAD.search(u):
+                return u
     return ""
+# >>AV4EXTRACT-END
 
 def find_more(html_text):
     """返回页面底部 'More' 按钮指向的相对 URL (无则 None)"""
