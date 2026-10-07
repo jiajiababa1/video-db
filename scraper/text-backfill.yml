@@ -1,0 +1,47 @@
+name: Text Backfill (只补文案)
+
+# 说明:
+#   • 只跑 scraper/text_backfill.py: 给无标题视频回填推文原文(title)+作者,
+#     顺手带 MP4。不抓列表、不碰新视频 —— 与 scraper.yml 的抓取任务完全解耦。
+#   • 定时每 6 小时跑 400 条; 站内「📝 补文案」按钮可手动触发 (默认 120 条)。
+#   • 需要仓库 Secrets: SUPABASE_URL / SUPABASE_KEY (必须是 service_role,
+#     与 scraper.yml 用同一套即可)。
+#   • 注意: monsnode 会对 GitHub Actions 机房 IP 弹 Cloudflare 挑战,
+#     云端成功率不如站主本机网络; 云端跑不动的条目可用站内管理面板的
+#     「📝 本地补文案 (备用)」逐条补。
+on:
+  schedule:
+    - cron: '20 */6 * * *'   # 每 6 小时 :20, 每次 400 条
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '回填条数上限'
+        required: false
+        default: '120'
+        type: string
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: text-backfill
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install requests supabase
+      - name: 检查 scraper/text_backfill.py 非空
+        run: |
+          if [ ! -s scraper/text_backfill.py ]; then echo "::error::scraper/text_backfill.py 为空 (0 字节), 无法运行!"; exit 1; fi
+          echo "text_backfill.py 行数: $(wc -l < scraper/text_backfill.py)"
+      - name: 云端补文案
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          LIM="${{ github.event.inputs.limit }}"
+          if [ -z "$LIM" ]; then LIM="400"; fi
+          python -u scraper/text_backfill.py --limit "$LIM"
