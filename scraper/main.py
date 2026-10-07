@@ -29,10 +29,15 @@ v10 的改进:
      分别记住「列表抓取层」和「MP4 解析层」(可不同); 解析再兜底到 jina 阅读器。
      全部被拦时提前结束并明确报错, 不再把几万条当成「解析失败」空转。用 `python main.py test`
      会逐层打印结果, 一眼看出哪层可用。
+  9. v13 深挖轮换: 归档只暴露最新 ~1600 条, 关键词搜不到无标题老视频。每轮 full
+     在阶段3之后加"阶段3b", 按 2 小时轮换跑 A.作者深挖 (库里作者名 → search.php,
+     同一作者更多作品) / B.ID 扫段 (twjn.php 扫已知 id 邻居, tweet 链接自带作者)。
+     扫到已入库行走 upsert 合并 (空字段不覆盖), 无损。另有 `deep` 单跑模式。
 
 运行模式:
-  python main.py full      # 抓列表 + 保存 + 解析一批 MP4
+  python main.py full      # 抓列表 + 保存 + 解析一批 MP4 + 深挖轮换
   python main.py resolve   # 只解析数据库里待处理的 MP4 (轻量, 建议高频跑)
+  python main.py deep      # 只跑深挖 (不碰正常栏目, 预算 3 倍, 手动补老数据)
   python main.py test      # 连通性自检, 打印每一步的 HTTP 状态, 用于排错
 """
 import os
@@ -812,6 +817,194 @@ def crawl_search(fetcher, deadline, seen):
     return vids
 
 
+# ---------------------------------------------------------------- 深挖轮换 (v13)
+# 背景: 归档只暴露最新 ~1600 条, 关键词搜不到无标题老视频 (title 为空时搜什么
+# 词都命中不了)。这些"栏目之外的视频"靠两种方式发现:
+#   A. 作者深挖: 拿库里已有作者名去 search.php 搜, 把同一作者更多作品翻出来
+#      (实测 author 搜一页 80 卡, 含该作者作品 + 同词根相关)。
+#   B. ID 扫段: twjn.php?v=<mid> 直接探测已知 monsnode id 附近的邻居 —— 同年代
+#      视频 id 相邻, 扫种子周围能翻出从未入库的老视频 (tweet 链接自带作者名)。
+# 每轮 full 只跑其中一种 (按 2 小时轮换), 预算独立不挤占正常栏目。
+# 安全: 扫到已入库的行走 upsert_videos 合并 (空字段不覆盖, has_mp4 只升不降)。
+DEEP_BUDGET       = _env_int("DEEP_BUDGET", 300)    # 深挖总时间预算(秒)
+DEEP_AUTHORS      = _env_int("DEEP_AUTHORS", 6)     # 作者深挖每轮几个作者
+DEEP_AUTHOR_PAGES = _env_int("DEEP_AUTHOR_PAGES", 2)  # 每个作者翻几页
+DEEP_SEEDS        = _env_int("DEEP_SEEDS", 3)       # ID 扫段每轮几个种子
+DEEP_SPAN         = _env_int("DEEP_SPAN", 800)      # 每个种子上下扫多少
+
+RE_TWEET_URL = re.compile(r"https?://(?:www\.)?(?:twitter|x)\.com/([^/\s\"'<>]+)/status/(\d{12,25})")
+
+
+def extract_tweet_ref(html_text):
+    """从 twjn 页 tweet_link 提取 (作者名, 推文id)。"""
+    if not html_text:
+        return None, None
+    m = RE_TWEET_URL.search(html_text)
+    if not m:
+        return None, None
+    screen, tid = m.group(1), m.group(2)
+    if screen.lower() in ("intent", "share", "i", "home", "search", "hashtag"):
+        return None, tid
+    return screen, tid
+
+
+def _sb_get_json(path, timeout=60):
+    try:
+        r = httpx.get(SUPABASE_URL + path, headers=sb_headers(), timeout=timeout)
+    except Exception as e:
+        log(f"  深挖查询异常: {e}", "WARN")
+        return None
+    if r.status_code != 200:
+        log(f"  深挖查询失败: HTTP {r.status_code} {r.text[:100]}", "WARN")
+        return None
+    try:
+        return r.json()
+    except Exception:
+        return None
+
+
+def sb_author_slice(limit=500):
+    """按 2 小时轮换 offset 取一段作者 (从老到新, 冷门作者优先被翻出来)。
+    取不到时回退 offset=0。"""
+    bucket = int(time.time() // 7200)
+    for attempt in range(2):
+        offset = (bucket * 500) % 60000 if attempt == 0 else 0
+        rows = _sb_get_json(
+            "/rest/v1/videos?select=video_id,author"
+            + "&author=not.is.null&author=neq.&author=neq.anon-user"
+            + "&order=id.asc&limit=" + str(limit) + "&offset=" + str(offset))
+        if rows:
+            return rows
+    return []
+
+
+def sb_seed_mids(want=60):
+    """取一批已知 monsnode id 做扫段种子: 最新一段 + 随机历史一段。"""
+    seeds = []
+    new_rows = _sb_get_json(
+        "/rest/v1/videos?select=monsnode_video_id&order=id.desc&limit=30") or []
+    off = random.randint(0, 60000)
+    old_rows = _sb_get_json(
+        "/rest/v1/videos?select=monsnode_video_id&order=id.asc"
+        + "&limit=60&offset=" + str(off)) or []
+    for r in new_rows + old_rows:
+        mid = (r.get("monsnode_video_id") or "").strip()
+        if mid.isdigit() and mid not in seeds:
+            seeds.append(mid)
+        if len(seeds) >= want:
+            break
+    return seeds
+
+
+def crawl_author(fetcher, author, deadline, seen):
+    """搜一个作者 (最多 DEEP_AUTHOR_PAGES 页), 返回新卡片 (section=author)。"""
+    vids = []
+    url = BASE_URL + "/search.php?search=" + quote_plus(author) + "&u=ja"
+    p = 0
+    while url and p < DEEP_AUTHOR_PAGES and time.time() < deadline:
+        h = fetcher.fetch(url, referer=BASE_URL + "/")
+        if not h or len(h) < 200:
+            break
+        cards = parse_cards(h, url, "author")
+        if not cards:
+            break
+        new = [c for c in cards if c["video_id"] not in seen]
+        for c in new:
+            seen.add(c["video_id"])
+        vids.extend(new)
+        p += 1
+        log(f"  [作者深挖] @{author} 第{p}页 → {len(cards)} 卡片, +{len(new)} 新")
+        url = _next_url(url, find_more(h))
+        time.sleep(0.35)
+    return vids
+
+
+def sweep_window(fetcher, center, span, deadline, seen):
+    """扫 center±span 的 monsnode id。命中未入库视频 → 组装入库记录
+    (video_id 沿用 v+推文id, 与列表页 scheme 一致, upsert 自动去重;
+    已入库的命中行合并时空字段不覆盖, 无损)。"""
+    recs = []
+    lo, hi = max(1, center - span), center + span
+    cands = list(range(lo, hi + 1))
+    random.shuffle(cands)  # 打散: 预算用完时覆盖均匀, 不只扫前半段
+    probed = hits = 0
+    for mid in cands:
+        if time.time() > deadline:
+            break
+        probed += 1
+        url = f"{BASE_URL}/twjn.php?v={mid}&_r={random.randint(100000, 999999)}"
+        try:
+            txt = fetcher.fetch_resolve(url, tries=1, referer=BASE_URL + "/")
+        except Exception:
+            txt = None
+        if not txt or not _looks_twjn_page(txt):
+            continue  # 不存在 / 被拦: 不写库, 只计数
+        mp4 = _extract_mp4(txt)
+        screen, tid = extract_tweet_ref(txt)
+        if not tid:
+            continue
+        vid = "v" + tid
+        if vid in seen:
+            continue
+        seen.add(vid)
+        hits += 1
+        recs.append({
+            "video_id": vid,
+            "monsnode_video_id": str(mid),
+            "title": "",
+            "thumbnail": "",
+            "author": screen or "",
+            "url": f"https://x.com/{screen}/status/{tid}" if screen else f"https://x.com/i/status/{tid}",
+            "duration": mp4 or "",
+            "source_page": url,
+            "source_section": "sweep",
+            "has_mp4": bool(mp4),
+            "needs_rescrape": not bool(mp4),
+        })
+        if probed % 250 == 0:
+            log(f"  [ID扫段] {center}±{span}: 探测 {probed}, 命中新视频 {hits}")
+    log(f"  [ID扫段] {center}±{span}: 探测 {probed} → 新视频 {hits}")
+    return recs
+
+
+def deep_crawl(fetcher, seen, budget, tag="深挖"):
+    """A/B 轮换深挖。返回新视频记录列表 (调用方走正常 sb_save 入库)。"""
+    t0 = time.time()
+    deadline = t0 + budget
+    bucket = int(t0 // 7200)
+    out = []
+    if bucket % 2 == 0:
+        log(f"[{tag}] 本轮模式 A: 作者深挖 ({DEEP_AUTHORS} 个作者)")
+        rows = sb_author_slice()
+        authors = []
+        for r in rows:
+            a = (r.get("author") or "").strip().lstrip("@")
+            if a and a.lower() != "anon-user" and a not in authors:
+                authors.append(a)
+            if len(authors) >= DEEP_AUTHORS:
+                break
+        for a in authors:
+            if time.time() > deadline:
+                break
+            try:
+                out.extend(crawl_author(fetcher, a, deadline, seen))
+            except Exception as e:
+                log(f"  [作者深挖] @{a} 异常: {e}", "WARN")
+    else:
+        log(f"[{tag}] 本轮模式 B: ID 扫段 ({DEEP_SEEDS} 个种子 × ±{DEEP_SPAN})")
+        seeds = sb_seed_mids()[:DEEP_SEEDS * 4]
+        random.shuffle(seeds)
+        for s in seeds[:DEEP_SEEDS]:
+            if time.time() > deadline:
+                break
+            try:
+                out.extend(sweep_window(fetcher, int(s), DEEP_SPAN, deadline, seen))
+            except Exception as e:
+                log(f"  [ID扫段] 种子 {s} 异常: {e}", "WARN")
+    log(f"[{tag}] 完成: +{len(out)} 条 ({time.time()-t0:.0f}s)")
+    return out
+
+
 # ---------------------------------------------------------------- Supabase
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().strip("'\"")
 SUPABASE_KEY = (
@@ -1298,6 +1491,14 @@ def scrape_all():
         sr = crawl_search(fetcher, deadline, seen)
         all_v.extend(sr)
 
+        log("阶段3b: 深挖轮换 (作者/ID扫段 —— 栏目之外的老视频)")
+        try:
+            deep_v = deep_crawl(fetcher, seen, min(DEEP_BUDGET, max(60, deadline - time.time())))
+            all_v.extend(deep_v)
+            log(f"  深挖合计 +{len(deep_v)} 条")
+        except Exception as e:
+            log(f"  深挖异常: {e}", "WARN")
+
         stats["videos_found"] = len(all_v)
         log(f"阶段4: 保存 {len(all_v)} 条到数据库 ...")
         saved = sb_save(all_v)
@@ -1316,6 +1517,36 @@ def scrape_all():
     finally:
         fetcher.close()
 
+    stats["finished_at"] = datetime.now(timezone.utc).isoformat()
+    log(f"HTTP 统计: {fetcher._stats}")
+    sb_save_status(stats)
+    return stats
+
+
+def deep_only():
+    """只跑深挖 (不碰正常栏目), 预算放宽 3 倍, 适合手动触发补老数据。"""
+    stats = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "videos_found": 0, "videos_saved": 0, "pages_crawled": 0,
+        "mp4_resolved": 0, "errors": [],
+    }
+    fetcher = Fetcher()
+    try:
+        fetcher.probe()
+        if fetcher.blocked:
+            log("[深挖单跑] 传输层全部被拦, 跳过", "ERROR")
+            return stats
+        vids = deep_crawl(fetcher, set(), DEEP_BUDGET * 3, tag="深挖单跑")
+        stats["videos_found"] = len(vids)
+        log(f"[深挖单跑] 保存 {len(vids)} 条到数据库 ...")
+        stats["videos_saved"] = sb_save(vids)
+    except Exception as e:
+        import traceback
+        log(f"深挖流程异常: {e}", "ERROR")
+        traceback.print_exc()
+        stats["errors"].append(str(e)[:200])
+    finally:
+        fetcher.close()
     stats["finished_at"] = datetime.now(timezone.utc).isoformat()
     log(f"HTTP 统计: {fetcher._stats}")
     sb_save_status(stats)
@@ -1380,6 +1611,35 @@ def selftest():
         log("  [av4] 外链聚合 cards: " + str(_avn) if _avh and _avn else "  [av4] 外链聚合: 失败/0卡片")
     except Exception as e:
         log(f"  [av4] 异常: {type(e).__name__}", "WARN")
+    # 深挖自检: 作者搜索 + twjn 作者提取 (逐层试, 第一层出结果即停)
+    try:
+        _an, _tier_used = 0, None
+        for _tier in Fetcher.RAW_TIERS:
+            try:
+                _ah = fetcher._get(_tier, BASE_URL + "/search.php?search=kaiyoyagi&u=ja", BASE_URL + "/")
+            except Exception:
+                _ah = None
+            _an = len(parse_cards(_ah or "", "", "author"))
+            if _an:
+                _tier_used = _tier
+                break
+        log(f"  [深挖] 作者搜索 cards: {_an} (层 {_tier_used})" if _an else "  [深挖] 作者搜索: 失败/0卡片")
+    except Exception as e:
+        log(f"  [深挖] 作者搜索异常: {type(e).__name__}", "WARN")
+    try:
+        _mt, _mtier = None, None
+        for _tier in Fetcher.RAW_TIERS:
+            try:
+                _mt = fetcher._get(_tier, f"{BASE_URL}/twjn.php?v={PROBE_MID}", BASE_URL + "/")
+            except Exception:
+                _mt = None
+            if _mt and _looks_twjn_page(_mt):
+                _mtier = _tier
+                break
+        _ms, _mtid = extract_tweet_ref(_mt)
+        log(f"  [深挖] twjn 作者提取: @{_ms} / {_mtid} (层 {_mtier})" if _mtid else "  [深挖] twjn 作者提取: 失败")
+    except Exception as e:
+        log(f"  [深挖] twjn 作者提取异常: {type(e).__name__}", "WARN")
     j = fetcher._probe_jina()
     log(f"  [{'jina':10s}] twjn: {'✅ OK (仅解析可用)' if j else '❌ 失败'}")
     ok = fetcher.mode is not None or fetcher.resolve_mode is not None or j
@@ -1390,7 +1650,7 @@ def selftest():
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     print("=" * 60)
-    log(f"monsnode 爬虫 v12 (多层反 CF 传输) — 模式: {mode}")
+    log(f"monsnode 爬虫 v13 (多层反 CF 传输 + 深挖轮换) — 模式: {mode}")
     key_ok = bool(SUPABASE_KEY) and len(SUPABASE_KEY) > 100
     log(f"SUPABASE_URL={'已设置' if SUPABASE_URL else '❌'}  SUPABASE_KEY={'已设置' if key_ok else '❌'} ({len(SUPABASE_KEY)} 字符)")
     print("=" * 60)
@@ -1407,6 +1667,17 @@ def main():
         stats = resolve_only()
         print("\n" + "=" * 60)
         print(f"  MP4 解析: {stats['mp4_resolved']} 个")
+        print("=" * 60)
+        return
+
+    if mode == "deep":
+        stats = deep_only()
+        print("\n" + "=" * 60)
+        print(f"  深挖发现: {stats['videos_found']}   保存: {stats['videos_saved']}")
+        if stats["errors"]:
+            print(f"  错误 ({len(stats['errors'])}):")
+            for e in stats["errors"][:5]:
+                print(f"    - {e[:120]}")
         print("=" * 60)
         return
 
