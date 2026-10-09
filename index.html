@@ -13,8 +13,10 @@
 <link rel="apple-touch-icon" href="https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png">
 <link rel="icon" sizes="192x192" href="https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png">
 <link rel="manifest" href="https://user.uploads.dev/file/6671c3eb28c6f02f5c5a06c7c55e68d5.txt">
+<meta name="build-iso" content="2026-10-09T09:34:28.007Z">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
+<script>window.__BUILD_ISO="2026-10-09T09:34:28.007Z";</script>
 </head>
 <body>
 <script type="text/x-server-plugin">
@@ -114,6 +116,114 @@
         ensureMeta("apple-mobile-web-app-title", "2048");
         ensureMeta("theme-color", "#08080a");
     } catch (e) {}
+})();
+</script>
+<script>
+/* ============ 独立版自动跟随更新 (仅 standalone 镜像生效) ============
+   描述文件装好后, App 打开的是线上地址。本脚本让页面自己盯住 git 变化:
+   单文件构建时会把构建时间写进 window.__BUILD_ISO; pages.yml 每次部署会把
+   部署时间写进 Supabase system_config.updated_at (没配密钥时没有这行, 则改
+   用 GitHub 最新提交时间兜底)。部署时间晚于构建时间 = git 上有了新版 →
+   提示后自动刷新 (带 ?upd= 破缓存、保留 #/路由), 无需重装描述文件。
+   (perchance 预览里没有 __BUILD_ISO, 自动休眠, 零影响。) */
+(function () {
+    "use strict";
+    if (!window.__BUILD_ISO) return;
+    var BUILD_T = Date.parse(window.__BUILD_ISO) || 0;
+    if (!BUILD_T) return;
+    var GRACE = 90000, FIRST_DELAY = 15000, INTERVAL = 5 * 60 * 1000;
+    var GH_INTERVAL = 10 * 60 * 1000, MIN_GAP = 2 * 60 * 1000;
+    var lastCheck = 0, lastGh = 0, updating = false;
+    function miniToast(msg) {
+        try { if (typeof window.toast === "function") { window.toast(msg); return; } } catch (e) {}
+        try {
+            var d = document.createElement("div");
+            d.textContent = msg;
+            d.style.cssText = "position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:rgba(20,20,26,0.92);color:#e4e0d8;border:1px solid rgba(200,164,92,0.4);padding:10px 18px;border-radius:10px;font-size:13px;z-index:99999;font-family:sans-serif;";
+            document.body.appendChild(d);
+            setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, 4000);
+        } catch (e) {}
+    }
+    function seen(v) { try { return sessionStorage.getItem("__upd_seen") === v; } catch (e) { return false; } }
+    function markSeen(v) { try { sessionStorage.setItem("__upd_seen", v); } catch (e) {} }
+    function withTimeout(ms) {
+        try {
+            var c = new AbortController();
+            var t = setTimeout(function () { try { c.abort(); } catch (e) {} }, ms);
+            return { signal: c.signal, done: function () { clearTimeout(t); } };
+        } catch (e) { return { signal: undefined, done: function () {} }; }
+    }
+    function ghRepo() {
+        try {
+            if (/\.github\.io$/i.test(location.hostname)) {
+                var seg = (location.pathname || "/").split("/").filter(Boolean)[0];
+                if (seg) return "jiajiababa1/" + seg;
+            }
+        } catch (e) {}
+        return "jiajiababa1/video-db";
+    }
+    async function remoteTime() {
+        // ① Supabase 部署时间 (pages.yml 每次部署写入 site_code_hash 行的 updated_at)
+        try {
+            var u = window.__SB_URL, k = window.__SB_ANON;
+            if (u && k) {
+                var w = withTimeout(12000);
+                try {
+                    var r = await fetch(u + "/rest/v1/system_config?key=eq.site_code_hash&select=value,updated_at", {
+                        headers: { apikey: k, Authorization: "Bearer " + k }, signal: w.signal
+                    });
+                    if (r.ok) {
+                        var arr = await r.json();
+                        if (arr && arr[0] && arr[0].updated_at) {
+                            var t = Date.parse(arr[0].updated_at) || 0;
+                            if (t) return { t: t, tag: String(arr[0].updated_at) };
+                        }
+                    }
+                } catch (e) {} finally { w.done(); }
+            }
+        } catch (e) {}
+        // ② 兜底: GitHub main 最新提交时间 (免 key; 有频率限制, 失败/限流就跳过等下轮)
+        var now = Date.now();
+        if (now - lastGh < GH_INTERVAL) return null;
+        lastGh = now;
+        try {
+            var w2 = withTimeout(12000);
+            try {
+                var r2 = await fetch("https://api.github.com/repos/" + ghRepo() + "/commits/main?per_page=1", {
+                    headers: { Accept: "application/vnd.github+json" }, signal: w2.signal
+                });
+                if (!r2.ok) return null;
+                var c = await r2.json();
+                var au = (c && c.commit && (c.commit.author || c.commit.committer)) || {};
+                var t2 = Date.parse(au.date) || 0;
+                if (t2) return { t: t2, tag: "gh:" + String((c && c.sha) || "").slice(0, 12) };
+            } catch (e) {} finally { w2.done(); }
+        } catch (e) {}
+        return null;
+    }
+    async function check() {
+        if (updating) return;
+        var rt = await remoteTime();
+        if (!rt) return;
+        if (rt.t > BUILD_T + GRACE && !seen(rt.tag)) {
+            updating = true;
+            markSeen(rt.tag);
+            miniToast("发现新版本，正在更新…");
+            setTimeout(function () {
+                try { location.href = location.pathname + "?upd=" + Date.now() + (location.hash || ""); }
+                catch (e) { location.reload(); }
+            }, 1200);
+        }
+    }
+    function tick(force) {
+        var now = Date.now();
+        if (!force && now - lastCheck < MIN_GAP) return;
+        lastCheck = now;
+        check();
+    }
+    setTimeout(function () { tick(true); }, FIRST_DELAY);
+    setInterval(function () { tick(false); }, INTERVAL);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) tick(false); });
 })();
 </script>
 <script>
