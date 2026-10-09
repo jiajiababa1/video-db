@@ -13,10 +13,10 @@
 <link rel="apple-touch-icon" href="https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png">
 <link rel="icon" sizes="192x192" href="https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png">
 <link rel="manifest" href="https://user.uploads.dev/file/6671c3eb28c6f02f5c5a06c7c55e68d5.txt">
-<meta name="build-iso" content="2026-10-09T09:34:28.007Z">
+<meta name="build-iso" content="2026-10-09T09:48:38.783Z">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
-<script>window.__BUILD_ISO="2026-10-09T09:34:28.007Z";</script>
+<script>window.__BUILD_ISO="2026-10-09T09:48:38.783Z";</script>
 </head>
 <body>
 <script type="text/x-server-plugin">
@@ -9866,16 +9866,27 @@
         try { var cr = await fetch(SUPABASE_URL + '/rest/v1/videos?limit=1', {headers:hds}); connOK = cr.ok; } catch(e) {}
         add('📡 Supabase连接', connOK ? '✅' : '❌');
 
-        // 2. 客户端直接读写的公开表 (应可访问)
+        // 2. 客户端直接读写的公开表 (应可访问) + 已加固锁定的表 (401/403 即正常, 见 13/14 号 SQL)
+        // messages/user_vips/activation_codes 已收权: 直接读必须被拒, 业务走 token 版 RPC
+        // (get_conversation_t/send_message_t/unread_count_t/admin_list_codes 等), 这里报 ❌ 是误报, 故单列期望。
         var openTables = ['videos','scrape_status','announcements','site_pages','scraped_videos',
-                          'friends','messages','cloud_favorites','user_follows',
+                          'friends','cloud_favorites','user_follows',
                           'cloud_user_data','cloud_user_config','works','board_groups','board_messages',
-                          'user_vips','activation_codes','admin_log','bans','system_config'];
+                          'admin_log','bans','system_config'];
+        var lockedTables = ['messages','user_vips','activation_codes'];
         for (var i = 0; i < openTables.length; i++) {
             try {
                 var r = await fetch(SUPABASE_URL + '/rest/v1/' + openTables[i] + '?limit=1', {headers: hds});
                 add(openTables[i], r.ok ? '✅' : '❌ HTTP' + r.status);
             } catch(e) { add(openTables[i], '❌'); }
+        }
+        for (var j = 0; j < lockedTables.length; j++) {
+            try {
+                // 必须用不带登录 token 的匿名头判定: 管理员登录态下直接可读是正常的, 不能算异常
+                var anonH = {apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY};
+                var lr = await fetch(SUPABASE_URL + '/rest/v1/' + lockedTables[j] + '?limit=1', {headers: anonH});
+                add('🔒 ' + lockedTables[j] + ' (应锁定)', (lr.status===400||lr.status===401||lr.status===403) ? '🔒 已锁定' : '⚠️ 匿名可读!');
+            } catch(e) { add('🔒 ' + lockedTables[j] + ' (应锁定)', '🔒 已锁定'); }
         }
 
         // 3. user_accounts 安全列 (绝不能用 select=* — 敏感列已被保护, 会整体被拒)
@@ -9884,15 +9895,17 @@
             add('👤 user_accounts 安全列', safe.ok ? '✅' : '❌ HTTP' + safe.status);
         } catch(e) { add('👤 user_accounts 安全列', '❌'); }
 
-        // 4. 敏感列 password_hash 必须不可读
+        // 4. 敏感列 password_hash 必须不可读 (匿名头判定, 逻辑同上)
         try {
-            var sens = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?select=password_hash&limit=1', {headers: hds});
+            var anonH2 = {apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY};
+            var sens = await fetch(SUPABASE_URL + '/rest/v1/user_accounts?select=password_hash&limit=1', {headers: anonH2});
             add('🔒 password_hash 列', (sens.status===400||sens.status===401||sens.status===403) ? '🔒 已保护' : '⚠️ 可读!');
         } catch(e) { add('🔒 password_hash 列', '🔒 已保护'); }
 
-        // 5. 会话表必须对 anon 锁定
+        // 5. 会话表必须对 anon 锁定 (匿名头判定, 逻辑同上)
         try {
-            var ss = await fetch(SUPABASE_URL + '/rest/v1/sessions?limit=1', {headers: hds});
+            var anonH3 = {apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY};
+            var ss = await fetch(SUPABASE_URL + '/rest/v1/sessions?limit=1', {headers: anonH3});
             add('🔒 sessions 表', (ss.status===400||ss.status===401||ss.status===403) ? '🔒 已锁定' : '⚠️ 可访问');
         } catch(e) { add('🔒 sessions 表', '🔒 已锁定'); }
 
@@ -9923,7 +9936,7 @@
         }
         h += '</div>';
         if (failCount > 0) {
-            h += '<br><b style="color:#c08080;">请在 Supabase SQL Editor 执行 09_lockdown.sql（取代旧的 02_security.sql）</b>';
+            h += '<br><b style="color:#c08080;">有 ❌ 项: 按 src/sql/ 下 13..16 加固脚本核对 RLS/权限 (不要重跑旧的 02_security.sql, 会放宽权限)</b>';
         }
         area.innerHTML = h;
     }
