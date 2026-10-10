@@ -13,10 +13,10 @@
 <link rel="apple-touch-icon" href="https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png">
 <link rel="icon" sizes="192x192" href="https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png">
 <link rel="manifest" href="https://user.uploads.dev/file/6671c3eb28c6f02f5c5a06c7c55e68d5.txt">
-<meta name="build-iso" content="2026-10-10T17:16:12.492Z">
+<meta name="build-iso" content="2026-10-10T17:53:17.106Z">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
-<script>window.__BUILD_ISO="2026-10-10T17:16:12.492Z";</script>
+<script>window.__BUILD_ISO="2026-10-10T17:53:17.106Z";</script>
 </head>
 <body>
 <script type="text/x-server-plugin">
@@ -7268,15 +7268,24 @@
                 '<div class="ai-box">' +
                 '<div style="display:flex;align-items:center;gap:8px;"><h3 style="flex:1;">🎯 指定作者抓取作品</h3>' +
                 '<button class="ai-btn" id="asClose">✕</button></div>' +
-                '<div class="ai-note" style="margin-top:6px;">按作者名去源站搜索, 逐页抓取卡片并入库 (自动去重, 顺手解析 MP4 + 补文案)。仅站主可用。</div>' +
-                '<div class="ai-sec"><h4>作者</h4>' +
+                '<div class="ai-note" style="margin-top:6px;">先输入关键词找库里相似作者, 勾选后由 GitHub 云任务抓取入库 (自动去重 + MP4 解析)。仅站主可用。</div>' +
+                '<div class="ai-sec"><h4>1 · 找作者</h4>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                '<input class="ai-input" id="asAuthor" placeholder="作者名" maxlength="60" style="flex:1;min-width:140px;">' +
-                '<input class="ai-input" id="asPages" type="number" min="1" max="20" value="5" title="最多抓取页数" style="width:76px;flex:0 0 auto;">' +
-                '</div></div>' +
-                '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">' +
-                '<button class="ai-btn primary" id="asStart">开始抓取</button>' +
-                '<button class="ai-btn" id="asCancel" disabled>取消</button></div>' +
+                '<input class="ai-input" id="asAuthor" placeholder="作者名关键词" maxlength="60" style="flex:1;min-width:140px;">' +
+                '<button class="ai-btn" id="asFind">🔎 找相似</button></div>' +
+                '<div id="asSimilar" style="font-size:12px;max-height:150px;overflow-y:auto;margin-top:6px;color:var(--vmuted);">输入关键词后点“找相似”, 按库藏量列出候选作者。</div></div>' +
+                '<div class="ai-sec"><h4>2 · 云端抓取 (GitHub 任务)</h4>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' +
+                '<span style="font-size:11px;color:var(--vmuted);">每作者翻</span>' +
+                '<input class="ai-input" id="asPages" type="number" min="1" max="20" value="5" title="每作者最多翻页" style="width:64px;flex:0 0 auto;">' +
+                '<span style="font-size:11px;color:var(--vmuted);">页</span>' +
+                '<button class="ai-btn primary" id="asCloud">☁️ 云端抓取选中</button>' +
+                '<button class="ai-btn" id="asPollStop" disabled>停止轮询</button></div>' +
+                '<div class="ai-note" id="asCloudLog" style="margin-top:6px;min-height:20px;"></div></div>' +
+                '<div class="ai-sec"><h4>3 · 本机直抓 (备用, 慢)</h4>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                '<button class="ai-btn" id="asStart">📱 本机直接抓</button>' +
+                '<button class="ai-btn" id="asCancel" disabled>取消</button></div></div>' +
                 '<div class="ai-bar" style="display:none;" id="asBarWrap"><i id="asBar"></i></div>' +
                 '<div class="ai-note" id="asLog" style="margin-top:8px;min-height:20px;max-height:180px;overflow-y:auto;"></div>' +
                 '<div class="ai-sec"><h4>抓取记录</h4>' +
@@ -7288,10 +7297,13 @@
                 '<div class="ai-note">本机记录最多保留 30 条 (点一条可填回作者名); 云端记录写入管理日志, 跨设备可在管理面板审计里查看。</div></div>' +
                 '</div>';
             document.body.appendChild(ov);
-            ov.addEventListener('click', function (e) { if (e.target === ov && !authorScrapeRunning) ov.classList.remove('on'); });
-            document.getElementById('asClose').onclick = function () { if (!authorScrapeRunning) ov.classList.remove('on'); };
+            ov.addEventListener('click', function (e) { if (e.target === ov && !authorScrapeRunning && !authorCloudPolling) ov.classList.remove('on'); });
+            document.getElementById('asClose').onclick = function () { if (!authorScrapeRunning && !authorCloudPolling) ov.classList.remove('on'); };
             document.getElementById('asCancel').onclick = function () { authorScrapeCancel = true; };
             document.getElementById('asStart').onclick = startAuthorScrape;
+            document.getElementById('asFind').onclick = asFindSimilar;
+            document.getElementById('asCloud').onclick = asCloudScrape;
+            document.getElementById('asPollStop').onclick = function () { authorCloudPolling = false; var l = document.getElementById('asCloudLog'); if (l) l.innerHTML += '<br>已停止轮询 (云任务继续在跑)。'; var b = document.getElementById('asPollStop'); if (b) b.disabled = true; };
             document.getElementById('asHistRefresh').onclick = function () { try { asRenderHist(); } catch (e) {} };
             document.getElementById('asHistClear').onclick = function () { try { localStorage.removeItem(AS_HIST_KEY); asRenderHist(); toast('本机抓取记录已清空'); } catch (e) {} };
         }
@@ -7327,7 +7339,7 @@
                 var t = '';
                 try { t = new Date(r.t).toLocaleString('zh-CN', { hour12: false }); } catch (e) { t = String(r.t || ''); }
                 return '<div class="as-hist-row" data-author="' + esc(r.author || '') + '" title="点击填回作者名" style="padding:4px 0;border-bottom:1px solid var(--vborder);cursor:pointer;">' +
-                    '<b>' + esc(r.author || '') + '</b> <span style="color:var(--vmuted);">' + esc(t) + '</span><br>' +
+                    '<b>' + (r.cloud ? '☁️ ' : '') + esc(r.author || '') + '</b> <span style="color:var(--vmuted);">' + esc(t) + '</span><br>' +
                     '<span style="font-size:11px;">页' + esc(String(r.pages)) + ' · 发现' + esc(String(r.found)) + ' · 新增' + esc(String(r.saved)) +
                     (r.existed ? ' · 已存在' + esc(String(r.existed)) : '') +
                     ' · MP4' + esc(String(r.mp4)) + ' · 文案' + esc(String(r.text)) + ' · ' + esc(asStatusLabel(r.status)) + '</span></div>';
@@ -7370,11 +7382,213 @@
         try {
             var who = 'owner';
             try { who = (typeof _username !== 'undefined' && _username) ? String(_username).substring(0, 60) : 'owner'; } catch (e2) {}
-            var detail = '页' + rec.pages + ' · 发现' + rec.found + ' · 新增' + rec.saved + (rec.existed ? ' · 已存在' + rec.existed : '') + ' · MP4' + rec.mp4 + ' · 文案' + rec.text + ' · ' + asStatusLabel(rec.status) + ' · ' + rec.secs + 's';
+            var detail = (rec.cloud ? '云端 · ' : '') + '页' + rec.pages + ' · 发现' + rec.found + ' · 新增' + rec.saved + (rec.existed ? ' · 已存在' + rec.existed : '') + ' · MP4' + rec.mp4 + ' · 文案' + rec.text + ' · ' + asStatusLabel(rec.status) + ' · ' + rec.secs + 's';
             if (typeof _adminPost === 'function') {
                 _adminPost(SUPABASE_URL + '/rest/v1/admin_log', { admin_user: who, action: 'author_scrape', target: String(rec.author).substring(0, 200), detail: detail.substring(0, 500) });
             }
         } catch (e) {}
+    }
+    var GH_AUTHOR_WORKFLOW = 'author-scrape.yml';
+    var authorCloudPolling = false, authorCloudRunId = null;
+    function asNeedOwner() {
+        if (window.isOwner && window.isOwner()) return true;
+        if (window.showOwnerGate) { try { window.showOwnerGate('作者抓取', '仅站主可按作者抓取作品，其他用户请联系站主。'); } catch (e) {} }
+        return false;
+    }
+    function asSelectedAuthors() {
+        var out = [];
+        try {
+            var boxes = document.querySelectorAll('#asSimilar input[type=checkbox]:checked');
+            for (var i = 0; i < boxes.length; i++) {
+                var v = (boxes[i].value || '').trim().substring(0, 60);
+                if (v && out.indexOf(v) < 0) out.push(v);
+            }
+        } catch (e) {}
+        return out.slice(0, 10);
+    }
+    function asCloudSay(msg) {
+        var l = document.getElementById('asCloudLog');
+        if (l) { l.innerHTML += esc(msg) + '<br>'; l.scrollTop = l.scrollHeight; }
+    }
+    async function asFindSimilar() {
+        if (!asNeedOwner()) return;
+        var ai = document.getElementById('asAuthor');
+        var kw = ai ? ai.value.trim() : '';
+        if (!kw) { toast('请输入作者名关键词'); if (ai) ai.focus(); return; }
+        var box = document.getElementById('asSimilar');
+        if (box) box.innerHTML = '查找中…';
+        try {
+            var pat = kw.replace(/[%_*(),\\]/g, ' ').trim().replace(/\s+/g, ' ');
+            if (!pat) { if (box) box.innerHTML = '关键词无效'; return; }
+            var url = SUPABASE_URL + '/rest/v1/videos?select=author&author=ilike.*' + encodeURIComponent(pat) + '*&limit=1000';
+            var r = await fetch(url, { headers: _h() });
+            if (!r.ok) { if (box) box.innerHTML = '查询失败 HTTP ' + r.status; return; }
+            var rows = await r.json();
+            var cnt = {};
+            for (var i = 0; i < rows.length; i++) {
+                var a = ((rows[i] || {}).author || '').trim();
+                if (a) cnt[a] = (cnt[a] || 0) + 1;
+            }
+            var list = Object.keys(cnt).map(function (a) { return { a: a, n: cnt[a] }; });
+            list.sort(function (x, y) { return y.n - x.n; });
+            list = list.slice(0, 30);
+            if (!list.length) { if (box) box.innerHTML = '库里没找到相似作者, 可直接用关键词云端抓 (源站会搜全库)。'; return; }
+            var h = '<div style="color:var(--vmuted);margin-bottom:4px;">找到 ' + list.length + ' 个候选 (按库藏量排序): ' +
+                '<button class="ai-btn" id="asPickAll" style="padding:2px 8px;font-size:11px;">全选</button> ' +
+                '<button class="ai-btn" id="asPickNone" style="padding:2px 8px;font-size:11px;">清空</button></div>';
+            h += list.map(function (x) {
+                return '<label style="display:flex;gap:6px;align-items:center;padding:3px 0;border-bottom:1px solid var(--vborder);cursor:pointer;">' +
+                    '<input type="checkbox" value="' + esc(x.a) + '"><b style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(x.a) + '</b>' +
+                    '<span style="color:var(--vmuted);font-size:11px;">' + x.n + ' 条</span></label>';
+            }).join('');
+            if (box) {
+                box.innerHTML = h;
+                document.getElementById('asPickAll').onclick = function () {
+                    var c = box.querySelectorAll('input[type=checkbox]');
+                    for (var k = 0; k < c.length; k++) c[k].checked = true;
+                };
+                document.getElementById('asPickNone').onclick = function () {
+                    var c = box.querySelectorAll('input[type=checkbox]');
+                    for (var k = 0; k < c.length; k++) c[k].checked = false;
+                };
+            }
+        } catch (e) { if (box) box.innerHTML = '查询出错: ' + esc(String((e && e.message) || e)); }
+    }
+    async function asCloudScrape() {
+        if (!asNeedOwner()) return;
+        if (authorCloudPolling || authorScrapeRunning) { toast('已有抓取在进行'); return; }
+        var authors = asSelectedAuthors();
+        var ai = document.getElementById('asAuthor');
+        var kw = ai ? ai.value.trim().substring(0, 60) : '';
+        if (!authors.length) {
+            if (!kw) { toast('先找相似作者勾选, 或直接输入关键词'); if (ai) ai.focus(); return; }
+            authors = [kw];
+        }
+        var maxPages = 5;
+        try { maxPages = Math.max(1, Math.min(20, parseInt((document.getElementById('asPages') || {}).value, 10) || 5)); } catch (e) {}
+        var token = (typeof ghToken === 'function') ? ghToken() : '';
+        if (!token) {
+            toast('请先配置 GitHub Token');
+            if (typeof ghConfigPrompt === 'function') ghConfigPrompt();
+            return;
+        }
+        var log = document.getElementById('asCloudLog'); if (log) log.innerHTML = '';
+        asCloudSay('触发云任务: ' + authors.join('、'));
+        var t0 = Date.now();
+        var resp;
+        try {
+            resp = await fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/actions/workflows/' + GH_AUTHOR_WORKFLOW + '/dispatches', {
+                method: 'POST',
+                headers: Object.assign({}, ghHeaders(), { 'Content-Type': 'application/json', 'Accept': 'application/vnd.github+json' }),
+                body: JSON.stringify({ ref: GH_RUN, inputs: { authors: authors.join(','), max_pages: String(maxPages), resolve: '20' } })
+            });
+        } catch (e) { asCloudSay('触发请求失败: ' + ((e && e.message) || e)); return; }
+        if (!resp.ok) {
+            var reason = 'HTTP ' + resp.status;
+            if (resp.status === 401) reason += ' Token 无效/已过期';
+            else if (resp.status === 403) reason += ' Token 缺少 Actions 写入权限';
+            else if (resp.status === 404) reason += ' 工作流不存在 (仓库缺 author-scrape.yml)';
+            else if (resp.status === 422) reason += ' 参数错误';
+            asCloudSay('❌ 触发失败 ' + reason);
+            toast('❌ 云端触发失败 ' + reason);
+            return;
+        }
+        toast('☁️ 云端作者抓取已触发, 等待运行…');
+        authorCloudPolling = true; authorCloudRunId = null;
+        var ps = document.getElementById('asPollStop'); if (ps) ps.disabled = false;
+        asBar(5);
+        var runId = await asFindNewRun(t0);
+        if (!runId) {
+            asCloudSay('⚠️ 2 分钟没等到运行记录, 请去 GitHub Actions 里看 (任务可能已在跑)。');
+            authorCloudPolling = false;
+            if (ps) ps.disabled = true;
+            return;
+        }
+        authorCloudRunId = runId;
+        asCloudSay('任务运行中…');
+        asCloudPoll(runId, authors, maxPages, t0);
+    }
+    async function asFindNewRun(t0) {
+        try {
+            for (var i = 0; i < 12; i++) {
+                if (!authorCloudPolling) return null;
+                await new Promise(function (r) { setTimeout(r, 10000); });
+                if (!authorCloudPolling) return null;
+                var lr = await fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/actions/workflows/' + GH_AUTHOR_WORKFLOW + '/runs?per_page=5', { headers: ghHeaders() });
+                if (!lr.ok) continue;
+                var jj = await lr.json();
+                var runs = (jj && jj.workflow_runs) || [];
+                for (var k = 0; k < runs.length; k++) {
+                    var c = runs[k].created_at ? Date.parse(runs[k].created_at) : 0;
+                    if (c >= t0 - 30000) return runs[k].id;
+                }
+            }
+        } catch (e) {}
+        return null;
+    }
+    async function asCloudPoll(runId, authors, maxPages, t0) {
+        var n = 0;
+        try {
+            while (authorCloudPolling && n < 120) {
+                n++;
+                await new Promise(function (r) { setTimeout(r, 15000); });
+                if (!authorCloudPolling) break;
+                if (!document.getElementById('asCloudLog')) { authorCloudPolling = false; break; }
+                var rr;
+                try {
+                    rr = await fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/actions/runs/' + runId, { headers: ghHeaders() });
+                } catch (e) { continue; }
+                if (!rr.ok) continue;
+                var run = await rr.json();
+                var st = run.status || '';
+                if (st === 'completed') { asCloudFinish(run, authors, maxPages, t0); return; }
+                asBar(st === 'queued' ? 8 : 8 + Math.min(80, Math.round((Date.now() - t0) / 1000 / 12)));
+                var el = Math.round((Date.now() - t0) / 1000);
+                var log = document.getElementById('asCloudLog');
+                if (log) log.innerHTML = esc(st === 'queued' ? '排队中…' : '云端抓取中… 已用时 ' + Math.floor(el / 60) + '分' + (el % 60) + '秒') + '<br>' +
+                    esc('运行 #' + run.run_number + (run.html_url ? ' (详情见 GitHub Actions)' : ''));
+            }
+            if (authorCloudPolling) {
+                asCloudSay('⚠️ 轮询超时 (30 分钟), 请去 GitHub Actions 看结果。');
+                authorCloudPolling = false;
+            }
+        } catch (e) {
+            authorCloudPolling = false;
+            asCloudSay('轮询出错: ' + ((e && e.message) || e));
+        }
+        var ps = document.getElementById('asPollStop'); if (ps) ps.disabled = true;
+    }
+    async function asCloudFinish(run, authors, maxPages, t0) {
+        authorCloudPolling = false; authorCloudRunId = null;
+        var ps = document.getElementById('asPollStop'); if (ps) ps.disabled = true;
+        asBar(100);
+        var concl = run.conclusion || '';
+        var secs = Math.round((Date.now() - t0) / 1000);
+        if (concl !== 'success') {
+            asCloudSay('⚠️ 云任务结束 (' + concl + '), 请去 GitHub Actions 看日志; 或改用本机直抓。');
+            try {
+                asSaveHist({ t: new Date().toISOString(), author: authors.join(','), pages: maxPages, found: '', saved: '', existed: '', mp4: '', text: '', status: 'error', secs: secs, cloud: true });
+                asAudit({ author: authors.join(','), pages: maxPages, found: 0, saved: 0, mp4: 0, text: 0, status: 'error', secs: secs, cloud: true });
+                asRenderHist();
+            } catch (e) {}
+            return;
+        }
+        var found = '', saved = '';
+        try {
+            var sr = await fetch(SUPABASE_URL + '/rest/v1/scrape_status?select=videos_found,videos_saved,last_run&order=last_run.desc&limit=1', { headers: _h() });
+            if (sr.ok) {
+                var rows = await sr.json();
+                if (rows && rows.length) { found = rows[0].videos_found; saved = rows[0].videos_saved; }
+            }
+        } catch (e) {}
+        asCloudSay('✅ 完成: 发现 ' + found + ' · 入库 ' + saved);
+        toast('✅ 云端作者抓取完成: 发现 ' + found + ' / 入库 ' + saved);
+        try {
+            asSaveHist({ t: new Date().toISOString(), author: authors.join(','), pages: maxPages, found: found, saved: saved, existed: '', mp4: '', text: '', status: 'done', secs: secs, cloud: true });
+            asAudit({ author: authors.join(','), pages: maxPages, found: found, saved: saved, mp4: 0, text: 0, status: 'done', secs: secs, cloud: true });
+            asRenderHist();
+        } catch (e) {}
+        try { loadVids(true); } catch (e) {}
     }
     function asLog(msg) {
         var el = document.getElementById('asLog');
@@ -7393,6 +7607,7 @@
         if (authorScrapeRunning) return;
         var ai = document.getElementById('asAuthor');
         var author = ai ? ai.value.trim() : '';
+        try { var _sel = asSelectedAuthors(); if (_sel.length) author = _sel[0]; } catch (e) {}
         if (!author) { toast('请输入作者名'); if (ai) ai.focus(); return; }
         var maxPages = 5;
         try { maxPages = Math.max(1, Math.min(20, parseInt((document.getElementById('asPages') || {}).value, 10) || 5)); } catch (e) {}
