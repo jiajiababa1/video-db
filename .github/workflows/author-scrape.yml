@@ -23,9 +23,9 @@ on:
         default: '5'
         type: string
       resolve:
-        description: 'MP4 解析条数上限 (0=跳过)'
+        description: 'MP4 解析条数上限 (默认 300 ≈ 全解析, 0=跳过)'
         required: false
-        default: '20'
+        default: '300'
         type: string
 
 jobs:
