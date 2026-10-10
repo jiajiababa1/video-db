@@ -31,8 +31,8 @@ def parse_args():
                     help="作者名, 逗号分隔, 最多 10 个")
     ap.add_argument("--max-pages", type=int, default=5,
                     help="每个作者最多翻页 (1-20)")
-    ap.add_argument("--resolve", type=int, default=20,
-                    help="MP4 解析条数上限 (0=跳过)")
+    ap.add_argument("--resolve", type=int, default=300,
+                    help="MP4 解析条数上限 (0=跳过, 默认全解析)")
     return ap.parse_args()
 
 
@@ -52,9 +52,9 @@ def main():
         M.log("没有有效的作者名", "ERROR")
         return 2
     max_pages = max(1, min(20, args.max_pages or 5))
-    resolve_n = max(0, args.resolve or 0)
-    budget = M._env_int("AUTHOR_TIME_BUDGET", 1200)
-    resolve_budget = M._env_int("AUTHOR_RESOLVE_BUDGET", 300)
+    resolve_n = max(0, args.resolve if args.resolve is not None else 300)
+    budget = M._env_int("AUTHOR_TIME_BUDGET", 1500)
+    resolve_budget = M._env_int("AUTHOR_RESOLVE_BUDGET", 600)
 
     M.DEEP_AUTHOR_PAGES = max_pages
     M.log(f"按作者抓取: {len(authors)} 个作者 {authors}, 每作者 {max_pages} 页, 解析 {resolve_n} 条")
