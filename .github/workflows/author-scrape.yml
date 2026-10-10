@@ -1,0 +1,58 @@
+name: Author Scrape (按作者抓取)
+
+# 说明:
+#   • 跑 scraper/author_scrape.py: 按指定的 1~10 个作者名去 search.php
+#     逐页抓卡片 → upsert_videos RPC 入库(空字段不覆盖, has_mp4 只升不降) →
+#     前 N 条顺手解析 MP4 → scrape_status 写状态(站内轮询读最后一行拿数字)。
+#   • 站内「🎯 作者抓」云端版手动触发; 无定时 (避免与 scraper.yml 抢配额)。
+#   • 需要仓库 Secrets: SUPABASE_URL / SUPABASE_KEY (service_role,
+#     与 scraper.yml / text-backfill.yml 用同一套即可)。
+#   • 注意: monsnode 会对 GitHub Actions 机房 IP 弹 Cloudflare 挑战,
+#     脚本自带 httpx → curl_cffi → 公共代理多层传输; 全被拦则 run 标失败,
+#     站内会提示改用本机抓取。
+on:
+  workflow_dispatch:
+    inputs:
+      authors:
+        description: '作者名, 逗号分隔 (最多 10 个)'
+        required: true
+        type: string
+      max_pages:
+        description: '每个作者最多翻页 (1-20)'
+        required: false
+        default: '5'
+        type: string
+      resolve:
+        description: 'MP4 解析条数上限 (0=跳过)'
+        required: false
+        default: '20'
+        type: string
+
+jobs:
+  author-scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: author-scrape
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install "httpx[http2]" curl_cffi || pip install httpx
+      - name: 检查脚本非空
+        run: |
+          if [ ! -s scraper/main.py ]; then echo "::error::scraper/main.py 为空 (0 字节), 无法运行!"; exit 1; fi
+          if [ ! -s scraper/author_scrape.py ]; then echo "::error::scraper/author_scrape.py 为空 (0 字节), 无法运行!"; exit 1; fi
+          echo "main.py 行数: $(wc -l < scraper/main.py), author_scrape.py 行数: $(wc -l < scraper/author_scrape.py)"
+      - name: 按作者抓取
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python -u scraper/author_scrape.py \
+            --authors "${{ github.event.inputs.authors }}" \
+            --max-pages "${{ github.event.inputs.max_pages }}" \
+            --resolve "${{ github.event.inputs.resolve }}"
