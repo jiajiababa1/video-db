@@ -13,10 +13,10 @@
 <link rel="apple-touch-icon" href="https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png">
 <link rel="icon" sizes="192x192" href="https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png">
 <link rel="manifest" href="https://user.uploads.dev/file/6671c3eb28c6f02f5c5a06c7c55e68d5.txt">
-<meta name="build-iso" content="2026-10-10T17:53:17.106Z">
+<meta name="build-iso" content="2026-10-10T18:08:59.273Z">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
-<script>window.__BUILD_ISO="2026-10-10T17:53:17.106Z";</script>
+<script>window.__BUILD_ISO="2026-10-10T18:08:59.273Z";</script>
 </head>
 <body>
 <script type="text/x-server-plugin">
@@ -7466,6 +7466,12 @@
         }
         var maxPages = 5;
         try { maxPages = Math.max(1, Math.min(20, parseInt((document.getElementById('asPages') || {}).value, 10) || 5)); } catch (e) {}
+        var badAu = authors.filter(function (a) { return /[,()\\]/.test(a); });
+        if (badAu.length) {
+            authors = authors.filter(function (a) { return /[,()\\]/.test(a) === false; });
+            toast('已跳过 ' + badAu.length + ' 个含特殊符号的作者 (云端暂不支持)');
+        }
+        if (!authors.length) { toast('没有可抓取的作者'); return; }
         var token = (typeof ghToken === 'function') ? ghToken() : '';
         if (!token) {
             toast('请先配置 GitHub Token');
@@ -7480,7 +7486,7 @@
             resp = await fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/actions/workflows/' + GH_AUTHOR_WORKFLOW + '/dispatches', {
                 method: 'POST',
                 headers: Object.assign({}, ghHeaders(), { 'Content-Type': 'application/json', 'Accept': 'application/vnd.github+json' }),
-                body: JSON.stringify({ ref: GH_RUN, inputs: { authors: authors.join(','), max_pages: String(maxPages), resolve: '20' } })
+                body: JSON.stringify({ ref: GH_RUN, inputs: { authors: authors.join(','), max_pages: String(maxPages), resolve: '300' } })
             });
         } catch (e) { asCloudSay('触发请求失败: ' + ((e && e.message) || e)); return; }
         if (!resp.ok) {
@@ -7573,7 +7579,7 @@
             } catch (e) {}
             return;
         }
-        var found = '', saved = '';
+        var found = '', saved = '', mp4n = '';
         try {
             var sr = await fetch(SUPABASE_URL + '/rest/v1/scrape_status?select=videos_found,videos_saved,last_run&order=last_run.desc&limit=1', { headers: _h() });
             if (sr.ok) {
@@ -7581,11 +7587,18 @@
                 if (rows && rows.length) { found = rows[0].videos_found; saved = rows[0].videos_saved; }
             }
         } catch (e) {}
-        asCloudSay('✅ 完成: 发现 ' + found + ' · 入库 ' + saved);
+        try {
+            var inList = authors.map(function (a) { return encodeURIComponent(a); }).join(',');
+            var cr = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id&author=in.(' + inList + ')&has_mp4=is.true&limit=1', { headers: Object.assign({}, _h(), { Prefer: 'count=exact' }) });
+            var crng = cr.headers.get('content-range') || '';
+            var m = /\/(\d+)\s*$/.exec(crng);
+            if (m) mp4n = parseInt(m[1], 10);
+        } catch (e) {}
+        asCloudSay('✅ 完成: 发现 ' + found + ' · 入库 ' + saved + (mp4n === '' ? '' : ' · 该作者可播 ' + mp4n));
         toast('✅ 云端作者抓取完成: 发现 ' + found + ' / 入库 ' + saved);
         try {
-            asSaveHist({ t: new Date().toISOString(), author: authors.join(','), pages: maxPages, found: found, saved: saved, existed: '', mp4: '', text: '', status: 'done', secs: secs, cloud: true });
-            asAudit({ author: authors.join(','), pages: maxPages, found: found, saved: saved, mp4: 0, text: 0, status: 'done', secs: secs, cloud: true });
+            asSaveHist({ t: new Date().toISOString(), author: authors.join(','), pages: maxPages, found: found, saved: saved, existed: '', mp4: mp4n, text: '', status: 'done', secs: secs, cloud: true });
+            asAudit({ author: authors.join(','), pages: maxPages, found: found, saved: saved, mp4: mp4n, text: 0, status: 'done', secs: secs, cloud: true });
             asRenderHist();
         } catch (e) {}
         try { loadVids(true); } catch (e) {}
