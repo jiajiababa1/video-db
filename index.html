@@ -13,10 +13,10 @@
 <link rel="apple-touch-icon" href="https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png">
 <link rel="icon" sizes="192x192" href="https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png">
 <link rel="manifest" href="https://user.uploads.dev/file/6671c3eb28c6f02f5c5a06c7c55e68d5.txt">
-<meta name="build-iso" content="2026-10-09T09:48:38.783Z">
+<meta name="build-iso" content="2026-10-10T17:16:12.492Z">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
-<script>window.__BUILD_ISO="2026-10-09T09:48:38.783Z";</script>
+<script>window.__BUILD_ISO="2026-10-10T17:16:12.492Z";</script>
 </head>
 <body>
 <script type="text/x-server-plugin">
@@ -1954,6 +1954,7 @@
                     <button class="vid-btn ghost active" id="playableFilter" onclick="togglePlayableFilter()" title="筛选可播放/全部">✅ 可播</button>
                     <button class="vid-btn ghost" id="resolveBtn" onclick="batchResolveMp4()" title="本地解析当前未缓存视频的 MP4 (不触发云端, 所有人可用)">🎬 解析</button>
                     <button class="vid-btn ghost" id="backfillTextBtn" onclick="triggerTextBackfill()" title="只触发云端补文案任务: 回填标题+作者 (站主, 不抓新视频)">📝 补文案</button>
+                    <button class="vid-btn ghost" id="authorScrapeBtn" onclick="openAuthorScrape()" title="指定作者抓取作品: 按作者名去源站搜索并入库 (仅站主)">🎯 作者抓</button>
                 </div>
             </div>
         </div>
@@ -7251,6 +7252,252 @@
         });
     }
 
+    // ============ 指定作者抓取作品 (仅站主): 源站搜索 → 解析卡片 → 入库 → MP4/文案 ============
+    var authorScrapeRunning = false, authorScrapeCancel = false;
+    function openAuthorScrape() {
+        if (!(window.isOwner && window.isOwner())) {
+            if (window.showOwnerGate) { try { window.showOwnerGate('作者抓取', '仅站主可按作者抓取作品，其他用户请联系站主。'); } catch (e) {} }
+            return;
+        }
+        var ov = document.getElementById('authorScrapeOverlay');
+        if (!ov) {
+            ov = document.createElement('div');
+            ov.id = 'authorScrapeOverlay';
+            ov.className = 'ai-panel';
+            ov.innerHTML =
+                '<div class="ai-box">' +
+                '<div style="display:flex;align-items:center;gap:8px;"><h3 style="flex:1;">🎯 指定作者抓取作品</h3>' +
+                '<button class="ai-btn" id="asClose">✕</button></div>' +
+                '<div class="ai-note" style="margin-top:6px;">按作者名去源站搜索, 逐页抓取卡片并入库 (自动去重, 顺手解析 MP4 + 补文案)。仅站主可用。</div>' +
+                '<div class="ai-sec"><h4>作者</h4>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                '<input class="ai-input" id="asAuthor" placeholder="作者名" maxlength="60" style="flex:1;min-width:140px;">' +
+                '<input class="ai-input" id="asPages" type="number" min="1" max="20" value="5" title="最多抓取页数" style="width:76px;flex:0 0 auto;">' +
+                '</div></div>' +
+                '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">' +
+                '<button class="ai-btn primary" id="asStart">开始抓取</button>' +
+                '<button class="ai-btn" id="asCancel" disabled>取消</button></div>' +
+                '<div class="ai-bar" style="display:none;" id="asBarWrap"><i id="asBar"></i></div>' +
+                '<div class="ai-note" id="asLog" style="margin-top:8px;min-height:20px;max-height:180px;overflow-y:auto;"></div>' +
+                '<div class="ai-sec"><h4>抓取记录</h4>' +
+                '<div id="asHist" style="font-size:12px;max-height:160px;overflow-y:auto;"></div>' +
+                '<div id="asHistRemote" style="font-size:12px;max-height:160px;overflow-y:auto;"></div>' +
+                '<div style="display:flex;gap:6px;margin-top:6px;">' +
+                '<button class="ai-btn" id="asHistRefresh">刷新记录</button>' +
+                '<button class="ai-btn" id="asHistClear">清空本机记录</button></div>' +
+                '<div class="ai-note">本机记录最多保留 30 条 (点一条可填回作者名); 云端记录写入管理日志, 跨设备可在管理面板审计里查看。</div></div>' +
+                '</div>';
+            document.body.appendChild(ov);
+            ov.addEventListener('click', function (e) { if (e.target === ov && !authorScrapeRunning) ov.classList.remove('on'); });
+            document.getElementById('asClose').onclick = function () { if (!authorScrapeRunning) ov.classList.remove('on'); };
+            document.getElementById('asCancel').onclick = function () { authorScrapeCancel = true; };
+            document.getElementById('asStart').onclick = startAuthorScrape;
+            document.getElementById('asHistRefresh').onclick = function () { try { asRenderHist(); } catch (e) {} };
+            document.getElementById('asHistClear').onclick = function () { try { localStorage.removeItem(AS_HIST_KEY); asRenderHist(); toast('本机抓取记录已清空'); } catch (e) {} };
+        }
+        ov.classList.add('on');
+        try { asRenderHist(); } catch (e) {}
+        setTimeout(function () { var i = document.getElementById('asAuthor'); if (i) i.focus(); }, 50);
+    }
+    var AS_HIST_KEY = 'author_scrape_history_v1';
+    function asGetHist() {
+        try { var a = JSON.parse(localStorage.getItem(AS_HIST_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+    }
+    function asSaveHist(rec) {
+        try {
+            var a = asGetHist();
+            a.unshift(rec);
+            if (a.length > 30) a = a.slice(0, 30);
+            try { localStorage.setItem(AS_HIST_KEY, JSON.stringify(a)); } catch (e2) {}
+        } catch (e) {}
+    }
+    function asStatusLabel(s) {
+        if (s === 'cancelled') return '已取消';
+        if (s === 'error') return '出错';
+        return '完成';
+    }
+    function asRenderHist() {
+        var box = document.getElementById('asHist');
+        if (!box) return;
+        var a = asGetHist();
+        if (!a.length) {
+            box.innerHTML = '<span style="color:var(--vmuted);">暂无记录 — 抓一次就会留在这里 (本机保存, 跨设备请看管理面板审计)。</span>';
+        } else {
+            box.innerHTML = a.map(function (r) {
+                var t = '';
+                try { t = new Date(r.t).toLocaleString('zh-CN', { hour12: false }); } catch (e) { t = String(r.t || ''); }
+                return '<div class="as-hist-row" data-author="' + esc(r.author || '') + '" title="点击填回作者名" style="padding:4px 0;border-bottom:1px solid var(--vborder);cursor:pointer;">' +
+                    '<b>' + esc(r.author || '') + '</b> <span style="color:var(--vmuted);">' + esc(t) + '</span><br>' +
+                    '<span style="font-size:11px;">页' + esc(String(r.pages)) + ' · 发现' + esc(String(r.found)) + ' · 新增' + esc(String(r.saved)) +
+                    (r.existed ? ' · 已存在' + esc(String(r.existed)) : '') +
+                    ' · MP4' + esc(String(r.mp4)) + ' · 文案' + esc(String(r.text)) + ' · ' + esc(asStatusLabel(r.status)) + '</span></div>';
+            }).join('');
+            var rows = box.querySelectorAll('.as-hist-row');
+            for (var i = 0; i < rows.length; i++) {
+                rows[i].onclick = function () {
+                    var inp = document.getElementById('asAuthor');
+                    if (inp && this.dataset) inp.value = this.dataset.author || '';
+                    if (inp) inp.focus();
+                };
+            }
+        }
+        try { asRenderRemoteHist(); } catch (e) {}
+    }
+    var _asRemoteLoading = false;
+    function asRenderRemoteHist() {
+        if (_asRemoteLoading) return;
+        var el = document.getElementById('asHistRemote');
+        if (!el) return;
+        _asRemoteLoading = true;
+        var h;
+        try { h = _h(); } catch (e) { _asRemoteLoading = false; return; }
+        fetch(SUPABASE_URL + '/rest/v1/admin_log?select=target,detail,created_at&action=eq.author_scrape&order=created_at.desc&limit=10', { headers: h }).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).then(function (rows) {
+            _asRemoteLoading = false;
+            var box2 = document.getElementById('asHistRemote');
+            if (!box2) return;
+            if (!rows || !rows.length) { box2.innerHTML = ''; return; }
+            box2.innerHTML = '<div style="color:var(--vmuted);margin:6px 0 2px;">云端记录 (管理日志, 跨设备):</div>' + rows.map(function (x) {
+                var t = '';
+                try { t = new Date(x.created_at).toLocaleString('zh-CN', { hour12: false }); } catch (e) { t = ''; }
+                return '<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed var(--vborder);"><b>' + esc(x.target || '') + '</b> ' +
+                    esc(x.detail || '') + ' <span style="color:var(--vmuted);">' + esc(t) + '</span></div>';
+            }).join('');
+        }).catch(function () { _asRemoteLoading = false; });
+    }
+    function asAudit(rec) {
+        try {
+            var who = 'owner';
+            try { who = (typeof _username !== 'undefined' && _username) ? String(_username).substring(0, 60) : 'owner'; } catch (e2) {}
+            var detail = '页' + rec.pages + ' · 发现' + rec.found + ' · 新增' + rec.saved + (rec.existed ? ' · 已存在' + rec.existed : '') + ' · MP4' + rec.mp4 + ' · 文案' + rec.text + ' · ' + asStatusLabel(rec.status) + ' · ' + rec.secs + 's';
+            if (typeof _adminPost === 'function') {
+                _adminPost(SUPABASE_URL + '/rest/v1/admin_log', { admin_user: who, action: 'author_scrape', target: String(rec.author).substring(0, 200), detail: detail.substring(0, 500) });
+            }
+        } catch (e) {}
+    }
+    function asLog(msg) {
+        var el = document.getElementById('asLog');
+        if (el) { el.innerHTML += esc(msg) + '<br>'; el.scrollTop = el.scrollHeight; }
+    }
+    function asBar(p) {
+        var w = document.getElementById('asBarWrap'), b = document.getElementById('asBar');
+        if (w) w.style.display = '';
+        if (b) b.style.width = Math.max(0, Math.min(100, p)) + '%';
+    }
+    async function startAuthorScrape() {
+        if (!(window.isOwner && window.isOwner())) {
+            if (window.showOwnerGate) { try { window.showOwnerGate('作者抓取', '仅站主可按作者抓取作品，其他用户请联系站主。'); } catch (e) {} }
+            return;
+        }
+        if (authorScrapeRunning) return;
+        var ai = document.getElementById('asAuthor');
+        var author = ai ? ai.value.trim() : '';
+        if (!author) { toast('请输入作者名'); if (ai) ai.focus(); return; }
+        var maxPages = 5;
+        try { maxPages = Math.max(1, Math.min(20, parseInt((document.getElementById('asPages') || {}).value, 10) || 5)); } catch (e) {}
+        authorScrapeRunning = true; authorScrapeCancel = false;
+        var st = document.getElementById('asStart'), cx = document.getElementById('asCancel');
+        if (st) st.disabled = true; if (cx) cx.disabled = false;
+        var logEl = document.getElementById('asLog'); if (logEl) logEl.innerHTML = '';
+        asBar(2);
+        var hds = _h();
+        var found = 0, saved = 0, existed = 0, resolved = 0, textFixed = 0;
+        var seenIds = {}, allFresh = [];
+        var t0 = Date.now(), scrapeStatus = 'done';
+        try {
+            var base = BASE + '/search.php?search=' + encodeURIComponent(author);
+            for (var pg = 1; pg <= maxPages; pg++) {
+                if (authorScrapeCancel) { asLog('已取消'); break; }
+                var url = base + '&page=' + pg;
+                asLog('抓取第 ' + pg + ' 页…');
+                var html = await fetchPage(url);
+                if (!html) { asLog('第 ' + pg + ' 页请求失败, 停止'); break; }
+                var vids = parseHTML(html, url, 'search');
+                var fresh = vids.filter(function (v) { return !seenIds[v.video_id]; });
+                if (!vids.length) { asLog('第 ' + pg + ' 页无数据, 停止'); break; }
+                if (!fresh.length) { asLog('第 ' + pg + ' 页全是重复, 停止'); break; }
+                fresh.forEach(function (v) { seenIds[v.video_id] = true; allFresh.push(v); });
+                found += fresh.length;
+                // 入库 (30 条一批; 本接口不支持 onConflict, 已存在的行会 409(不覆盖, 数据安全), 只计“已存在”)
+                var okN = 0, existN = 0, failN = 0;
+                for (var bi = 0; bi < fresh.length; bi += 30) {
+                    if (authorScrapeCancel) break;
+                    var batch = fresh.slice(bi, bi + 30).map(function (v) {
+                        return {
+                            video_id: v.video_id, title: (v.title || '').substring(0, 500),
+                            thumbnail_url: (v.thumbnail_url || '').substring(0, 1000), video_url: (v.url || '').substring(0, 1000),
+                            author: (v.author || author).substring(0, 200), monsnode_video_id: (v.monsnode_video_id || '').substring(0, 50),
+                            source_page: (v.source_page || '').substring(0, 500), source_section: 'search',
+                            scraped_at: new Date().toISOString(), updated_at: new Date().toISOString()
+                        };
+                    });
+                    try {
+                        var resp = await fetch(SUPABASE_URL + '/rest/v1/videos', {
+                            method: 'POST', headers: Object.assign({}, hds, { Prefer: 'resolution=merge-duplicates' }),
+                            body: JSON.stringify(batch)
+                        });
+                        if (resp.ok) okN += batch.length;
+                        else if (resp.status === 409) existN += batch.length;
+                        else failN += batch.length;
+                    } catch (e) { failN += batch.length; }
+                }
+                // 把本页新发现且尚未解析的行挂到重爬队列 (只加不减, 不碰已有状态)
+                try {
+                    var qIds = fresh.map(function (v) { return v.video_id; }).filter(function (id) { return /^[\w-]{1,80}$/.test(id || ''); });
+                    if (qIds.length) {
+                        await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=in.(' + qIds.join(',') + ')&has_mp4=is.false&needs_rescrape=is.false', {
+                            method: 'PATCH', headers: hds,
+                            body: JSON.stringify({ needs_rescrape: true })
+                        });
+                    }
+                } catch (e) {}
+                saved += okN; existed += existN;
+                asLog('第 ' + pg + ' 页: 发现 ' + fresh.length + ', 新增 ' + okN + (existN ? ', 已存在 ' + existN : '') + (failN ? ', 失败 ' + failN : ''));
+                asBar(Math.round(pg / maxPages * 70));
+                await new Promise(function (r) { setTimeout(r, 1500); });
+            }
+            // MP4 解析 + 文案回填 (沿用站内同一套, 只做前 20 个)
+            var todo = allFresh.filter(function (v) { return v.monsnode_video_id; }).slice(0, 20);
+            for (var ri = 0; ri < todo.length; ri++) {
+                if (authorScrapeCancel) { asLog('已取消'); break; }
+                var v = todo[ri];
+                try {
+                    var full = await resolveTwjnFull(v.monsnode_video_id);
+                    if (full.mp4) {
+                        try {
+                            var pr = await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
+                                method: 'PATCH', headers: hds,
+                                body: JSON.stringify({ duration: full.mp4, has_mp4: true, needs_rescrape: false })
+                            });
+                            if (pr.ok) resolved++;
+                        } catch (e) {}
+                    }
+                    var tx = await backfillTextForVideo({
+                        video_id: v.video_id, title: v.title || '', author: v.author || author,
+                        monsnode_video_id: v.monsnode_video_id, video_url: v.url || '',
+                        duration: full.mp4 || '', has_mp4: !!full.mp4
+                    }, hds, { mp4: full.mp4, tweetId: full.tweetId, fetched: true });
+                    if (tx === 'ok') textFixed++;
+                } catch (e) {}
+                asBar(70 + Math.round((ri + 1) / Math.max(1, todo.length) * 30));
+                if (ri % 2 === 1) await new Promise(function (r) { setTimeout(r, 600); });
+            }
+        } catch (e) { scrapeStatus = 'error'; asLog('出错: ' + ((e && e.message) || e)); }
+        asBar(100);
+        if (authorScrapeCancel) scrapeStatus = 'cancelled';
+        asLog('完成: 发现 ' + found + ' · 新增 ' + saved + ' · 已存在 ' + existed + ' · MP4 ' + resolved + ' · 补文案 ' + textFixed);
+        toast('作者抓取完成: 发现 ' + found + ' / 新增 ' + saved);
+        try {
+            asSaveHist({ t: new Date().toISOString(), author: author, pages: maxPages, found: found, saved: saved, existed: existed, mp4: resolved, text: textFixed, status: scrapeStatus, secs: Math.round((Date.now() - t0) / 1000) });
+        } catch (e) {}
+        try { asAudit({ author: author, pages: maxPages, found: found, saved: saved, existed: existed, mp4: resolved, text: textFixed, status: scrapeStatus, secs: Math.round((Date.now() - t0) / 1000) }); } catch (e) {}
+        try { asRenderHist(); } catch (e) {}
+        authorScrapeRunning = false;
+        if (st) st.disabled = false; if (cx) cx.disabled = true;
+        try { loadVids(true); } catch (e) {}
+    }
+
     // ============ Supabase API ============
     function _h(){var _lt='';try{_lt=localStorage.getItem('login_token')||sessionStorage.getItem('login_token')||'';}catch(e){}return{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json','x-login-token':_lt};}
 
@@ -11688,6 +11935,7 @@ function getLoginToken() {
         var rb = document.getElementById('resolveBtn'); if (rb) rb.style.display = owner ? '' : 'none';
         var ub = document.getElementById('refreshBtn'); if (ub) ub.style.display = owner ? '' : 'none';
         var tb = document.getElementById('backfillTextBtn'); if (tb) tb.style.display = owner ? '' : 'none';
+        var asb = document.getElementById('authorScrapeBtn'); if (asb) asb.style.display = owner ? '' : 'none';
         var ab = document.getElementById('aiBtn'); if (ab) ab.style.display = owner ? '' : 'none';
         var sec = document.getElementById('ownerCfgSection'); if (sec) sec.style.display = owner ? '' : 'none';
         var div = document.getElementById('ownerCfgDivider'); if (div) div.style.display = owner ? '' : 'none';
