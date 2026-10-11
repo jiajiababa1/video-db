@@ -3599,9 +3599,8 @@ self.onmessage = ({conn, data}) => {
                     exitCinema();
                 } else if(currentInlinePlayer){
                     closeInlinePlayer();
-                } else {
-                    goBackToGame();
                 }
+                // 裸按 ESC 不再回游戏 (误触代价太大, 想回点左上角 ← 游戏)
                 return;
             }
             // 搜索快捷键
@@ -8363,6 +8362,7 @@ self.onmessage = ({conn, data}) => {
         }
         // 渲染
         render(data, append);
+        try { bgQueueResolve(data); } catch (e) {}
         maybeOpenPendingVideo(); // 深链 #/video/xxx 在数据渲染后自动打开
         try { if (typeof av4UpdateBar === 'function') av4UpdateBar(); } catch (e) {}
         return data;
@@ -8734,9 +8734,66 @@ self.onmessage = ({conn, data}) => {
     var bgResolveTimer = null, bgResolveRunning = false;
     var bgStats = { ok: 0, fail: 0, rounds: 0 };
     // 后台自动解析已禁用 — 解析只在点击「🎬 解析」按钮时进行 (batchResolveMp4)
+    // ============ 后台静默解析 ============
+    // 背景: GitHub Actions 机房 IP 被 monsnode Cloudflare 拦截, 后端解析经常颗粒无收,
+    // 新视频全是"待重爬"。用户住宅 IP 直连正常, 因此在前端后台悄悄补解析。
+    // 策略: 每页最多 15 个, 间隔 4 秒, 切后台/息屏时暂停, 成功即写回数据库并更新卡片。
+    var _bgResolveQueue = [], _bgResolving = false, _bgResolvedThisLoad = 0;
+    var BG_RESOLVE_MAX_PER_LOAD = 15, BG_RESOLVE_INTERVAL = 4000;
     function startBackgroundResolver() {
-        // no-op: 刷新/进入视频页不再自动触发解析
-        return;
+        _bgResolvedThisLoad = 0;
+        bgPumpQueue();
+    }
+    function bgQueueResolve(videos) {
+        if (!document.body.classList.contains('dark-mode')) return;
+        if (!Array.isArray(videos)) return;
+        for (var i = 0; i < videos.length; i++) {
+            var v = videos[i];
+            if (!v || v.has_mp4 === true || v.needs_rescrape !== true) continue;
+            if (!v.monsnode_video_id && !v.video_id) continue;
+            var dup = false;
+            for (var j = 0; j < _bgResolveQueue.length; j++) {
+                if (_bgResolveQueue[j].video_id === v.video_id) { dup = true; break; }
+            }
+            if (!dup && (_bgResolveQueue.length + _bgResolvedThisLoad) < BG_RESOLVE_MAX_PER_LOAD) {
+                _bgResolveQueue.push(v);
+            }
+        }
+        bgPumpQueue();
+    }
+    function bgPumpQueue() {
+        if (_bgResolving || !_bgResolveQueue.length) return;
+        if (!document.body.classList.contains('dark-mode')) { _bgResolveQueue = []; return; }
+        if (document.hidden) { setTimeout(bgPumpQueue, 8000); return; }
+        if (_bgResolvedThisLoad >= BG_RESOLVE_MAX_PER_LOAD) return;
+        _bgResolving = true;
+        var v = _bgResolveQueue.shift();
+        resolveVideoSource(v).then(function (result) {
+            _bgResolving = false;
+            if (result && result.mp4Url && v.video_id) {
+                _bgResolvedThisLoad++;
+                v.has_mp4 = true; v.needs_rescrape = false; v.duration = result.mp4Url;
+                try {
+                    fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
+                        method: 'PATCH', headers: _h(),
+                        body: JSON.stringify({ duration: result.mp4Url, has_mp4: true, needs_rescrape: false })
+                    }).catch(function () {});
+                } catch (e) {}
+                try {
+                    var cardEl = document.querySelector('.vid-card[data-vid="' + CSS.escape(v.video_id) + '"]');
+                    if (cardEl) {
+                        cardEl.classList.remove('needs-rescrape', 'unplayable');
+                        cardEl.classList.add('has-mp4');
+                        var st = cardEl.querySelector('.vid-status');
+                        if (st) { st.textContent = '\u2705'; st.style.color = '#7a9a7a'; st.title = '可播放'; st.setAttribute('data-status', 'playable'); }
+                    }
+                } catch (e) {}
+            }
+            setTimeout(bgPumpQueue, BG_RESOLVE_INTERVAL);
+        }).catch(function () {
+            _bgResolving = false;
+            setTimeout(bgPumpQueue, BG_RESOLVE_INTERVAL);
+        });
     }
     function stopBackgroundResolver() {
         if (bgResolveTimer !== null) { clearInterval(bgResolveTimer); bgResolveTimer = null; }
@@ -15197,7 +15254,9 @@ function getLoginToken() {
                 else enterVideos();
                 break;
             default:
-                if (h) { if (document.body.classList.contains('dark-mode')) enterVideos(); }
+                // 空 hash 不再自动回游戏: 视频模式中各种操作(返回手势/replaceState等)
+                // 可能清空 hash, 误回游戏代价太大。只有明确 #/game 才回游戏。
+                if (document.body.classList.contains('dark-mode')) { if (h) enterVideos(); }
                 else enterGame();
         }
         refreshNav();

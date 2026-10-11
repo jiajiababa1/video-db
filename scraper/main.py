@@ -77,6 +77,7 @@ BASE_URL = "https://monsnode.com"
 # 若以上全部被拦, 仅 MP4 解析再兜底到 jina 阅读器 (r.jina.ai, 只能解析, 不能抓列表)。
 PROXY_ALLORIGINS = "https://api.allorigins.win/raw?url="
 PROXY_CODETABS = "https://api.codetabs.com/v1/proxy?quest="
+PROXY_CORSPROXY = "https://corsproxy.io/?url="
 PROXY_JINA = "https://r.jina.ai/"
 PROBE_MID = "26199120"  # 已知有效的 twjn id, 用于探测解析能力
 JINA_MIN_INTERVAL = float(os.environ.get("JINA_MIN_INTERVAL", "3.0") or 3.0)  # jina 免费额度约 20 次/分
@@ -235,7 +236,7 @@ class Fetcher:
     """多传输层抓取器。会自动探测哪一层能通过 Cloudflare, 分别记住
     「列表抓取层」(self.mode) 与「MP4 解析层」(self.resolve_mode), 二者可能不同。"""
 
-    RAW_TIERS = ("httpx", "curl", "allorigins", "codetabs")
+    RAW_TIERS = ("httpx", "curl", "allorigins", "codetabs", "corsproxy")
 
     def __init__(self):
         limits = httpx.Limits(max_connections=MP4_WORKERS + 8, max_keepalive_connections=MP4_WORKERS)
@@ -317,6 +318,8 @@ class Fetcher:
             return self._proxy_get(PROXY_ALLORIGINS, url)
         if tier == "codetabs":
             return self._proxy_get(PROXY_CODETABS, url)
+        if tier == "corsproxy":
+            return self._proxy_get(PROXY_CORSPROXY, url)
         return None
 
     # ---------- 探测 ----------
