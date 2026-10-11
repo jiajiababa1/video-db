@@ -5563,6 +5563,7 @@ self.onmessage = ({conn, data}) => {
         currentInlineMp4 = '';
         currentInlineOpenAt = 0;
         if (_luckyCleanup) _luckyCleanup();
+        if (typeof cleanupTmpRelatedCards === 'function') cleanupTmpRelatedCards();
         // 恢复滚动位置 (切换播放器时不恢复, 交给滚动定位逻辑)
         if (!skipRestore && _savedScrollY > 0) {
             var target = _savedScrollY;
@@ -9345,15 +9346,31 @@ self.onmessage = ({conn, data}) => {
     }
 
     // ============ 相关视频 (同作者) ============
+    // 修复:
+    //  1. 作者名含单引号/特殊字符时 encodeURIComponent 不编码 ' → PostgREST 查询语法错, 静默无结果。改用手动编码。
+    //  2. 缺 removed 过滤 → 已删除视频会出现在相关列表。加上 removed=not.is.true。
+    //  3. 切换视频时旧的相关列表残留 → 先清空再加载。
+    //  4. 无结果时留空 div 仍占 margin-top:8px → 无结果时 display:none。
+    function pgEq(val) {
+        // PostgREST eq. 值编码: encodeURIComponent + 补编码单引号/括号
+        return encodeURIComponent(val).replace(/'/g, '%27').replace(/\(/g, '%28').replace(/\)/g, '%29');
+    }
     async function loadRelatedVideos(v) {
         if (!v || !v.author || !currentInlinePlayer) return;
         var relatedEl = currentInlinePlayer.querySelector('.vpi-related');
         if (!relatedEl) return;
+        // 先清空, 避免旧视频的相关列表残留
+        relatedEl.innerHTML = '';
+        relatedEl.style.display = 'none';
+        // 绑定本次请求的视频, 防止快速切换视频时旧请求覆盖新内容
+        var reqVid = v.video_id;
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id,title,thumbnail_url&author=eq.' + encodeURIComponent(v.author) + '&video_id=neq.' + encodeURIComponent(v.video_id) + '&has_mp4=is.true&order=views.desc&limit=5', {headers:_h()});
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id,title,thumbnail_url&author=eq.' + pgEq(v.author) + '&video_id=neq.' + pgEq(v.video_id) + '&has_mp4=is.true&removed=not.is.true&order=views.desc&limit=5', {headers:_h()});
             if (!resp.ok) return;
             var data = await resp.json();
             if (!data.length) return;
+            // 若用户已切换到别的视频, 不写入旧结果
+            if (!currentInlinePlayer || currentInlinePlayer.querySelector('.vpi-related') !== relatedEl) return;
             var html = '<div class="vpi-related-label">🎬 同作者视频</div>';
             for (var i = 0; i < data.length; i++) {
                 var d = data[i];
@@ -9363,6 +9380,7 @@ self.onmessage = ({conn, data}) => {
                 html += '</div>';
             }
             relatedEl.innerHTML = html;
+            relatedEl.style.display = '';
         } catch(e) {}
     }
 
@@ -9371,7 +9389,7 @@ self.onmessage = ({conn, data}) => {
         if (!videoId) return;
         var v = null;
         try {
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(videoId) + '&select=*&limit=1', {headers:_h()});
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + pgEq(videoId) + '&select=*&limit=1', {headers:_h()});
             if (!resp.ok) { toast('❌ 加载失败'); return; }
             var data = await resp.json();
             if (!data.length) { toast('❌ 视频不存在'); return; }
@@ -9390,8 +9408,22 @@ self.onmessage = ({conn, data}) => {
             }
         }
         var tmpCard = card(v);
+        tmpCard.setAttribute('data-tmp-related', '1');
         $grid.insertBefore(tmpCard, $grid.firstChild);
         showInlinePlayer(v, tmpCard);
+    }
+
+    // 清理 playRelatedVideo 产生的临时卡片 (避免污染视频列表)
+    function cleanupTmpRelatedCards() {
+        try {
+            var tmps = document.querySelectorAll('[data-tmp-related="1"]');
+            for (var i = 0; i < tmps.length; i++) {
+                // 播放器正挂在它下面时不删
+                if (tmps[i].nextSibling && tmps[i].nextSibling.classList &&
+                    tmps[i].nextSibling.classList.contains('vid-player-inline')) continue;
+                tmps[i].remove();
+            }
+        } catch (e) {}
     }
 
     // ============ I'm Feeling Lucky (一键随机+自动播放) ============
