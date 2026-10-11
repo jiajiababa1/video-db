@@ -29,7 +29,11 @@ v10 的改进:
      分别记住「列表抓取层」和「MP4 解析层」(可不同); 解析再兜底到 jina 阅读器。
      全部被拦时提前结束并明确报错, 不再把几万条当成「解析失败」空转。用 `python main.py test`
      会逐层打印结果, 一眼看出哪层可用。
-  9. v13 深挖轮换: 归档只暴露最新 ~1600 条, 关键词搜不到无标题老视频。每轮 full
+  10. v14 发布页深挖: 新增「阶段3c」, 对本轮新抓视频的详情页 (/v<id>)
+     抓取底部相关视频 (同作者/相关, 同一套 listn 结构, 复用 parse_cards),
+     这是列表页/搜索之外的第三个发现维度, 全站覆盖补上最后一块。
+
+9. v13 深挖轮换: 归档只暴露最新 ~1600 条, 关键词搜不到无标题老视频。每轮 full
      在阶段3之后加"阶段3b", 按 2 小时轮换跑 A.作者深挖 (库里作者名 → search.php,
      同一作者更多作品) / B.ID 扫段 (twjn.php 扫已知 id 邻居, tweet 链接自带作者)。
      扫到已入库行走 upsert 合并 (空字段不覆盖), 无损。另有 `deep` 单跑模式。
@@ -827,6 +831,8 @@ def crawl_search(fetcher, deadline, seen):
 # 每轮 full 只跑其中一种 (按 2 小时轮换), 预算独立不挤占正常栏目。
 # 安全: 扫到已入库的行走 upsert_videos 合并 (空字段不覆盖, has_mp4 只升不降)。
 DEEP_BUDGET       = _env_int("DEEP_BUDGET", 300)    # 深挖总时间预算(秒)
+DETAIL_BUDGET     = _env_int("DETAIL_BUDGET", 180)   # 详情页相关视频预算(秒)
+DETAIL_MAX_PAGES  = _env_int("DETAIL_MAX_PAGES", 80) # 每轮最多抓多少个详情页
 DEEP_AUTHORS      = _env_int("DEEP_AUTHORS", 6)     # 作者深挖每轮几个作者
 DEEP_AUTHOR_PAGES = _env_int("DEEP_AUTHOR_PAGES", 2)  # 每个作者翻几页
 DEEP_SEEDS        = _env_int("DEEP_SEEDS", 3)       # ID 扫段每轮几个种子
@@ -1002,6 +1008,46 @@ def deep_crawl(fetcher, seen, budget, tag="深挖"):
             except Exception as e:
                 log(f"  [ID扫段] 种子 {s} 异常: {e}", "WARN")
     log(f"[{tag}] 完成: +{len(out)} 条 ({time.time()-t0:.0f}s)")
+    return out
+
+
+def crawl_detail_related(fetcher, seed_videos, budget, seen, tag="详情相关"):
+    """阶段3c: 详情页 (/v<id>, 即发布页) 相关视频深挖。
+    每个视频详情页底部都有一组同作者/相关视频, 与列表页是同一套
+    <div class="listn"> 服务端渲染结构, 直接复用 parse_cards。
+    这是「发布页」维度的发现机制: 列表页/搜索都抓不到的长尾相关视频,
+    在这里顺藤摸瓜。返回新视频记录列表 (调用方走正常 sb_save 入库)。
+    """
+    t0 = time.time()
+    deadline = t0 + budget
+    out = []
+    # 种子: 本轮新抓的视频, 打散后取, 避免只挖某几个作者
+    seeds = [v for v in (seed_videos or []) if str(v.get("video_id") or "").startswith("v")]
+    random.shuffle(seeds)
+    n = 0
+    for v in seeds:
+        if time.time() > deadline or n >= DETAIL_MAX_PAGES:
+            break
+        sid = str(v.get("video_id") or "")[1:]
+        if not sid.isdigit():
+            continue
+        try:
+            url = BASE_URL + "/v" + sid
+            h = fetcher.fetch(url, referer=BASE_URL + "/")
+            cards = parse_cards(h, url, "detail_related")
+            new = 0
+            for c in cards:
+                vid = c.get("video_id")
+                if vid and vid not in seen:
+                    seen.add(vid)
+                    out.append(c)
+                    new += 1
+            n += 1
+            if new:
+                log(f"  [{tag}] /v{sid} 发现 +{new} 条相关")
+        except Exception as e:
+            log(f"  [{tag}] /v{sid} 异常: {e}", "WARN")
+    log(f"[{tag}] 完成: 抓 {n} 个详情页, +{len(out)} 条 ({time.time()-t0:.0f}s)")
     return out
 
 
@@ -1498,6 +1544,16 @@ def scrape_all():
             log(f"  深挖合计 +{len(deep_v)} 条")
         except Exception as e:
             log(f"  深挖异常: {e}", "WARN")
+
+        log("阶段3c: 详情页相关视频 (发布页深挖)")
+        try:
+            det_v = crawl_detail_related(
+                fetcher, all_v,
+                min(DETAIL_BUDGET, max(60, deadline - time.time())), seen)
+            all_v.extend(det_v)
+            log(f"  详情相关合计 +{len(det_v)} 条")
+        except Exception as e:
+            log(f"  详情相关异常: {e}", "WARN")
 
         stats["videos_found"] = len(all_v)
         log(f"阶段4: 保存 {len(all_v)} 条到数据库 ...")
