@@ -7454,6 +7454,23 @@ self.onmessage = ({conn, data}) => {
         });
     }
 
+    // 📺 rou 一键更新 → 只触发 rou.video 独立站抓取 (scraper.yml mode=rou)
+    var lastRouTrigger = 0;
+    function triggerRouScrape(){
+        // 仅站主可用
+        if (!(window.isOwner && window.isOwner())) return;
+        var now = Date.now();
+        if (now - lastRouTrigger < COOLDOWN) {
+            toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastRouTrigger))/60000) + ' 分钟后可再触发');
+            return;
+        }
+        lastRouTrigger = now;
+        toast('📺 正在触发 rou.video 云端抓取...');
+        ghDispatch(GH_WORKFLOW, { mode: 'rou' }, 'rou').then(function(ok) {
+            if (!ok) lastRouTrigger = 0;
+        });
+    }
+
     // 📝 补文案按钮 → 只触发云端补文案工作流 (text-backfill.yml, 只回填标题+作者, 不抓新视频)
     var lastTextTrigger = 0;
     function triggerTextBackfill(limit) {
@@ -11320,6 +11337,7 @@ self.onmessage = ({conn, data}) => {
         area.innerHTML =
             '<p style="color:var(--vtext);margin-bottom:6px;">🔄 爬虫控制</p>' +
             '<button class="cheat-btn accent" onclick="triggerScraper(\'full\');closeAdminPanel();" style="width:100%;margin-bottom:6px;">🚀 云端抓取 (只爬视频+MP4, 不补文案)</button>' +
+            '<button class="cheat-btn accent" onclick="triggerRouScrape();closeAdminPanel();" style="width:100%;margin-bottom:6px;background:rgba(120,180,220,0.15);color:#7ab8dc;">📺 rou 一键更新 (只抓 rou.video 独立站)</button>' +
             '<button class="cheat-btn accent" onclick="triggerTextBackfill(120);closeAdminPanel();" style="width:100%;margin-bottom:6px;background:rgba(200,180,100,0.15);color:#c8a45c;">📝 云端补文案 (只回填标题+作者, 120条)</button>' +
             '<button class="cheat-btn" onclick="batchBackfillText();closeAdminPanel();" style="width:100%;margin-bottom:6px;">📝 本地补文案 (备用: 本机逐条跑, 断点续跑)</button>' +
             '<a href="https://github.com/jiajiababa1/video-db/actions/workflows/scraper.yml" target="_blank" style="text-decoration:none;">' +

@@ -1629,6 +1629,39 @@ def deep_only():
     return stats
 
 
+def rou_only():
+    """只跑 rou.video 独立站 (一键更新入口)"""
+    stats = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "videos_found": 0, "videos_saved": 0, "errors": [],
+    }
+    fetcher = Fetcher()
+    fetcher.probe()
+    seen = set()
+    try:
+        import rou as rou_mod
+    except Exception as e:
+        log(f"rou.py 加载失败: {e}", "ERROR")
+        stats["errors"].append(str(e))
+        return stats
+    try:
+        log("=" * 60)
+        log("rou.video 独立站抓取 (一键更新)")
+        rou_v = rou_mod.crawl_rou(fetcher, time.time() + rou_mod.ROU_TIME_BUDGET, seen, log)
+        stats["videos_found"] = len(rou_v)
+        log(f"保存 {len(rou_v)} 条到数据库 ...")
+        stats["videos_saved"] = sb_save(rou_v)
+    except Exception as e:
+        log(f"rou抓取异常: {e}", "ERROR")
+        stats["errors"].append(str(e))
+    try:
+        fetcher.close()
+    except Exception:
+        pass
+    return stats
+
+
+
 def resolve_only():
     stats = {
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -1743,6 +1776,17 @@ def main():
         stats = resolve_only()
         print("\n" + "=" * 60)
         print(f"  MP4 解析: {stats['mp4_resolved']} 个")
+        print("=" * 60)
+        return
+
+    if mode == "rou":
+        stats = rou_only()
+        print("\n" + "=" * 60)
+        print(f"  rou发现: {stats['videos_found']}   保存: {stats['videos_saved']}")
+        if stats["errors"]:
+            print(f"  错误 ({len(stats['errors'])}):")
+            for e in stats["errors"][:5]:
+                print(f"    - {e[:120]}")
         print("=" * 60)
         return
 
