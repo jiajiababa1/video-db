@@ -1,3 +1,7 @@
+# ---- 失败告警 (tech 包新增) ----
+# 需要仓库 Secrets: NTFY_TOPIC (ntfy 主题名, 如 video-db-alerts)
+# 可选: NTFY_SERVER (默认 https://ntfy.sh, 自建服务器可改)
+# 未设置 NTFY_TOPIC 时该 job 静默跳过, 不影响原有流程。
 name: Scraper (HTTP 抓取 + MP4 解析)
 
 # 说明:
@@ -85,3 +89,26 @@ jobs:
           RESOLVE_LIMIT: '60000'
           RESOLVE_BUDGET: '1200'
         run: python -u scraper/main.py resolve
+
+  # ============ 失败告警: 任一 job 失败时推送 ntfy ============
+  notify-failure:
+    needs: [scrape, resolve]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 推送 ntfy 失败告警
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NTFY_TOPIC:-}" ]; then echo "未配置 NTFY_TOPIC, 跳过告警"; exit 0; fi
+          SERVER="${NTFY_SERVER:-https://ntfy.sh}"
+          curl -sS -X POST "$SERVER/$NTFY_TOPIC" \
+            -H "Title: ❌ scraper 失败" \
+            -H "Priority: high" \
+            -H "Tags: warning,github-actions" \
+            -d "workflow: ${{ github.workflow }}
+          job 状态: scrape: ${{ needs.scrape.result }}, resolve: ${{ needs.resolve.result }}
+          触发: ${{ github.event_name }}
+          查看: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

@@ -71,7 +71,13 @@
 // TOTP 算法与服务器端完全一致 (09_lockdown.sql):
 //   code = ((win + s1) * P1 + win * s1*P2) % 10000,  win = floor(now/300)
 //   s1 = 密钥字符串 ASCII 码之和（此处自动计算，勿写死，防止改种子后不同步）
-var SEED = 'VIDEODB2026LOCKKEY';
+// 种子已做 XOR+Base64 混淆存放 (与 index.html 的 _vdbDec 同一约定), 防"右键查看源码"直接复制。
+// 注意: 纯前端页面无法真正隐藏密钥 —— 浏览器要算出密码就必须能解出它。
+// 真正的防线是服务端 verify_passcode 校验。如该种子曾经泄露, 请去 Supabase
+// system_config.totp_secret 轮换, 并同步更新此处混淆值。
+var _vdbSk=[86,105,100,68,98,75,101,121];
+function _vdbDec(b64){var s=atob(b64),o='';for(var i=0;i<s.length;i++)o+=String.fromCharCode(s.charCodeAt(i)^_vdbSk[i%_vdbSk.length]);return o;}
+var SEED = _vdbDec('ACAgAS0PJ0tmW1IILQguMhMw');
 var P1 = 7919;
 var P2 = 6271;
 var STEP = 300;     // 5 分钟

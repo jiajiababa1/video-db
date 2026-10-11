@@ -20,19 +20,41 @@
 </head>
 <body>
 <script type="text/x-server-plugin">
-  // 板块群聊实时中继: 任何客户端把事件发布到其群 topic, 服务器转发给该群所有在线订阅者。
-  // 客户端收到 "refresh" 即从 Supabase 重新拉取该群最新状态(消息/成员/禁言), 保证全球同步。
-  self.onmessage = ({conn, data}) => {
-    var m;
-    try { m = JSON.parse(data); } catch (e) { return; }
-    if (!m || typeof m !== "object" || typeof m.topic !== "string") return;
-    if (m.topic.length > 128) return;
-    if (m.subscribe) { try { conn.subscribe(m.topic); } catch (e) {} }
-    else if (m.unsubscribe) { try { conn.unsubscribe(m.topic); } catch (e) {} }
-    if (m.publish) {
-      try { pubsub.publish(m.topic, JSON.stringify({t:"refresh", topic:m.topic})); } catch (e) {}
+// ---- 可配置项 ----
+var ALLOWED_PREFIXES = ['bc:', 'site:'];  // 允许的 topic 前缀
+var MAX_TOPIC_LEN = 128;                   // topic 最大长度
+var PUB_LIMIT = 5;                         // 每个连接每窗口最大发布次数
+var PUB_WINDOW_MS = 10000;                 // 限流窗口: 10 秒
+
+function topicAllowed(t) {
+  if (typeof t !== 'string' || t.length === 0 || t.length > MAX_TOPIC_LEN) return false;
+  for (var i = 0; i < ALLOWED_PREFIXES.length; i++) {
+    if (t.indexOf(ALLOWED_PREFIXES[i]) === 0) return true;
+  }
+  return false;
+}
+
+self.onmessage = ({conn, data}) => {
+  var m;
+  try { m = JSON.parse(data); } catch (e) { return; }
+  if (!m || typeof m !== "object") return;
+  if (!topicAllowed(m.topic)) return;  // 前缀/长度校验 (订阅/退订/发布统一入口)
+
+  if (m.subscribe) { try { conn.subscribe(m.topic); } catch (e) {} }
+  else if (m.unsubscribe) { try { conn.unsubscribe(m.topic); } catch (e) {} }
+
+  if (m.publish) {
+    // 发布限流: 滑动窗口计数, 状态挂在连接对象上
+    var now = Date.now();
+    var win = conn._pubWin;
+    if (!win || (now - win.start) > PUB_WINDOW_MS) {
+      win = conn._pubWin = { start: now, count: 0 };
     }
-  };
+    if (win.count >= PUB_LIMIT) return;  // 超限直接丢弃
+    win.count++;
+    try { pubsub.publish(m.topic, JSON.stringify({t:"refresh", topic:m.topic})); } catch (e) {}
+  }
+};
 </script>
 <script>
 /* ============================================================
@@ -1548,6 +1570,144 @@
         #wxTip { position:fixed; left:8px; right:8px; top:calc(6px + env(safe-area-inset-top, 0px)); z-index:9998; display:flex; align-items:center; gap:8px; padding:9px 12px; border-radius:10px; background:rgba(200,164,92,0.95); color:#1a1808; font-size:12px; line-height:1.4; box-shadow:0 6px 20px rgba(0,0,0,0.45); text-align:left; }
         #wxTip b { font-family:var(--font-mono); }
         #wxTip button { margin-left:auto; flex-shrink:0; background:transparent; border:none; color:#1a1808; font-size:14px; cursor:pointer; padding:2px 4px; }
+        /* ============ 舒适度重排版 v20261012 ============
+           只做加法覆盖: 呼吸感 / 字阶 / 触控 / 对比度, 不动原有规则 */
+        :root { --vmuted:#8a857c; /* 深色底对比度提升, 长文更易读 */ }
+        html { scroll-padding-top:76px; }
+        body { line-height:1.6; }
+        /* 主内容呼吸感 */
+        .vid-main { max-width:1400px; margin:0 auto; padding:20px 24px 80px; }
+        .vid-grid { gap:24px; }
+        /* 卡片: 内边距与字阶 */
+        .vid-body { padding:16px 18px; gap:12px; }
+        .vid-title { font-size:14px; line-height:1.65; }
+        .vid-foot { font-size:12px; gap:12px; }
+        .vid-card:hover { transform:translateY(-4px); }
+        /* 头部: 搜索框更舒适 */
+        .vid-header { padding:calc(14px + env(safe-area-inset-top, 0px)) 24px 14px 24px; }
+        .vid-search input { padding:10px 14px 10px 38px; font-size:14px; }
+        .vid-header-top { gap:14px; }
+        /* 按钮触控下限 (移动端) */
+        @media (max-width:640px) {
+            .vid-main { padding:14px 14px 70px; }
+            .vid-grid { gap:14px; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
+            .vid-body { padding:12px 13px; gap:8px; }
+            .vid-title { font-size:13px; }
+            .vid-btn, .cheat-btn, .ai-btn { min-height:44px; }
+            .vid-header { padding-left:14px; padding-right:14px; }
+            .author-row { padding:14px 14px; gap:14px; }
+        }
+        /* 空状态更友好 (配合空状态优化) */
+        .vid-empty { text-align:center; padding:56px 20px; color:var(--vmuted); }
+        .vid-empty .vid-empty-cta {
+            display:inline-block; margin-top:16px; padding:10px 26px; border-radius:var(--radius-md);
+            border:1px solid var(--vprimary); color:var(--vprimary); font-size:13px; cursor:pointer;
+            background:rgba(200,164,92,0.08); transition:all 0.25s;
+        }
+        .vid-empty .vid-empty-cta:hover { background:rgba(200,164,92,0.16); }
+        /* 公告条 (功能包 announce.js, id=vdbAnnounceBar) */
+        #vdbAnnounceBar {
+            display:flex; align-items:center; gap:10px; margin:0 auto 14px; max-width:1400px;
+            padding:10px 16px; border-radius:var(--radius-md); font-size:12.5px; line-height:1.6;
+            background:rgba(200,164,92,0.08); border:1px solid rgba(200,164,92,0.25); color:var(--vtext);
+        }
+        #vdbAnnounceBar .ab-close { margin-left:auto; cursor:pointer; color:var(--vmuted); padding:4px 8px; }
+        /* 减少动态效果偏好 */
+        @media (prefers-reduced-motion: reduce) {
+            .vid-card, .vid-card:hover { transform:none; transition:none; }
+            .vid-card:hover .vid-thumb img { transform:none; }
+        }
+
+        /* ============ UX体验包样式 (新手引导/空状态/VIP提醒) ============ */
+/* ============================================================
+   video-db UX 体验包共用样式
+   用法: 把本文件内容追加到 index.html 主 <style> 末尾,
+   或单独建一个 <style> 块放在 </head> 之前。
+   全部使用站内已有的 CSS 变量, 并带 fallback, 独立加载也不崩。
+   ============================================================ */
+
+/* ---------- 新手引导 tour.js ---------- */
+/* 全屏遮罩 */
+.ux-tour-mask {
+    position: fixed; inset: 0; z-index: 10002;
+    background: rgba(0, 0, 0, 0.62);
+}
+/* 高亮框: 套在目标元素外面 */
+.ux-tour-hl {
+    position: fixed; z-index: 10003;
+    border: 2px solid var(--vprimary, #d4a94e);
+    border-radius: 10px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.62), 0 0 24px rgba(212, 169, 78, 0.45);
+    pointer-events: none;
+    transition: all 0.25s ease;
+}
+/* 提示卡片 */
+.ux-tour-tip {
+    position: fixed; z-index: 10004;
+    max-width: 300px; width: calc(100vw - 48px);
+    background: var(--vcard, #14141a);
+    border: 1px solid var(--vprimary, #d4a94e);
+    border-radius: 12px;
+    padding: 14px 16px;
+    color: var(--vtext, #e8e4d8);
+    font-size: 13px; line-height: 1.7;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+.ux-tour-tip b { color: var(--vprimary, #d4a94e); font-size: 14px; }
+.ux-tour-tip .ux-tour-step { font-size: 10px; color: var(--vmuted, #8a8a90); margin-bottom: 4px; }
+.ux-tour-tip .ux-tour-btns { display: flex; gap: 8px; margin-top: 12px; }
+.ux-tour-tip .ux-tour-btns button {
+    flex: 1; padding: 7px 0; border-radius: 8px; font-size: 12px; cursor: pointer;
+    border: 1px solid var(--vborder, #2a2a32);
+    background: transparent; color: var(--vtext, #e8e4d8);
+}
+.ux-tour-tip .ux-tour-btns button.ux-tour-next {
+    background: var(--vprimary, #d4a94e); border-color: var(--vprimary, #d4a94e);
+    color: #1a1808; font-weight: 700;
+}
+/* 右上角常驻"功能地图"按钮 */
+.ux-tour-mapbtn {
+    position: fixed; top: 48px; right: 12px; z-index: 10001;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(14, 14, 18, 0.85);
+    border: 1px solid rgba(212, 169, 78, 0.4);
+    color: var(--vprimary, #d4a94e);
+    font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+.ux-tour-mapbtn:active { transform: scale(0.92); }
+
+/* ---------- 空状态优化 empty.js ---------- */
+/* "去逛逛"按钮: 复用站内 .cheat-btn 风格, 只补间距 */
+.ux-empty-browse {
+    margin-top: 14px;
+    padding: 8px 22px !important;
+    font-size: 13px !important;
+}
+
+/* ---------- VIP 到期提醒 vip.js ---------- */
+/* 顶部提醒条 */
+.ux-vip-bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10005;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    padding: 10px 44px 10px 16px;
+    background: linear-gradient(90deg, rgba(120, 84, 20, 0.97), rgba(160, 116, 32, 0.97));
+    color: #fff8e8; font-size: 13px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+.ux-vip-bar .ux-vip-go {
+    padding: 5px 16px; border-radius: 20px; font-size: 12px; cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.16); color: #fff;
+    white-space: nowrap;
+}
+.ux-vip-bar .ux-vip-x {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    cursor: pointer; font-size: 15px; opacity: 0.75; padding: 4px 8px;
+}
+.ux-vip-bar .ux-vip-x:active { opacity: 1; }
+
 </style>
 <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
 
@@ -4250,7 +4410,8 @@
                     tl_key: S('tl_api_key'), // Twelve Labs 密钥: 按账号存云端, 推送时加密 (仅站主恢复使用)
                     ai_tags: aiTags,
                     vid_progress: prog,
-                    integrations: J('user_integrations', null)
+                    integrations: J('user_integrations', null),
+                    fav_folders: J('vid_fav_folders', null) // 收藏分组: 按账号存云端
                 };
             })()
         };
@@ -12051,10 +12212,7 @@ function getLoginToken() {
         var store = remember ? localStorage : sessionStorage;
         store.setItem('login_user', user);
         store.setItem('login_token', token);
-        store.setItem('login_time', Date.now().toString());
         try { localStorage.setItem('login_saved_user', user); } catch(e) {}
-        if (remember) localStorage.setItem('login_remember', '1');
-        else { localStorage.removeItem('login_remember'); sessionStorage.setItem('login_remember', '0'); }
     }
 
     function clearLoginSession() {
@@ -12837,7 +12995,7 @@ function getLoginToken() {
         }
         h += (currentRole() === 'guest' || currentRole() === 'vip' || currentRole() === 'svip') ?
             '<input id="vipCodeInput" placeholder="激活码 (联系站主获取)" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:12px;outline:none;margin-bottom:8px;font-family:var(--font-sans);">' +
-            '<button class="cheat-btn accent" style="width:100%;" onclick="redeemVip()">🎫 兑换激活码</button><div id="vipRedeemResult" style="font-size:11px;margin-top:8px;text-align:center;"></div></div>'
+            '<button class="cheat-btn accent" style="width:100%;" onclick="redeemVip(this)">🎫 兑换激活码</button><div id="vipRedeemResult" style="font-size:11px;margin-top:8px;text-align:center;"></div></div>'
             : '</div>';
         ov.innerHTML = h;
         document.body.appendChild(ov);
@@ -12862,17 +13020,20 @@ function getLoginToken() {
             '<div style="font-size:11px;color:var(--vmuted);margin-bottom:12px;line-height:1.7;">' +
             '1️⃣ 向站主获取 VIP 激活码<br>2️⃣ 粘贴到下方输入框<br>3️⃣ 点击兑换, 立即升级会员</div>' +
             '<input id="vipCodeInput" placeholder="在此粘贴激活码 (如 SVIP_XXXX)" value="' + esc((document.getElementById('vipCodeInput')||{}).value || '') + '" style="width:100%;padding:11px;border-radius:10px;border:1px solid var(--vprimary);background:var(--vbg);color:var(--vtext);font-size:14px;letter-spacing:1px;text-transform:uppercase;outline:none;margin-bottom:10px;font-family:monospace;">' +
-            '<button class="cheat-btn accent" style="width:100%;padding:11px;font-size:13px;" onclick="redeemVip()">🎫 立即兑换</button>' +
+            '<button class="cheat-btn accent" style="width:100%;padding:11px;font-size:13px;" onclick="redeemVip(this)">🎫 立即兑换</button>' +
             '<div id="vipRedeemResult" style="font-size:12px;margin-top:12px;text-align:center;min-height:16px;"></div>' +
             '</div>';
         document.body.appendChild(ov);
         ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
         ov.querySelector('#vipRedeemClose').addEventListener('click', function () { ov.remove(); });
-        setTimeout(function(){ var i=document.getElementById('vipCodeInput'); if(i) i.focus(); }, 60);
+        setTimeout(function(){ var i=ov.querySelector('#vipCodeInput'); if(i) i.focus(); }, 60);
     }
-    async function redeemVip() {
-        var code = (document.getElementById('vipCodeInput').value || '').trim().toUpperCase();
-        var r = document.getElementById('vipRedeemResult');
+    async function redeemVip(btn) {
+        // 作用域限定到触发按钮所在的弹窗, 避免 roleDialog 与 vipRedeemOv 同时存在时读错输入框
+        var root = (btn && btn.closest && (btn.closest('#vipRedeemOv') || btn.closest('#roleDialog'))) || document;
+        var codeEl = root.querySelector('#vipCodeInput');
+        var r = root.querySelector('#vipRedeemResult');
+        var code = ((codeEl && codeEl.value) || '').trim().toUpperCase();
         if (!_username) { r.innerHTML = '请先 <a href="javascript:showLoginDialog()" style="color:var(--vprimary);">登录账号</a> 后再兑换'; r.style.color = '#c08080'; return; }
         if (!code) { r.textContent = '请输入激活码'; r.style.color = '#c08080'; return; }
         r.textContent = '兑换中...'; r.style.color = 'var(--vmuted)';
@@ -13680,7 +13841,7 @@ function getLoginToken() {
             '<input id="bcEditA" value="' + esc((g && g.entry_answer) || '') + '" placeholder="正确答案"' + (isOwnerOf ? '' : ' disabled') + ' style="width:100%;padding:8px;margin-bottom:8px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);border-radius:8px;font-size:12px;"></div>' +
             (isOwnerOf ? '<button class="cheat-btn accent" style="width:100%;" onclick="bcSaveSettings(' + gid + ')">保存群设置</button>' : '') +
             '</div>';
-        ov.querySelector('#bcCard').innerHTML = ov.querySelector('#bcCard').innerHTML.replace('</div>', '<div id="bcManageBody">' + h + '</div>');
+        var _mb = ov.querySelector('#bcManageBody'); if (_mb) _mb.innerHTML = h;
     }
     async function bcSaveSettings(gid) {
         var patch = { name: (document.getElementById('bcEditName').value || '').trim(), avatar_url: (document.getElementById('bcEditAvatar').value || '').trim(), entry_mode: document.getElementById('bcEditMode').value };
@@ -14461,7 +14622,7 @@ function getLoginToken() {
         ov.innerHTML =
             '<div class="ai-box">' +
             '<div style="display:flex;align-items:center;gap:8px;">' +
-            '<h3 style="flex:1;">🔗 免费联动中心 <span style="font-size:10px;color:var(--vmuted);">全免费 · 手把手教程 · 按账号存</span></h3>' +
+            '<h3 style="flex:1;">🔗 免费联动中心 <span id="integCfgBadge" style="font-size:10px;color:var(--vprimary);border:1px solid rgba(200,164,92,0.3);border-radius:4px;padding:1px 6px;"></span> <span style="font-size:10px;color:var(--vmuted);">全免费 · 手把手教程 · 按账号存</span></h3>' +
             '<button class="ai-btn" id="integClose">✕</button></div>' +
             '<div class="ai-note" style="margin-top:6px;">前 4 个<b>连 key 都不要</b>; 后 5 个注册即送免费额度。每个卡片都有 <b>📖 手把手教程</b> (精确到按钮) 和 <b>🚀 直达</b> (一键跳到站内真实功能)。key 只存<b>本机 + 本人账号</b>, 未登录只存本机, 登录后自动同步。</div>' +
             '<div class="ai-sec"><h4>🎲 趣味玩法 (全免费, 打开即玩)</h4>' +
@@ -14499,7 +14660,6 @@ function getLoginToken() {
         ov.classList.add('on');
         renderPanel();
     }
-    function closePanel() { var p = document.getElementById('integOverlay'); if (p) p.classList.remove('on'); }
     function tutHtml(c) {
         var h = '<div id="tut_' + c.id + '" style="display:none;margin-top:6px;background:rgba(200,164,92,0.06);border:1px dashed rgba(200,164,92,0.35);border-radius:8px;padding:8px 10px;">';
         h += '<div style="font-size:11px;font-weight:700;margin-bottom:4px;">📖 手把手教程</div><ol style="font-size:10px;color:var(--vtext);line-height:1.8;margin:0;padding-left:18px;">';
@@ -15183,6 +15343,1102 @@ function getLoginToken() {
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
     route(''); // 默认 → 进入 2048 游戏
     if (W.updateSidebarLogin) W.updateSidebarLogin();
+})();
+
+</script>
+
+
+<script>
+/* ==== UX体验包: tour.js (新手引导) ==== */
+/* ============================================================
+   新手引导 tour.js (UX 体验包)
+   - 首次访问自动播放 4 步引导 (localStorage: vid_tour_done)
+   - 右上角常驻"🧭 功能地图"按钮, 可随时重看
+   - 每步用 CSS 选择器定位目标元素, 找不到/不可见时自动跳过
+   - 依赖: 无 (只用原生 DOM)。样式见 ux.css
+   - 插入位置: index.html 的 </body> 之前, 新 <script> 块
+   ============================================================ */
+(function () {
+    'use strict';
+
+    var DONE_KEY = 'vid_tour_done';
+
+    /* 引导步骤: sel 为 CSS 选择器, closest 可选(往上找一层容器) */
+    var STEPS = [
+        {
+            sel: '#searchInput',
+            title: '🔍 搜索与浏览',
+            desc: '在这里搜索标题、作者、关键词, 支持 @作者 #分区 -排除 等高级语法。下方视频流支持无限滚动, 点卡片直接内联播放。'
+        },
+        {
+            sel: '[data-section="favs"]',
+            title: '⭐ 收藏与云同步',
+            desc: '点 ★ 收藏视频, 登录后自动同步到云端, 换设备也不丢。历史记录、稍后看也在侧边栏这里。'
+        },
+        {
+            sel: '.sidebar-item[onclick="openBoardHub()"]',
+            title: '💬 群聊与好友',
+            desc: '板块群聊和好友私信都在这里, 可以加群讨论、加好友、收发消息, 全部实时同步。'
+        },
+        {
+            sel: '#integEntryBadge',
+            closest: 'button',
+            title: '🔗 联动中心',
+            desc: '免费 AI 工具、手把手教程、趣味玩法(运势/毒舌/头像生成)都在联动中心, key 只存本机和本人账号。'
+        }
+    ];
+
+    var cur = -1;
+    var maskEl = null, hlEl = null, tipEl = null, mapBtn = null;
+
+    /* 找目标元素: 不存在或不可见返回 null */
+    function findTarget(step) {
+        var el = null;
+        try { el = document.querySelector(step.sel); } catch (e) { el = null; }
+        if (!el) return null;
+        if (step.closest && el.closest) el = el.closest(step.closest) || el;
+        /* 不可见(侧边栏收起/移动端隐藏)则跳过 */
+        var r = el.getBoundingClientRect();
+        if (!r || (r.width === 0 && r.height === 0)) return null;
+        return el;
+    }
+
+    function buildUI() {
+        if (maskEl) return;
+        maskEl = document.createElement('div');
+        maskEl.className = 'ux-tour-mask';
+        maskEl.style.display = 'none';
+        hlEl = document.createElement('div');
+        hlEl.className = 'ux-tour-hl';
+        hlEl.style.display = 'none';
+        tipEl = document.createElement('div');
+        tipEl.className = 'ux-tour-tip';
+        tipEl.style.display = 'none';
+        document.body.appendChild(maskEl);
+        document.body.appendChild(hlEl);
+        document.body.appendChild(tipEl);
+        /* 点遮罩 = 跳过引导 */
+        maskEl.addEventListener('click', finish);
+        tipEl.addEventListener('click', onTipClick);
+    }
+
+    function hideAll() {
+        if (maskEl) maskEl.style.display = 'none';
+        if (hlEl) hlEl.style.display = 'none';
+        if (tipEl) tipEl.style.display = 'none';
+    }
+
+    function showStep(i) {
+        /* 越界或全部跳过 → 结束 */
+        if (i >= STEPS.length) { finish(); return; }
+        var el = findTarget(STEPS[i]);
+        if (!el) { showStep(i + 1); return; } /* 找不到元素, 自动跳过 */
+        cur = i;
+        var step = STEPS[i];
+        /* 先滚到可见, 再定位(等滚动稳定) */
+        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+        setTimeout(function () {
+            /* 二次确认: 滚动后仍可见才画 */
+            var r = el.getBoundingClientRect();
+            if (!r || (r.width === 0 && r.height === 0)) { showStep(i + 1); return; }
+            var pad = 6;
+            var t = Math.max(8, r.top - pad), l = Math.max(8, r.left - pad);
+            var w = Math.min(window.innerWidth - l - 8, r.width + pad * 2);
+            var h = r.height + pad * 2;
+            maskEl.style.display = 'block';
+            hlEl.style.display = 'block';
+            hlEl.style.top = t + 'px'; hlEl.style.left = l + 'px';
+            hlEl.style.width = w + 'px'; hlEl.style.height = h + 'px';
+            /* 提示卡: 优先放目标下方, 空间不够放上方 */
+            tipEl.innerHTML =
+                '<div class="ux-tour-step">第 ' + (i + 1) + ' / ' + STEPS.length + ' 步</div>' +
+                '<b>' + step.title + '</b><div>' + step.desc + '</div>' +
+                '<div class="ux-tour-btns">' +
+                (i > 0 ? '<button data-act="prev">← 上一步</button>' : '') +
+                '<button data-act="skip">跳过</button>' +
+                '<button data-act="next" class="ux-tour-next">' + (i === STEPS.length - 1 ? '完成 ✓' : '下一步 →') + '</button>' +
+                '</div>';
+            tipEl.style.display = 'block';
+            var tipH = tipEl.offsetHeight || 160;
+            var tipW = tipEl.offsetWidth || 300;
+            var tipTop = t + h + 12;
+            if (tipTop + tipH > window.innerHeight - 8) tipTop = Math.max(8, t - tipH - 12);
+            tipEl.style.top = tipTop + 'px';
+            tipEl.style.left = Math.max(8, Math.min(window.innerWidth - tipW - 8, l)) + 'px';
+        }, 380);
+    }
+
+    function onTipClick(e) {
+        var b = e.target && e.target.getAttribute ? e.target.getAttribute('data-act') : null;
+        if (!b) return;
+        if (b === 'next') showStep(cur + 1);
+        else if (b === 'prev') showStep(cur - 1);
+        else finish();
+    }
+
+    function start() {
+        buildUI();
+        showStep(0);
+    }
+
+    function finish() {
+        hideAll();
+        try { localStorage.setItem(DONE_KEY, '1'); } catch (e) {}
+        cur = -1;
+    }
+
+    /* 常驻"功能地图"按钮 */
+    function buildMapBtn() {
+        if (mapBtn || document.getElementById('uxTourMapBtn')) return;
+        mapBtn = document.createElement('button');
+        mapBtn.id = 'uxTourMapBtn';
+        mapBtn.className = 'ux-tour-mapbtn';
+        mapBtn.textContent = '🧭';
+        mapBtn.title = '功能地图: 重看新手引导';
+        mapBtn.setAttribute('aria-label', '功能地图');
+        mapBtn.addEventListener('click', function () {
+            try { localStorage.removeItem(DONE_KEY); } catch (e) {}
+            start();
+        });
+        document.body.appendChild(mapBtn);
+    }
+
+    function init() {
+        buildMapBtn();
+        var done = false;
+        try { done = !!localStorage.getItem(DONE_KEY); } catch (e) {}
+        if (!done) {
+            /* 页面稳定后再弹, 避免跟开屏/登录框打架 */
+            setTimeout(start, 1500);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    /* 对外暴露: 手动触发引导 */
+    window.UXTour = { start: start };
+})();
+
+</script>
+<script>
+/* ==== UX体验包: empty.js (空状态优化) ==== */
+/* ============================================================
+   空状态优化 empty.js (UX 体验包)
+   - 收藏 / 历史 / 稍后看 为空时, 网格会渲染 .empty-state
+     (render() 在 vids 为空时输出, 见 index.html 约 8076 行)
+   - 本文件监听 #videoGrid, 在这三个分区的空状态下追加
+     "🎬 去逛逛发现视频"按钮, 点击切回视频浏览
+   - 跳转优先级: 首页 tab 点击(能正确重置分区) →
+     enterVideoMode() → location.hash='#/videos'
+     (路由真实写法是 '#/videos', 见 index.html route() 的 case 'videos')
+   - 依赖: 无 (只用原生 DOM + 站内 .cheat-btn 样式)。样式见 ux.css
+   - 插入位置: index.html 的 </body> 之前, 新 <script> 块
+   ============================================================ */
+(function () {
+    'use strict';
+
+    /* 需要加按钮的分区 */
+    var TARGET_SECTIONS = { favs: 1, history: 1, watchlater: 1 };
+    var SECTION_NAMES = { favs: '收藏', history: '历史记录', watchlater: '稍后看' };
+
+    /* 当前分区: 监听侧边栏/tab 的 data-section 点击来跟踪
+       (activeSection 是脚本内部变量, 外部拿不到, 用点击跟踪最稳) */
+    var curSection = '';
+
+    document.addEventListener('click', function (e) {
+        var t = e.target;
+        if (t && t.closest) {
+            var sec = t.closest('[data-section]');
+            if (sec) curSection = sec.getAttribute('data-section') || '';
+        }
+    }, true);
+
+    /* 切回视频浏览 */
+    function goBrowse() {
+        try {
+            /* 优先点首页 tab: 走站内 selectSidebar, 分区状态重置最干净 */
+            var homeTab = document.querySelector('#vidTabs .vid-tab[data-section="home"]');
+            if (homeTab) { homeTab.click(); return; }
+            if (typeof selectSidebar === 'function') { selectSidebar('home', '🏠 首页推荐'); return; }
+        } catch (e) {}
+        try {
+            if (typeof enterVideoMode === 'function') { enterVideoMode(); return; }
+        } catch (e) {}
+        /* 兜底: hash 路由 (真实路由是 '#/videos', 不是 '#videos') */
+        location.hash = '#/videos';
+    }
+
+    /* 给空状态盒子加按钮 */
+    function enhance(box) {
+        if (!TARGET_SECTIONS[curSection]) return;
+        if (box.querySelector('.ux-empty-browse')) return; /* 已加过 */
+        var btn = document.createElement('button');
+        btn.className = 'cheat-btn accent ux-empty-browse';
+        btn.type = 'button';
+        btn.textContent = '🎬 去逛逛发现视频';
+        btn.addEventListener('click', goBrowse);
+        box.appendChild(btn);
+    }
+
+    function scan() {
+        var grid = document.getElementById('videoGrid');
+        if (!grid) return;
+        var boxes = grid.querySelectorAll('.empty-state');
+        for (var i = 0; i < boxes.length; i++) enhance(boxes[i]);
+    }
+
+    function init() {
+        scan();
+        var grid = document.getElementById('videoGrid');
+        if (grid && typeof MutationObserver === 'function') {
+            /* 网格内容变化(翻页/筛选/分区切换)时重新扫描 */
+            new MutationObserver(function () { scan(); }).observe(grid, {
+                childList: true,
+                subtree: true
+            });
+        }
+        /* 双保险: Observer 在某些环境下可能被拦截, 定时兜底 */
+        setInterval(scan, 2000);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    /* 对外暴露: 供调试 */
+    window.UXEmpty = { scan: scan, goBrowse: goBrowse };
+})();
+
+</script>
+<script>
+/* ==== UX体验包: vip.js (VIP到期提醒) ==== */
+/* ============================================================
+   VIP 到期提醒 vip.js (UX 体验包)
+   - 登录后检查会员到期时间, 7 天内到期且 24 小时内没提醒过
+     (localStorage: vid_vip_remind_ts) 时, 顶部显示可关闭提醒条
+   - 点击"去会员中心"打开 showRoleDialog()
+     (注意: 源文件里真实函数名是 showRoleDialog, 不是 openRoleDialog)
+   - 到期时间取 W._vipExpiresAt (null = 永久会员/非会员, 不提醒;
+     已过期的会被站内 checkVipExpiry 逻辑置空, 这里再双重校验)
+   - 登录态取全局 _loggedIn (index.html 9548 行 var _loggedIn, 顶层声明即全局)
+   - 依赖: 无。样式见 ux.css
+   - 插入位置: index.html 的 </body> 之前, 新 <script> 块
+   ============================================================ */
+(function () {
+    'use strict';
+
+    var REMIND_KEY = 'vid_vip_remind_ts';
+    var DAY = 86400000;
+    var WARN_DAYS = 7;
+
+    function isLoggedIn() {
+        try {
+            return typeof window._loggedIn !== 'undefined' && !!window._loggedIn;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /* 到期时间戳(毫秒), null 表示永久/非会员/已过期 → 不提醒 */
+    function getExpireMs() {
+        try {
+            if (typeof W === 'undefined' || !W) return null;
+            var exp = W._vipExpiresAt;
+            if (!exp) return null;
+            var ms = new Date(exp).getTime();
+            if (isNaN(ms) || ms <= Date.now()) return null;
+            return ms;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function openMemberCenter() {
+        try {
+            if (typeof showRoleDialog === 'function') { showRoleDialog(); return; }
+            if (window.W && typeof window.W.showRoleDialog === 'function') { window.W.showRoleDialog(); return; }
+        } catch (e) {}
+        try {
+            if (typeof toast === 'function') toast('请在侧边栏打开「会员中心」');
+        } catch (e) {}
+    }
+
+    function showBar(leftMs) {
+        if (document.getElementById('uxVipBar')) return; /* 已显示 */
+        var d = Math.floor(leftMs / DAY);
+        var txt = d > 0 ? ('你的会员还有 ' + d + ' 天到期') : '你的会员今天到期';
+        var bar = document.createElement('div');
+        bar.id = 'uxVipBar';
+        bar.className = 'ux-vip-bar';
+        /* 文案固定, 不含用户数据, 无需 esc */
+        bar.innerHTML =
+            '<span>⏰ ' + txt + ', 及时续费不中断权益</span>' +
+            '<button type="button" class="ux-vip-go">去会员中心</button>' +
+            '<span class="ux-vip-x" title="关闭">✕</span>';
+        bar.querySelector('.ux-vip-go').addEventListener('click', openMemberCenter);
+        bar.querySelector('.ux-vip-x').addEventListener('click', function () {
+            if (bar.parentNode) bar.parentNode.removeChild(bar);
+        });
+        /* 插到 body 最前面, 盖住页面顶部 */
+        if (document.body.firstChild) {
+            document.body.insertBefore(bar, document.body.firstChild);
+        } else {
+            document.body.appendChild(bar);
+        }
+        /* 记下这次提醒时间, 24 小时内不再打扰 */
+        try { localStorage.setItem(REMIND_KEY, String(Date.now())); } catch (e) {}
+    }
+
+    function check() {
+        if (!isLoggedIn()) return;
+        var expMs = getExpireMs();
+        if (!expMs) return;
+        if (expMs - Date.now() > WARN_DAYS * DAY) return; /* 7 天外不提醒 */
+        var last = 0;
+        try { last = parseInt(localStorage.getItem(REMIND_KEY) || '0', 10) || 0; } catch (e) {}
+        if (Date.now() - last < DAY) return; /* 24 小时内提醒过 */
+        showBar(expMs - Date.now());
+    }
+
+    function init() {
+        check();
+        /* 登录是异步的(恢复会话/扫码), 每 5 分钟复查一次即可, 不打扰 */
+        setInterval(check, 5 * 60 * 1000);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    /* 对外暴露: 手动触发检查 */
+    window.UXVip = { check: check };
+})();
+
+</script>
+
+<script>
+/* ==== 功能包: comments.js (视频评论区) ==== */
+/* ============================================================
+ * vdb-packs/feat/comments.js — 视频评论区
+ * 挂载点: 包裹全局 showInlinePlayer, 播放器插入 DOM 后在其下方追加评论区
+ * 依赖: toast, esc, escUrl, _get, _post, _delete, SUPABASE_URL,
+ *       _username, _loggedIn, W (isOwner), fmtAgo, showLoginDialog,
+ *       currentInlinePlayer, showInlinePlayer (全部为站内现有全局)
+ * 数据库: public.video_comments (见同目录 comments.sql);
+ *         表不存在时 _get 返回 null, 显示"待站主开启"并优雅降级
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var LS_KEY = 'video_comments'; // 仅用于表名拼接, 实际走 REST
+
+  // ---------- 小工具 ----------
+  function $(id) { return document.getElementById(id); }
+  function isAdmin() { return !!(window.W && window.W.isOwner && window.W.isOwner()); }
+  function ago(iso) {
+    try {
+      var t = new Date(iso).getTime();
+      if (typeof fmtAgo === 'function') return fmtAgo(t) || '';
+      return iso ? String(iso).slice(0, 16).replace('T', ' ') : '';
+    } catch (e) { return ''; }
+  }
+
+  // ---------- 数据层 ----------
+  function tableMissing() { return VdbComments._noTable === true; }
+
+  async function fetchComments(videoId) {
+    var rows = await _get(
+      SUPABASE_URL + '/rest/v1/video_comments?video_id=eq.' + escUrl(videoId) +
+      '&order=created_at.desc&limit=100'
+    );
+    if (rows === null) { VdbComments._noTable = true; return null; } // 表不存在或网络错误 → 降级
+    return rows || [];
+  }
+
+  async function postComment(videoId, content) {
+    return _post(SUPABASE_URL + '/rest/v1/video_comments', {
+      video_id: videoId,
+      username: _username,
+      content: content
+    });
+  }
+
+  async function deleteComment(id) {
+    return _delete(SUPABASE_URL + '/rest/v1/video_comments?id=eq.' + encodeURIComponent(id));
+  }
+
+  // ---------- 渲染 ----------
+  function renderList(box, rows, videoId) {
+    if (tableMissing() || rows === null) {
+      box.innerHTML = '<div style="padding:14px;color:var(--vmuted);font-size:12px;text-align:center;">💬 评论区待站主开启（数据库表未创建）</div>';
+      return;
+    }
+    if (!rows.length) {
+      box.innerHTML = '<div style="padding:14px;color:var(--vmuted);font-size:12px;text-align:center;">还没有评论，来抢沙发吧 🛋</div>';
+      return;
+    }
+    var h = '';
+    for (var i = 0; i < rows.length; i++) {
+      var c = rows[i];
+      var mine = _loggedIn && c.username === _username;
+      var canDel = mine || isAdmin();
+      h += '<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:12px;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">' +
+        '<span style="color:var(--vprimary);font-weight:700;">@' + esc(c.username || '?') + '</span>' +
+        '<span style="color:var(--vmuted);font-size:10px;">' + esc(ago(c.created_at)) + '</span>' +
+        (canDel ? '<button data-vdb-del="' + c.id + '" style="margin-left:auto;background:none;border:none;color:var(--vmuted);cursor:pointer;font-size:11px;" title="删除评论">🗑</button>' : '') +
+        '</div>' +
+        '<div style="color:var(--vtext);line-height:1.7;word-break:break-word;">' + esc(c.content || '') + '</div>' +
+        '</div>';
+    }
+    box.innerHTML = h;
+    // 绑定删除按钮 (事件委托, 避免 inline onclick 拼 id)
+    var btns = box.querySelectorAll('[data-vdb-del]');
+    for (var j = 0; j < btns.length; j++) {
+      (function (btn) {
+        btn.addEventListener('click', async function () {
+          if (!window.confirm('删除这条评论？')) return;
+          var ok = await deleteComment(btn.getAttribute('data-vdb-del'));
+          if (ok) { toast('已删除'); refresh(videoId); }
+          else toast('❌ 删除失败');
+        });
+      })(btns[j]);
+    }
+  }
+
+  function renderBox(sec, videoId) {
+    var box = sec.querySelector('[data-vdb-list]');
+    var form = sec.querySelector('[data-vdb-form]');
+    if (!_loggedIn) {
+      form.innerHTML = '<button data-vdb-login style="width:100%;padding:9px;border-radius:10px;border:1px solid var(--vborder);background:transparent;color:var(--vprimary);cursor:pointer;font-size:12px;">请先登录后再参与评论</button>';
+      form.querySelector('[data-vdb-login]').addEventListener('click', function () {
+        if (typeof showLoginDialog === 'function') showLoginDialog();
+      });
+    } else {
+      form.innerHTML =
+        '<div style="display:flex;gap:8px;">' +
+        '<input data-vdb-input placeholder="友善评论，理性讨论…" maxlength="500" style="flex:1;padding:9px 12px;border-radius:10px;border:1px solid var(--vborder);background:var(--vbg);color:var(--vtext);font-size:12px;outline:none;">' +
+        '<button data-vdb-send style="padding:9px 18px;border-radius:10px;border:none;background:var(--vprimary);color:#1a1808;cursor:pointer;font-size:12px;font-weight:700;">发表</button>' +
+        '</div>';
+      var input = form.querySelector('[data-vdb-input]');
+      var send = async function () {
+        var txt = (input.value || '').trim();
+        if (!txt) { toast('请输入评论内容'); return; }
+        if (txt.length > 500) { toast('评论太长了（500字以内）'); return; }
+        input.disabled = true;
+        var ok = await postComment(videoId, txt);
+        input.disabled = false;
+        if (ok) { input.value = ''; toast('✅ 评论已发表'); refresh(videoId); }
+        else toast(tableMissing() ? '💬 评论区待站主开启' : '❌ 发表失败，请稍后重试');
+      };
+      form.querySelector('[data-vdb-send]').addEventListener('click', send);
+      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') send(); });
+    }
+  }
+
+  async function refresh(videoId) {
+    var sec = $('vdbComments');
+    if (!sec) return;
+    var box = sec.querySelector('[data-vdb-list]');
+    box.innerHTML = '<div style="padding:14px;color:var(--vmuted);font-size:12px;text-align:center;">加载评论中…</div>';
+    var rows = await fetchComments(videoId);
+    // 播放器可能已被关闭
+    if (!$('vdbComments')) return;
+    renderList(box, rows, videoId);
+  }
+
+  // ---------- 挂载 ----------
+  function mount(v) {
+    try {
+      var player = window.currentInlinePlayer;
+      if (!player || !player.isConnected || !v || !v.video_id) return;
+      var old = $('vdbComments');
+      if (old) old.remove();
+      var sec = document.createElement('div');
+      sec.id = 'vdbComments';
+      sec.style.cssText = 'border-top:1px solid var(--vborder);margin-top:10px;padding:12px 14px;';
+      sec.innerHTML =
+        '<div style="font-size:13px;font-weight:700;color:var(--vtext);margin-bottom:8px;">💬 评论 <span data-vdb-count style="color:var(--vmuted);font-weight:400;font-size:11px;"></span></div>' +
+        '<div data-vdb-form style="margin-bottom:10px;"></div>' +
+        '<div data-vdb-list></div>';
+      player.appendChild(sec);
+      renderBox(sec, v.video_id);
+      refresh(v.video_id).then(function () {
+        var box = sec.querySelector('[data-vdb-list]');
+        if (box && !tableMissing()) {
+          var n = box.querySelectorAll('[data-vdb-del]').length;
+          var cnt = sec.querySelector('[data-vdb-count]');
+          // 用实际行数更新计数 (删除按钮数 ≤ 评论数, 粗略展示改为直接数行)
+          var rows = box.children.length;
+          if (cnt) cnt.textContent = rows ? '（' + rows + '）' : '';
+        }
+      });
+    } catch (e) { /* 评论区异常不影响播放器 */ }
+  }
+
+  // 包裹全局 showInlinePlayer: 原逻辑不变, 成功后挂载评论区
+  function install() {
+    if (typeof showInlinePlayer !== 'function') return; // 降级: 找不到播放器函数则不启用
+    if (showInlinePlayer._vdbWrapped) return;
+    var orig = showInlinePlayer;
+    var wrapped = function (v, cardEl) {
+      orig(v, cardEl);
+      // 原函数在"收起"等分支会提前 return, 此时 currentInlinePlayer 为空 → mount 自行退出
+      mount(v);
+    };
+    wrapped._vdbWrapped = true;
+    // function 声明是可重写的顶层绑定
+    showInlinePlayer = wrapped;
+  }
+
+  window.VdbComments = {
+    mount: mount,
+    refresh: refresh,
+    install: install,
+    _noTable: false
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', install);
+  } else {
+    install();
+  }
+})();
+
+</script>
+<script>
+/* ==== 功能包: favfolders.js (收藏分组) ==== */
+/* ============================================================
+ * vdb-packs/feat/favfolders.js — 收藏分组
+ * 数据: localStorage vid_fav_folders = { 分组名: [video_id, ...] }
+ * 云同步: 写后调用全局 cloudPushConfig() (若存在);
+ *         需在站内 _curConfig() 的 ext 返回对象里加一行
+ *         fav_folders: J('vid_fav_folders', null), 否则不同步 (见 manifest)
+ * 依赖: toast, esc, getFavorites, toggleFavorite, cloudPushConfig(可选),
+ *       activeSection (站内全局)
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var LS = 'vid_fav_folders';
+  var ALL = '__all__';
+  var cur = ALL; // 当前选中的分组
+
+  function load() {
+    try {
+      var o = JSON.parse(localStorage.getItem(LS) || '{}');
+      return (o && typeof o === 'object') ? o : {};
+    } catch (e) { return {}; }
+  }
+  function save(o) {
+    try { localStorage.setItem(LS, JSON.stringify(o)); } catch (e) {}
+    // 走现有配置同步 (需配合 _curConfig 一行改动, 见 manifest)
+    try { if (typeof cloudPushConfig === 'function') cloudPushConfig(); } catch (e) {}
+  }
+  function names() { return Object.keys(load()); }
+  function inFolder(vid, name) {
+    var o = load();
+    return !!(o[name] && o[name].indexOf(vid) >= 0);
+  }
+
+  // ---------- 分组条 UI ----------
+  function barEl() { return document.getElementById('vdbFolderBar'); }
+
+  function renderBar() {
+    var grid = document.getElementById('videoGrid');
+    if (!grid) return;
+    var show = (typeof activeSection !== 'undefined' && activeSection === 'favs');
+    var bar = barEl();
+    if (!show) { if (bar) bar.style.display = 'none'; cur = ALL; return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'vdbFolderBar';
+      grid.parentNode.insertBefore(bar, grid);
+    }
+    bar.style.display = 'flex';
+    bar.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 auto 12px;max-width:1400px;padding:0 4px;';
+    var ns = names();
+    var h = '<span style="font-size:12px;color:var(--vmuted);">📁 分组:</span>';
+    h += chip(ALL, '全部', cur === ALL);
+    for (var i = 0; i < ns.length; i++) {
+      var n = ns[i], c = load()[n].length;
+      h += chip(n, n + ' (' + c + ')', cur === n);
+    }
+    h += '<button data-vdb-new style="font-size:11px;padding:4px 12px;border-radius:20px;border:1px dashed var(--vprimary);background:transparent;color:var(--vprimary);cursor:pointer;">＋ 新建分组</button>';
+    if (cur !== ALL) {
+      h += '<button data-vdb-rename style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--vborder);background:transparent;color:var(--vmuted);cursor:pointer;">✎ 重命名</button>';
+      h += '<button data-vdb-del style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--vborder);background:transparent;color:#c08080;cursor:pointer;">🗑 删除分组</button>';
+    }
+    bar.innerHTML = h;
+
+    var chips = bar.querySelectorAll('[data-vdb-chip]');
+    for (var j = 0; j < chips.length; j++) {
+      (function (el) {
+        el.addEventListener('click', function () {
+          cur = el.getAttribute('data-vdb-chip');
+          renderBar();
+          applyFilter();
+        });
+      })(chips[j]);
+    }
+    bar.querySelector('[data-vdb-new]').addEventListener('click', newFolder);
+    var rn = bar.querySelector('[data-vdb-rename]');
+    if (rn) rn.addEventListener('click', renameFolder);
+    var dl = bar.querySelector('[data-vdb-del]');
+    if (dl) dl.addEventListener('click', deleteFolder);
+  }
+
+  function chip(name, label, on) {
+    return '<button data-vdb-chip="' + esc(name) + '" style="font-size:11px;padding:4px 12px;border-radius:20px;cursor:pointer;border:1px solid ' +
+      (on ? 'var(--vprimary)' : 'var(--vborder)') + ';background:' + (on ? 'rgba(200,164,92,0.15)' : 'transparent') +
+      ';color:' + (on ? 'var(--vprimary)' : 'var(--vtext)') + ';">' + esc(label) + '</button>';
+  }
+
+  function newFolder() {
+    var name = window.prompt('新建分组名称（20字以内）:');
+    if (name === null) return;
+    name = (name || '').trim().slice(0, 20);
+    if (!name) { toast('分组名不能为空'); return; }
+    var o = load();
+    if (o[name]) { toast('分组已存在'); return; }
+    o[name] = [];
+    save(o);
+    cur = name;
+    renderBar();
+    toast('✅ 已创建分组「' + name + '」');
+  }
+
+  function renameFolder() {
+    if (cur === ALL) return;
+    var name = window.prompt('重命名分组「' + cur + '」为:', cur);
+    if (name === null) return;
+    name = (name || '').trim().slice(0, 20);
+    if (!name) { toast('分组名不能为空'); return; }
+    var o = load();
+    if (name !== cur && o[name]) { toast('该名称已存在'); return; }
+    o[name] = o[cur];
+    if (name !== cur) delete o[cur];
+    save(o);
+    cur = name;
+    renderBar();
+    toast('✅ 已重命名');
+  }
+
+  function deleteFolder() {
+    if (cur === ALL) return;
+    if (!window.confirm('删除分组「' + cur + '」？（组内视频仍保留在收藏中）')) return;
+    var o = load();
+    delete o[cur];
+    save(o);
+    cur = ALL;
+    renderBar();
+    applyFilter();
+    toast('已删除分组');
+  }
+
+  // ---------- 卡片过滤 ----------
+  function applyFilter() {
+    var grid = document.getElementById('videoGrid');
+    if (!grid) return;
+    if (typeof activeSection === 'undefined' || activeSection !== 'favs' || cur === ALL) {
+      // 恢复全部显示
+      var all = grid.querySelectorAll('.vid-card');
+      for (var i = 0; i < all.length; i++) all[i].style.display = '';
+      return;
+    }
+    var o = load(), list = o[cur] || [];
+    var cards = grid.querySelectorAll('.vid-card');
+    for (var j = 0; j < cards.length; j++) {
+      var vid = cards[j].getAttribute('data-vid');
+      cards[j].style.display = (list.indexOf(vid) >= 0) ? '' : 'none';
+    }
+  }
+
+  // ---------- 卡片上的"移入分组"按钮 ----------
+  function injectCardButtons() {
+    if (typeof activeSection === 'undefined' || activeSection !== 'favs') return;
+    var grid = document.getElementById('videoGrid');
+    if (!grid) return;
+    var cards = grid.querySelectorAll('.vid-card');
+    for (var i = 0; i < cards.length; i++) {
+      (function (c) {
+        if (c.querySelector('[data-vdb-mv]')) return;
+        var vid = c.getAttribute('data-vid');
+        if (!vid) return;
+        var b = document.createElement('button');
+        b.setAttribute('data-vdb-mv', '1');
+        b.className = 'vid-fav';
+        b.style.right = '84px';
+        b.textContent = '📁';
+        b.title = '移入分组';
+        b.addEventListener('click', function (e) {
+          e.stopPropagation();
+          e.preventDefault();
+          moveToFolder(vid);
+        });
+        c.appendChild(b);
+      })(cards[i]);
+    }
+  }
+
+  function moveToFolder(vid) {
+    var ns = names();
+    var tip = ns.length ? '现有分组：' + ns.join('、') + '\n' : '还没有分组，';
+    var name = window.prompt(tip + '输入分组名（新名称=新建分组，留空=移出所有分组）:');
+    if (name === null) return;
+    var o = load();
+    // 先从所有分组移除
+    for (var k in o) {
+      if (!o.hasOwnProperty(k)) continue;
+      o[k] = o[k].filter(function (id) { return id !== vid; });
+    }
+    name = (name || '').trim().slice(0, 20);
+    if (name) {
+      if (!o[name]) o[name] = [];
+      if (o[name].indexOf(vid) < 0) o[name].push(vid);
+      toast('✅ 已移入「' + name + '」');
+    } else {
+      toast('已移出所有分组');
+    }
+    save(o);
+    renderBar();
+    applyFilter();
+  }
+
+  // ---------- 监听网格变化 ----------
+  function observe() {
+    var grid = document.getElementById('videoGrid');
+    if (!grid) return;
+    renderBar();
+    var mo = new MutationObserver(function () {
+      renderBar();
+      injectCardButtons();
+      applyFilter();
+    });
+    mo.observe(grid, { childList: true });
+    // 兜底: 切换 section 时 childList 不一定触发, 定时轻量检查
+    setInterval(function () {
+      var bar = barEl();
+      var shouldShow = (typeof activeSection !== 'undefined' && activeSection === 'favs');
+      if (shouldShow && (!bar || bar.style.display === 'none')) { renderBar(); injectCardButtons(); applyFilter(); }
+      if (!shouldShow && bar && bar.style.display !== 'none') { bar.style.display = 'none'; cur = ALL; }
+    }, 1500);
+  }
+
+  // ---------- 包裹 toggleFavorite: 取消收藏时同步清分组 ----------
+  function wrapToggleFavorite() {
+    if (typeof toggleFavorite !== 'function' || toggleFavorite._vdbWrapped) return;
+    var orig = toggleFavorite;
+    var wrapped = function (videoId, btn) {
+      orig(videoId, btn);
+      try {
+        // 取消收藏后 → 从所有分组移除
+        if (typeof isFavorited === 'function' && !isFavorited(videoId)) {
+          var o = load(), changed = false;
+          for (var k in o) {
+            if (!o.hasOwnProperty(k)) continue;
+            var before = o[k].length;
+            o[k] = o[k].filter(function (id) { return id !== videoId; });
+            if (o[k].length !== before) changed = true;
+          }
+          if (changed) { save(o); renderBar(); applyFilter(); }
+        }
+      } catch (e) {}
+    };
+    wrapped._vdbWrapped = true;
+    toggleFavorite = wrapped;
+  }
+
+  window.VdbFavFolders = {
+    load: load, save: save, moveToFolder: moveToFolder,
+    renderBar: renderBar, applyFilter: applyFilter
+  };
+
+  function init() {
+    wrapToggleFavorite();
+    observe();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
+</script>
+<script>
+/* ==== 功能包: recommend.js (猜你喜欢) ==== */
+/* ============================================================
+ * vdb-packs/feat/recommend.js — 🎯 猜你喜欢
+ * 在首页视频网格顶部插入横向滚动推荐区
+ * 信号: 最近20个观看历史的作者 + 关注的作者(本地 getFollows + 云端 user_follows)
+ * 依赖: toast, esc, escUrl, _get, SUPABASE_URL, getHistory, getFollows,
+ *       card (站内真实卡片函数, 自带点击播放), _username, _loggedIn,
+ *       activeSection (站内全局)
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var STRIP_ID = 'vdbRecommend';
+  var MAX = 12;
+
+  function isHome() {
+    if (typeof activeSection === 'undefined' || activeSection !== '') return false;
+    try {
+      if (typeof ssIsSearching === 'function' && ssIsSearching()) return false;
+    } catch (e) {}
+    return true;
+  }
+
+  // in.() 语法禁逗号/括号, 过滤掉不安全的作者名
+  function safeList(arr) {
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var s = String(arr[i] || '').trim();
+      if (s && s.indexOf(',') < 0 && s.indexOf('(') < 0 && s.indexOf(')') < 0) out.push(s);
+    }
+    return out;
+  }
+
+  async function collectAuthors() {
+    var authors = [];
+    function add(a) {
+      a = String(a || '').trim();
+      if (a && authors.indexOf(a) < 0) authors.push(a);
+    }
+    // 1) 本地关注
+    try {
+      if (typeof getFollows === 'function') {
+        var fl = getFollows() || [];
+        for (var i = 0; i < fl.length; i++) add(fl[i]);
+      }
+    } catch (e) {}
+    // 2) 云端关注 (登录态)
+    try {
+      if (_loggedIn && _username) {
+        var rows = await _get(
+          SUPABASE_URL + '/rest/v1/user_follows?follower=eq.' + escUrl(_username) +
+          '&select=following&limit=100'
+        );
+        if (rows) for (var j = 0; j < rows.length; j++) add(rows[j].following);
+      }
+    } catch (e) {}
+    // 3) 最近20个观看历史的作者
+    try {
+      var hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 20);
+      if (hist.length) {
+        var ids = safeList(hist).map(function (id) { return '%22' + escUrl(id) + '%22'; }).join(',');
+        if (ids) {
+          var vs = await _get(
+            SUPABASE_URL + '/rest/v1/videos?video_id=in.(' + ids + ')&select=author&limit=20'
+          );
+          if (vs) for (var k = 0; k < vs.length; k++) add(vs[k].author);
+        }
+      }
+    } catch (e) {}
+    return safeList(authors).slice(0, 15);
+  }
+
+  async function fetchRecommend(authors, excludeIds) {
+    var alist = authors.map(function (a) { return '%22' + escUrl(a) + '%22'; }).join(',');
+    var q = SUPABASE_URL + '/rest/v1/videos?author=in.(' + alist + ')' +
+      '&removed=not.is.true&order=created_at.desc&limit=40' +
+      '&select=video_id,title,author,thumbnail_url,duration,views,has_mp4,needs_rescrape,source_section,video_url,monsnode_video_id';
+    var rows = await _get(q);
+    if (!rows) return [];
+    var seen = {}, out = [];
+    var ex = {};
+    for (var i = 0; i < excludeIds.length; i++) ex[excludeIds[i]] = 1;
+    // 可播优先
+    rows.sort(function (a, b) {
+      var pa = (a.has_mp4 === true) ? 0 : 1;
+      var pb = (b.has_mp4 === true) ? 0 : 1;
+      return pa - pb;
+    });
+    for (var j = 0; j < rows.length && out.length < MAX; j++) {
+      var v = rows[j];
+      if (!v || !v.video_id || ex[v.video_id] || seen[v.video_id]) continue;
+      seen[v.video_id] = 1;
+      out.push(v);
+    }
+    return out;
+  }
+
+  function renderStrip(videos) {
+    var old = document.getElementById(STRIP_ID);
+    if (old) old.remove();
+    if (!videos.length) return;
+    var grid = document.getElementById('videoGrid');
+    if (!grid) return;
+    var strip = document.createElement('div');
+    strip.id = STRIP_ID;
+    strip.style.cssText = 'margin:0 auto 16px;max-width:1400px;';
+    strip.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:0 4px;">' +
+      '<span style="font-size:14px;font-weight:700;color:var(--vtext);">🎯 猜你喜欢</span>' +
+      '<span style="font-size:10px;color:var(--vmuted);">根据你的观看与关注推荐</span>' +
+      '<button data-vdb-rf style="margin-left:auto;font-size:11px;padding:3px 12px;border-radius:20px;border:1px solid var(--vborder);background:transparent;color:var(--vmuted);cursor:pointer;">🔄 换一批</button>' +
+      '</div>' +
+      '<div data-vdb-row style="display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;-webkit-overflow-scrolling:touch;"></div>';
+    grid.parentNode.insertBefore(strip, grid);
+    var row = strip.querySelector('[data-vdb-row]');
+    for (var i = 0; i < videos.length; i++) {
+      try {
+        if (typeof card !== 'function') break; // 降级: 找不到卡片函数则不渲染
+        var c = card(videos[i]);
+        c.style.minWidth = '200px';
+        c.style.maxWidth = '200px';
+        c.style.flex = '0 0 auto';
+        row.appendChild(c);
+      } catch (e) {}
+    }
+    strip.querySelector('[data-vdb-rf]').addEventListener('click', function () { load(true); });
+  }
+
+  var _cache = null;
+  async function load(force) {
+    if (!isHome()) { hide(); return; }
+    if (_cache && !force) { renderStrip(_cache); return; }
+    var hist = [];
+    try { hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 20); } catch (e) {}
+    var authors = await collectAuthors();
+    if (!authors.length) { hide(); return; } // 无信号 → 不打扰
+    var videos = await fetchRecommend(authors, hist);
+    _cache = videos;
+    if (isHome()) renderStrip(videos);
+  }
+
+  function hide() {
+    var el = document.getElementById(STRIP_ID);
+    if (el) el.remove();
+  }
+
+  function init() {
+    load(false);
+    // 首页状态变化时刷新/隐藏 (section 切换走 hash, 轻量轮询)
+    var lastHome = null;
+    setInterval(function () {
+      var h = isHome();
+      if (h !== lastHome) {
+        lastHome = h;
+        if (h) load(false); else hide();
+      }
+    }, 2000);
+  }
+
+  window.VdbRecommend = { load: load, hide: hide };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
+</script>
+<script>
+/* ==== 功能包: announce.js (站内公告条) ==== */
+/* ============================================================
+ * vdb-packs/feat/announce.js — 站内公告条（用户侧）
+ * 说明: 管理员发布入口站内已存在 (adminDo('announce') → showAdminAnnounce,
+ *       含标题/内容表单与"仅显示此公告"逻辑), 本文件只做用户侧展示,
+ *       不重复造入口 (见 manifest)。
+ * 行为: 取 is_active=true 的最新1条, header 下方展示;
+ *       标题 + 展开看全文 + 关闭按钮; 关闭后当天不再显示
+ *       (localStorage vdb_ann_closed 记 yyyy-mm-dd)。
+ * 展示时隐藏旧版跑马灯 #announceBanner, 避免重复。
+ * 依赖: esc, _get, SUPABASE_URL
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var BAR_ID = 'vdbAnnounceBar';
+  var LS = 'vdb_ann_closed';
+
+  function today() {
+    var d = new Date();
+    var m = ('0' + (d.getMonth() + 1)).slice(-2);
+    var day = ('0' + d.getDate()).slice(-2);
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  function closedToday() {
+    try { return localStorage.getItem(LS) === today(); } catch (e) { return false; }
+  }
+
+  function anchor() {
+    var h = document.querySelector('.vid-header');
+    if (h && h.parentNode) return { parent: h.parentNode, before: h.nextSibling };
+    var grid = document.getElementById('videoGrid');
+    if (grid && grid.parentNode) return { parent: grid.parentNode, before: grid };
+    return null;
+  }
+
+  function render(a) {
+    if (document.getElementById(BAR_ID)) return;
+    var pos = anchor();
+    if (!pos) return;
+    var bar = document.createElement('div');
+    bar.id = BAR_ID;
+    bar.style.cssText = 'display:flex;align-items:flex-start;gap:10px;margin:0 auto 14px;max-width:1400px;' +
+      'padding:10px 16px;border-radius:var(--radius-md,10px);font-size:12.5px;line-height:1.6;' +
+      'background:rgba(200,164,92,0.08);border:1px solid rgba(200,164,92,0.25);color:var(--vtext);';
+    bar.innerHTML =
+      '<span style="flex:0 0 auto;">📢</span>' +
+      '<div style="flex:1;min-width:0;">' +
+      '<div><b>' + esc(a.title || '公告') + '</b> ' +
+      '<button data-vdb-exp style="background:none;border:none;color:var(--vprimary);cursor:pointer;font-size:11px;padding:0 4px;">展开全文 ▾</button></div>' +
+      '<div data-vdb-body style="display:none;margin-top:6px;color:var(--vtext);white-space:pre-wrap;word-break:break-word;">' + esc(a.content || '') + '</div>' +
+      '</div>' +
+      '<span data-vdb-close style="flex:0 0 auto;cursor:pointer;color:var(--vmuted);padding:4px 8px;font-size:14px;" title="关闭（今天不再显示）">✕</span>';
+    pos.parent.insertBefore(bar, pos.before);
+
+    var body = bar.querySelector('[data-vdb-body]');
+    var exp = bar.querySelector('[data-vdb-exp]');
+    exp.addEventListener('click', function () {
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      exp.textContent = open ? '展开全文 ▾' : '收起 ▴';
+    });
+    bar.querySelector('[data-vdb-close]').addEventListener('click', function () {
+      try { localStorage.setItem(LS, today()); } catch (e) {}
+      bar.remove();
+    });
+
+    // 隐藏旧版跑马灯, 避免一条公告显示两遍
+    try {
+      var mq = document.getElementById('announceBanner');
+      if (mq) mq.style.display = 'none';
+    } catch (e) {}
+  }
+
+  async function load() {
+    if (closedToday()) return;
+    var rows;
+    try {
+      rows = await _get(
+        SUPABASE_URL + '/rest/v1/announcements?is_active=is.true&order=created_at.desc&limit=1'
+      );
+    } catch (e) { rows = null; }
+    if (!rows || !rows.length) return;
+    render(rows[0]);
+  }
+
+  window.VdbAnnounce = { load: load };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', load);
+  } else {
+    load();
+  }
 })();
 
 </script>
