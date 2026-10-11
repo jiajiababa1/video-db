@@ -915,17 +915,6 @@ self.onmessage = ({conn, data}) => {
             font-weight:600; z-index:1; pointer-events:none;
             font-family:var(--font-sans); letter-spacing:1px;
         }
-        /* AV4 独立识别: 失效置灰, 可播高亮 (不用 unplayable 章, 与普通视频区分) */
-        .vid-card.av4-dead { opacity:0.45; border-color:#1c1515; }
-        .vid-card.av4-dead .vid-thumb { filter:grayscale(0.7); }
-        .vid-card.av4-playable { border-color:#2a3a2a; }
-        .vid-card.av4-ext { border-style:dashed; }
-        /* AV4 识别工具条 (仅 AV4 栏目显示) */
-        #av4Bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 12px; margin:0 12px 8px; border:1px solid #2a2416; border-radius:8px; background:rgba(200,164,92,0.05); font-size:11px; color:#a09a8a; }
-        #av4Bar .av4-btn { padding:4px 10px; border-radius:6px; border:1px solid #3a352a; background:transparent; color:#a09a8a; cursor:pointer; font-size:11px; }
-        #av4Bar .av4-btn.on { border-color:var(--vprimary); color:var(--vprimary); background:rgba(200,164,92,0.12); }
-        #av4Bar .av4-btn.act { border-color:var(--vprimary); color:#1a1808; background:var(--vprimary); font-weight:700; }
-        #av4Bar .av4-btn:disabled { opacity:0.6; }
         /* hover/长按/点击 播放图标覆盖层 */
         .vid-play-overlay {
             position:absolute; inset:0; background:rgba(0,0,0,0.4); display:flex;
@@ -1965,7 +1954,6 @@ self.onmessage = ({conn, data}) => {
             <div class="sidebar-label">推荐 & 最新</div>
             <button class="sidebar-item" data-section="home" onclick="selectSidebar('home','🏠 首页推荐')"><span class="ico">🏠</span>首页推荐</button>
             <button class="sidebar-item" data-section="latest" onclick="selectSidebar('latest','🆕 最新上传')"><span class="ico">🆕</span>最新上传</button>
-            <button class="sidebar-item" data-section="av4" onclick="selectSidebar('av4','🎬 AV4长片')"><span class="ico">🎬</span>AV4长片</button>
             <button class="sidebar-item" data-section="" onclick="selectSidebar('','📺 全部视频')"><span class="ico">📺</span>全部视频</button>
         </div>
         <div class="sidebar-divider"></div>
@@ -2154,22 +2142,12 @@ self.onmessage = ({conn, data}) => {
             <button class="vid-tab" data-section="trending">🔥 热门</button>
             <button class="vid-tab" data-section="home">🏠 推荐</button>
             <button class="vid-tab" data-section="latest">🆕 最新</button>
-            <button class="vid-tab" data-section="av4">🎬 AV4</button>
             <button class="vid-tab" data-section="24h">🕐 24小时</button>
             <button class="vid-tab" data-section="3d">📅 3天</button>
             <button class="vid-tab" data-section="7d">📆 7天</button>
             <button class="vid-tab" data-section="ranking">🏆 排行</button>
             <button class="vid-tab" data-section="favs" id="favTab" style="display:none;">⭐ 收藏</button>
             <button class="vid-tab" data-section="history" id="histTab" style="display:none;">🕐 历史</button>
-        </div>
-        <div id="av4Bar" style="display:none;">
-            <span>🎬 AV4识别:</span>
-            <button class="av4-btn" data-av4f="all" onclick="av4SetFilter('all')">全部 <b id="av4CAll"></b></button>
-            <button class="av4-btn" data-av4f="playable" onclick="av4SetFilter('playable')">✅可播 <b id="av4CPlay"></b></button>
-            <button class="av4-btn" data-av4f="external" onclick="av4SetFilter('external')">🔗跳原站 <b id="av4CExt"></b></button>
-            <button class="av4-btn" data-av4f="dead" onclick="av4SetFilter('dead')">⚠️失效 <b id="av4CDead"></b></button>
-            <button class="av4-btn act" id="av4DetectBtn" onclick="av4DetectVisible()">🔍 检测本页</button>
-            <span id="av4Hint" style="opacity:0.7;"></span>
         </div>
         <div class="author-header" id="authorHeader">
             <button class="author-back" onclick="backToMainView()">← 返回全部</button>
@@ -5818,10 +5796,10 @@ self.onmessage = ({conn, data}) => {
             p += '&source_section=ilike.*' + encodeURIComponent(pgSan(activeSection)) + '*';
         }
         if (activeAuthor) p += '&author=ilike.*' + encodeURIComponent(pgSan(activeAuthor.trim())) + '*';
-        var isExtSection = activeSection === 'av4';
-        if (!isExtSection && p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)';
-        if (!isExtSection && playableFilter === 'playable') p += '&or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
-        else if (!isExtSection && playableFilter === 'unplayable') p += '&not.or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
+        // av4 专区已移除: 所有列表默认排除 av4 外链视频 (它们仍在库中，可通过直接链接播放)
+        if (p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)';
+        if (playableFilter === 'playable') p += '&or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
+        else if (playableFilter === 'unplayable') p += '&not.or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
         p += '&removed=not.is.true';
         return p;
     }
@@ -7017,28 +6995,6 @@ self.onmessage = ({conn, data}) => {
         set('av4CDead', n.dead ? '(' + n.dead + ')' : '');
         var h = document.getElementById('av4Hint');
         if (h) h.textContent = n.all ? ('本页 ✅' + n.playable + ' · 🔗' + n.external + ' · ⚠️' + n.dead) : '';
-    }
-    function av4SetFilter(f) {
-        av4Filter = f;
-        try { localStorage.setItem('av4_filter', f); } catch (e) {}
-        var bar = document.getElementById('av4Bar');
-        if (bar) {
-            var bs = bar.querySelectorAll('[data-av4f]');
-            for (var i = 0; i < bs.length; i++) bs[i].classList.toggle('on', bs[i].getAttribute('data-av4f') === f);
-        }
-        loadVids(true);
-    }
-    function av4UpdateBar() {
-        var bar = document.getElementById('av4Bar');
-        if (!bar) return;
-        var on = (typeof activeSection !== 'undefined' && activeSection === 'av4' && !activeAuthor);
-        bar.style.display = on ? '' : 'none';
-        var pf = document.getElementById('playableFilter');
-        if (pf) pf.style.display = on ? 'none' : '';
-        if (!on) return;
-        var bs = bar.querySelectorAll('[data-av4f]');
-        for (var i = 0; i < bs.length; i++) bs[i].classList.toggle('on', bs[i].getAttribute('data-av4f') === av4Filter);
-        av4UpdateCounts();
     }
     var AV4_LIST_URL = 'https://jp.av4us.asia/hot/LONG-';
     async function sha12hex(s) {
@@ -8365,8 +8321,6 @@ self.onmessage = ({conn, data}) => {
         render(data, append);
         try { bgQueueResolve(data); } catch (e) {}
         maybeOpenPendingVideo(); // 深链 #/video/xxx 在数据渲染后自动打开
-        try { if (typeof av4UpdateBar === 'function') av4UpdateBar(); } catch (e) {}
-        try { if (typeof rouUpdateBar === 'function') rouUpdateBar(); } catch (e) {}
         return data;
     }
 

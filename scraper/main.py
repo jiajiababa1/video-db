@@ -1528,14 +1528,6 @@ def scrape_all():
         tr = crawl_section_page(fetcher, "trending", BASE_URL + "/trending", 6, deadline, seen)
         all_v.extend(tr)
 
-        log("阶段2c: av4 外链聚合")
-        try:
-            av4 = crawl_av4(fetcher, deadline, seen)
-            all_v.extend(av4)
-            log(f"  av4合计 +{len(av4)} 条")
-        except Exception as e:
-            log(f"  av4抓取异常: {e}", "WARN")
-
         log("阶段3: 关键词搜索 (历史库)")
         sr = crawl_search(fetcher, deadline, seen)
         all_v.extend(sr)
