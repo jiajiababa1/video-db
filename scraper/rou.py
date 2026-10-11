@@ -34,6 +34,8 @@ ROU_TIME_BUDGET = 240   # 本模块总时间预算(秒)
 ROU_MAX_PAGES_PER_CAT = 8  # 每个分类最多抓几页
 
 # ---- 通用视频卡片解析 (多模式 fallback, 适配未知 HTML 结构) ----
+# 视频页 URL 模式 (用户确认): /v<id> 或 /v/<id>，如 https://rou.video/v12345
+RE_ROU_VURL = re.compile(r'^/v/?[\w-]+/?$')
 # 模式1: 标准 <a href="视频页"><img src="缩略图" alt="标题">
 RE_ROU_CARD_A = re.compile(
     r'<a[^>]+href="([^"]+)"[^>]*>\s*<img[^>]+src="([^"]+)"[^>]*alt="([^"]*)"',
@@ -91,14 +93,23 @@ def parse_rou_cards(html_text, source_url, category):
         href = htmlmod.unescape(href).strip()
         if not href or href.startswith("#") or href.startswith("javascript:"):
             continue
-        # 只收站内视频页 (排除分类/标签页)
+        # 只收站内视频页: 优先 /v<id> 模式 (用户确认)，fallback 收其他站内链接
         if href.startswith("/"):
-            full = urljoin(ROU_BASE, href)
+            # /v 开头的一定是视频页
+            if RE_ROU_VURL.match(href.split("?")[0]):
+                full = urljoin(ROU_BASE, href)
+            else:
+                # 非 /v 链接：排除首页/分类/功能页
+                low = href.lower()
+                if any(k in low for k in ("/home", "/category", "/tag", "/search",
+                                          "/login", "/register", ".css", ".js")):
+                    continue
+                full = urljoin(ROU_BASE, href)
         elif href.startswith(ROU_BASE):
             full = href
         else:
             continue
-        # 过滤明显不是视频页的 (首页/分类页本身)
+        # 过滤明显不是视频页的 (首页本身)
         if full.rstrip("/") in (ROU_BASE, ROU_BASE + "/home"):
             continue
         vid = _vid_from_url(full)
