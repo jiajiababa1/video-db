@@ -64,8 +64,6 @@
         <span class="bar"><span class="fill" id="barFill" style="width:100%"></span></span>
     </div>
     <button class="btn copy" id="copyBtn" onclick="doCopy()">📋 点此复制密码</button>
-    <div id="transBox" style="margin-top:18px;padding:14px;border:1px dashed rgba(200,164,92,0.4);border-radius:8px;">
-        <div style="font-size:11px;color:#c8a45c;margin-bottom:8px;letter-spacing:1px;">🔄 轮换过渡期 · 数据库轮换后用这个</div>
         <div class="code" id="codeNew" style="font-size:44px;letter-spacing:10px;text-indent:10px;margin-bottom:6px;">----</div>
         <div style="font-size:10px;color:#6b6760;">数据库 totp_secret 轮换完成前, 请继续用上方密码</div>
     </div>
@@ -82,9 +80,7 @@
 // system_config.totp_secret 轮换, 并同步更新此处混淆值。
 var _vdbSk=[86,105,100,68,98,75,101,121];
 function _vdbDec(b64){var s=atob(b64),o='';for(var i=0;i<s.length;i++)o+=String.fromCharCode(s.charCodeAt(i)^_vdbSk[i%_vdbSk.length]);return o;}
-var SEED_OLD = _vdbDec('ACAgAS0PJ0tmW1IILQguMhMw'); // 当前有效 (数据库轮换前)
-var SEED_NEW = _vdbDec('Y10jBjAEJCAEIy4KNgpROA=='); // 轮换后的新种子 (数据库轮换后生效)
-var SEED = SEED_OLD;
+var SEED = _vdbDec('Y10jBjAEJCAEIy4KNgpROA=='); // 已轮换的新种子
 var P1 = 7919;
 var P2 = 6271;
 var STEP = 300;     // 5 分钟
@@ -95,8 +91,8 @@ function seedSum(s) {
     return n;
 }
 
-function generateTOTP(seed) {
-    var s1 = seedSum(seed || SEED);
+function generateTOTP() {
+    var s1 = seedSum(SEED);
     var win = Math.floor(Date.now() / 1000 / STEP);
     var code = ((win + s1) * P1 + win * (s1 * P2)) % 10000;
     return code;
@@ -114,9 +110,7 @@ function updateTimer() {
 }
 
 function refresh() {
-    var code = generateTOTP(SEED_OLD);
-    var codeNew = String(generateTOTP(SEED_NEW)).padStart(4, '0');
-    document.getElementById('codeNew').textContent = codeNew;
+    var code = generateTOTP();
     var codeStr = String(code).padStart(4, '0');
     if (codeStr !== currentCode) {
         currentCode = codeStr;
