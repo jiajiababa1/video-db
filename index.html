@@ -1667,8 +1667,8 @@ self.onmessage = ({conn, data}) => {
 }
 /* 右上角常驻"功能地图"按钮 */
 .ux-tour-mapbtn {
-    position: fixed; top: 48px; right: 12px; z-index: 10001;
-    width: 40px; height: 40px; border-radius: 50%;
+    position: fixed; bottom: 82px; right: 24px; z-index: 10001;
+    width: 44px; height: 44px; border-radius: 50%;
     background: rgba(14, 14, 18, 0.85);
     border: 1px solid rgba(212, 169, 78, 0.4);
     color: var(--vprimary, #d4a94e);
@@ -1707,6 +1707,11 @@ self.onmessage = ({conn, data}) => {
     cursor: pointer; font-size: 15px; opacity: 0.75; padding: 4px 8px;
 }
 .ux-vip-bar .ux-vip-x:active { opacity: 1; }
+
+/* 功能地图按钮: 移动端跟随回到顶部按钮 (bottom:16px;right:16px) 的上方 */
+@media (max-width: 768px) {
+    .ux-tour-mapbtn { bottom: 68px; right: 16px; width: 44px; height: 44px; }
+}
 
 </style>
 <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
@@ -6718,7 +6723,10 @@ self.onmessage = ({conn, data}) => {
     // ============ 作者详情页 ============
     function showAuthorPage(author) {
         if (!author) return;
+        var _wasAuthorView = !!activeAuthor;
         activeAuthor = author;
+        // 从主视图进入作者页时记住位置, 返回时恢复 (作者页内切换作者不覆盖)
+        if (!_wasAuthorView) window._authorReturnY = window.scrollY || 0;
         // 切换分类标签为不选中状态
         var tabs = document.querySelectorAll('#vidTabs .vid-tab');
         for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
@@ -6761,8 +6769,12 @@ self.onmessage = ({conn, data}) => {
         updateHash();
         closeInlinePlayer(true);
         _savedScrollY = 0;
-        smoothScrollTo(0);
-        loadVids(true);
+        // 返回全部 → 恢复进入作者页前的位置, 而不是回顶部
+        var _returnY = window._authorReturnY || 0;
+        window._authorReturnY = 0;
+        loadVids(true).then(function() {
+            setTimeout(function() { smoothScrollTo(_returnY); }, 200);
+        });
     }
 
     // ============ 客户端爬虫 (手机浏览器直接抓取) ============
@@ -9842,6 +9854,8 @@ self.onmessage = ({conn, data}) => {
             resultEl.textContent = '✅ 注册成功! 已自动登录';
             resultEl.style.color = 'var(--green)';
             setTimeout(closeLoginDialog, 800);
+            // 新用户注册完成 → 自动播放新手引导
+            setTimeout(function() { if (window.UXTour) window.UXTour.startForNewUser(); }, 1100);
         } catch(e) { resultEl.textContent = '❌ 出错了: ' + (e && e.message ? e.message : String(e)); resultEl.style.color = '#c08080'; loadCaptcha(); }
     }
 
@@ -15352,8 +15366,8 @@ function getLoginToken() {
 /* ==== UX体验包: tour.js (新手引导) ==== */
 /* ============================================================
    新手引导 tour.js (UX 体验包)
-   - 首次访问自动播放 4 步引导 (localStorage: vid_tour_done)
-   - 右上角常驻"🧭 功能地图"按钮, 可随时重看
+   - 只在新用户注册完成后自动播放一次 (register → UXTour.startForNewUser)
+   - 右下角常驻"🧭 功能地图"按钮 (拇指区, 在回到顶部按钮上方), 可随时重看
    - 每步用 CSS 选择器定位目标元素, 找不到/不可见时自动跳过
    - 依赖: 无 (只用原生 DOM)。样式见 ux.css
    - 插入位置: index.html 的 </body> 之前, 新 <script> 块
@@ -15487,7 +15501,13 @@ function getLoginToken() {
         cur = -1;
     }
 
-    /* 常驻"功能地图"按钮 */
+    /* 新用户注册完成后调用: 清掉旧标记, 等界面稳定后播放 */
+    function startForNewUser() {
+        try { localStorage.removeItem(DONE_KEY); } catch (e) {}
+        setTimeout(start, 1200);
+    }
+
+    /* 常驻"功能地图"按钮: 右下角拇指区, 在回到顶部按钮上方 */
     function buildMapBtn() {
         if (mapBtn || document.getElementById('uxTourMapBtn')) return;
         mapBtn = document.createElement('button');
@@ -15505,12 +15525,7 @@ function getLoginToken() {
 
     function init() {
         buildMapBtn();
-        var done = false;
-        try { done = !!localStorage.getItem(DONE_KEY); } catch (e) {}
-        if (!done) {
-            /* 页面稳定后再弹, 避免跟开屏/登录框打架 */
-            setTimeout(start, 1500);
-        }
+        /* 不再对所有访客自动播放, 只等注册完成钩子 */
     }
 
     if (document.readyState === 'loading') {
@@ -15519,8 +15534,8 @@ function getLoginToken() {
         init();
     }
 
-    /* 对外暴露: 手动触发引导 */
-    window.UXTour = { start: start };
+    /* 对外暴露: startForNewUser 由注册成功回调调用 */
+    window.UXTour = { start: start, startForNewUser: startForNewUser };
 })();
 
 </script>
@@ -16179,17 +16194,21 @@ function getLoginToken() {
 /* ============================================================
  * vdb-packs/feat/recommend.js — 🎯 猜你喜欢
  * 在首页视频网格顶部插入横向滚动推荐区
- * 信号: 最近20个观看历史的作者 + 关注的作者(本地 getFollows + 云端 user_follows)
+ * 信号: 关注的作者 (本地 getFollows + 云端 user_follows) > 观看历史作者
  * 依赖: toast, esc, escUrl, _get, SUPABASE_URL, getHistory, getFollows,
  *       card (站内真实卡片函数), showInlinePlayer, _username, _loggedIn,
  *       activeSection (站内全局)
  *
+ * v3 推荐逻辑:
+ *  1. 作者分层: 关注作者优先, 历史作者按出现次数加权。
+ *  2. 单作者封顶: 一批 12 条里同一作者最多 3 条, 杜绝"不小心点几次
+ *     某作者, 推荐全是它"的霸屏问题。
+ *  3. 轮询取数: 按作者轮流取, 保证多样性, 而不是按时间一刀切。
  * v2 修复:
  *  1. 播放器挂载点: 站内播放器是 grid-column:1/-1 设计, 直接插在横向
  *     flex 条里会排版错乱。改为在推荐条下方放一个全宽隐形锚点,
  *     卡片点击时用捕获阶段拦截, 把播放器挂到锚点后 (全宽正常显示)。
- *  2. 换一批: 原查询是确定性的, 点多少次都同一批。改为缓存 40 条池子,
- *     每次洗牌取 12 条, 尽量与当前展示不同。
+ *  2. 换一批: 缓存 40 条池子, 每次洗牌取 12 条, 尽量与当前展示不同。
  * ============================================================ */
 (function () {
   'use strict';
@@ -16197,7 +16216,8 @@ function getLoginToken() {
   var STRIP_ID = 'vdbRecommend';
   var ANCHOR_ID = 'vdbRecommendAnchor';
   var MAX = 12;
-  var POOL = 40;
+  var POOL = 48;
+  var PER_AUTHOR_CAP = 3;   // 单作者在一批里最多占几条
 
   function isHome() {
     if (typeof activeSection === 'undefined' || activeSection !== '') return false;
@@ -16207,7 +16227,6 @@ function getLoginToken() {
     return true;
   }
 
-  // in.() 语法禁逗号/括号, 过滤掉不安全的作者名
   function safeList(arr) {
     var out = [];
     for (var i = 0; i < arr.length; i++) {
@@ -16217,17 +16236,18 @@ function getLoginToken() {
     return out;
   }
 
-  async function collectAuthors() {
-    var authors = [];
-    function add(a) {
+  // 返回 { followed: [作者], histCount: {作者: 出现次数} }
+  async function collectSignals() {
+    var followed = [], histCount = {};
+    function addFollow(a) {
       a = String(a || '').trim();
-      if (a && authors.indexOf(a) < 0) authors.push(a);
+      if (a && followed.indexOf(a) < 0) followed.push(a);
     }
     // 1) 本地关注
     try {
       if (typeof getFollows === 'function') {
         var fl = getFollows() || [];
-        for (var i = 0; i < fl.length; i++) add(fl[i]);
+        for (var i = 0; i < fl.length; i++) addFollow(fl[i]);
       }
     } catch (e) {}
     // 2) 云端关注 (登录态)
@@ -16237,23 +16257,26 @@ function getLoginToken() {
           SUPABASE_URL + '/rest/v1/user_follows?follower=eq.' + escUrl(_username) +
           '&select=following&limit=100'
         );
-        if (rows) for (var j = 0; j < rows.length; j++) add(rows[j].following);
+        if (rows) for (var j = 0; j < rows.length; j++) addFollow(rows[j].following);
       }
     } catch (e) {}
-    // 3) 最近20个观看历史的作者
+    // 3) 最近30个观看历史的作者 (计数, 用于加权; 不直接当作者池)
     try {
-      var hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 20);
+      var hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 30);
       if (hist.length) {
         var ids = safeList(hist).map(function (id) { return '%22' + escUrl(id) + '%22'; }).join(',');
         if (ids) {
           var vs = await _get(
-            SUPABASE_URL + '/rest/v1/videos?video_id=in.(' + ids + ')&select=author&limit=20'
+            SUPABASE_URL + '/rest/v1/videos?video_id=in.(' + ids + ')&select=author&limit=30'
           );
-          if (vs) for (var k = 0; k < vs.length; k++) add(vs[k].author);
+          if (vs) for (var k = 0; k < vs.length; k++) {
+            var a = String(vs[k].author || '').trim();
+            if (a) histCount[a] = (histCount[a] || 0) + 1;
+          }
         }
       }
     } catch (e) {}
-    return safeList(authors).slice(0, 15);
+    return { followed: safeList(followed).slice(0, 15), histCount: histCount };
   }
 
   async function fetchPool(authors, excludeIds) {
@@ -16266,7 +16289,6 @@ function getLoginToken() {
     var seen = {}, out = [];
     var ex = {};
     for (var i = 0; i < excludeIds.length; i++) ex[excludeIds[i]] = 1;
-    // 可播优先
     rows.sort(function (a, b) {
       var pa = (a.has_mp4 === true) ? 0 : 1;
       var pb = (b.has_mp4 === true) ? 0 : 1;
@@ -16281,24 +16303,49 @@ function getLoginToken() {
     return out;
   }
 
-  // 洗牌取一批, 尽量与上一批不同
+  // 按作者轮询取数: 关注作者优先, 历史按次数加权, 单作者封顶
   var _lastKey = '';
-  function pickBatch(pool) {
+  function pickBatch(pool, followed, histCount) {
     if (!pool.length) return [];
-    var arr = pool.slice();
-    for (var i = arr.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
-      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    // 按作者分组
+    var byAuthor = {}, order = [];
+    for (var i = 0; i < pool.length; i++) {
+      var v = pool[i], a = v.author || '';
+      if (!byAuthor[a]) { byAuthor[a] = []; order.push(a); }
+      byAuthor[a].push(v);
     }
-    var batch = arr.slice(0, MAX);
-    var key = batch.map(function (v) { return v.video_id; }).join(',');
-    // 极小概率洗出完全相同的一批 → 再洗一次
-    if (key === _lastKey && arr.length > MAX) {
-      for (var k = arr.length - 1; k > 0; k--) {
-        var m = Math.floor(Math.random() * (k + 1));
-        var tt = arr[k]; arr[k] = arr[m]; arr[m] = tt;
+    // 作者排序: 关注 > 历史次数多 > 其他
+    order.sort(function (x, y) {
+      var fx = followed.indexOf(x) >= 0 ? 0 : 1;
+      var fy = followed.indexOf(y) >= 0 ? 0 : 1;
+      if (fx !== fy) return fx - fy;
+      return (histCount[y] || 0) - (histCount[x] || 0);
+    });
+    // 轮询: 每轮每作者取 1 条, 直到凑满或单作者到顶
+    var batch = [], taken = {}, round = 0;
+    while (batch.length < MAX && round < PER_AUTHOR_CAP) {
+      var progressed = false;
+      for (var k = 0; k < order.length && batch.length < MAX; k++) {
+        var au = order[k];
+        var list = byAuthor[au], n = taken[au] || 0;
+        if (n < list.length && n <= round) {
+          batch.push(list[n]);
+          taken[au] = n + 1;
+          progressed = true;
+        }
       }
-      batch = arr.slice(0, MAX);
+      if (!progressed) break;
+      round++;
+    }
+    // 批次内再打散, 避免同一作者连着出现
+    for (var s = batch.length - 1; s > 0; s--) {
+      var r = Math.floor(Math.random() * (s + 1));
+      var tmp = batch[s]; batch[s] = batch[r]; batch[r] = tmp;
+    }
+    var key = batch.map(function (v) { return v.video_id; }).join(',');
+    if (key === _lastKey && pool.length > MAX) {
+      // 极小概率和上一批完全一样 → 把第一条挪到最后
+      batch.push(batch.shift());
       key = batch.map(function (v) { return v.video_id; }).join(',');
     }
     _lastKey = key;
@@ -16313,7 +16360,6 @@ function getLoginToken() {
       a = document.createElement('div');
       a.id = ANCHOR_ID;
       a.style.cssText = 'max-width:1400px;margin:0 auto;';
-      // 锚点放在推荐条之后、主网格之前, 播放器挂在这里就是全宽
       var strip = document.getElementById(STRIP_ID);
       if (strip && strip.parentNode) strip.parentNode.insertBefore(a, strip.nextSibling);
       else grid.parentNode.insertBefore(a, grid);
@@ -16324,7 +16370,6 @@ function getLoginToken() {
   function renderStrip(videos) {
     var old = document.getElementById(STRIP_ID);
     if (old) old.remove();
-    // 旧锚点一并清理 (播放器会被 closeInlinePlayer 关掉, 残留锚点无害但保持干净)
     var oldA = document.getElementById(ANCHOR_ID);
     if (oldA) oldA.remove();
     if (!videos.length) return;
@@ -16342,7 +16387,6 @@ function getLoginToken() {
       '</div>' +
       '<div data-vdb-row style="display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;-webkit-overflow-scrolling:touch;"></div>';
     grid.parentNode.insertBefore(strip, grid);
-    // 先建好锚点, 播放器挂载用
     getAnchor();
     var row = strip.querySelector('[data-vdb-row]');
     for (var i = 0; i < videos.length; i++) {
@@ -16352,8 +16396,6 @@ function getLoginToken() {
         c.style.minWidth = '200px';
         c.style.maxWidth = '200px';
         c.style.flex = '0 0 auto';
-        // 捕获阶段拦截 card() 自带的点击 (它会把播放器插进横向条里导致错乱),
-        // 改为挂到推荐条下方的全宽锚点
         (function (vv, cc) {
           function playAtAnchor(e) {
             e.stopImmediatePropagation();
@@ -16373,31 +16415,46 @@ function getLoginToken() {
     strip.querySelector('[data-vdb-rf]').addEventListener('click', function () { shuffle(); });
   }
 
-  var _pool = [];
+  var _pool = [], _followed = [], _histCount = {};
   var _refreshCount = 0;
   async function load(force) {
     if (!isHome()) { hide(); return; }
-    if (_pool.length && !force) { renderStrip(pickBatch(_pool)); return; }
+    if (_pool.length && !force) { renderStrip(pickBatch(_pool, _followed, _histCount)); return; }
     var hist = [];
-    try { hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 20); } catch (e) {}
-    var authors = await collectAuthors();
-    if (!authors.length) { hide(); return; } // 无信号 → 不打扰
+    try { hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 30); } catch (e) {}
+    var sig = await collectSignals();
+    _followed = sig.followed; _histCount = sig.histCount;
+    // 作者池 = 关注作者 + 历史出现≥2次的作者 (过滤"不小心点一次"的噪音)
+    var authors = _followed.slice();
+    var hk = Object.keys(_histCount);
+    hk.sort(function (a, b) { return _histCount[b] - _histCount[a]; });
+    for (var i = 0; i < hk.length && authors.length < 15; i++) {
+      if (_histCount[hk[i]] >= 2 && authors.indexOf(hk[i]) < 0) authors.push(hk[i]);
+    }
+    // 关注为空且历史不足 → 不打扰
+    if (!authors.length) { hide(); return; }
     _pool = await fetchPool(authors, hist);
     _refreshCount = 0;
-    if (isHome()) renderStrip(pickBatch(_pool));
+    if (isHome()) renderStrip(pickBatch(_pool, _followed, _histCount));
   }
 
-  // 换一批: 洗牌重取; 每点3次重新拉一次池子, 保证有新货
   async function shuffle() {
     if (!isHome()) return;
     _refreshCount++;
     if (_refreshCount % 3 === 0 || _pool.length <= MAX) {
       var hist = [];
-      try { hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 20); } catch (e) {}
-      var authors = await collectAuthors();
+      try { hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 30); } catch (e) {}
+      var sig = await collectSignals();
+      _followed = sig.followed; _histCount = sig.histCount;
+      var authors = _followed.slice();
+      var hk = Object.keys(_histCount);
+      hk.sort(function (a, b) { return _histCount[b] - _histCount[a]; });
+      for (var i = 0; i < hk.length && authors.length < 15; i++) {
+        if (_histCount[hk[i]] >= 2 && authors.indexOf(hk[i]) < 0) authors.push(hk[i]);
+      }
       if (authors.length) _pool = await fetchPool(authors, hist);
     }
-    if (isHome()) renderStrip(pickBatch(_pool));
+    if (isHome()) renderStrip(pickBatch(_pool, _followed, _histCount));
   }
 
   function hide() {
@@ -16409,7 +16466,6 @@ function getLoginToken() {
 
   function init() {
     load(false);
-    // 首页状态变化时刷新/隐藏 (section 切换走 hash, 轻量轮询)
     var lastHome = null;
     setInterval(function () {
       var h = isHome();
