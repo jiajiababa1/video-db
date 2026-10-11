@@ -16181,14 +16181,23 @@ function getLoginToken() {
  * 在首页视频网格顶部插入横向滚动推荐区
  * 信号: 最近20个观看历史的作者 + 关注的作者(本地 getFollows + 云端 user_follows)
  * 依赖: toast, esc, escUrl, _get, SUPABASE_URL, getHistory, getFollows,
- *       card (站内真实卡片函数, 自带点击播放), _username, _loggedIn,
+ *       card (站内真实卡片函数), showInlinePlayer, _username, _loggedIn,
  *       activeSection (站内全局)
+ *
+ * v2 修复:
+ *  1. 播放器挂载点: 站内播放器是 grid-column:1/-1 设计, 直接插在横向
+ *     flex 条里会排版错乱。改为在推荐条下方放一个全宽隐形锚点,
+ *     卡片点击时用捕获阶段拦截, 把播放器挂到锚点后 (全宽正常显示)。
+ *  2. 换一批: 原查询是确定性的, 点多少次都同一批。改为缓存 40 条池子,
+ *     每次洗牌取 12 条, 尽量与当前展示不同。
  * ============================================================ */
 (function () {
   'use strict';
 
   var STRIP_ID = 'vdbRecommend';
+  var ANCHOR_ID = 'vdbRecommendAnchor';
   var MAX = 12;
+  var POOL = 40;
 
   function isHome() {
     if (typeof activeSection === 'undefined' || activeSection !== '') return false;
@@ -16223,7 +16232,7 @@ function getLoginToken() {
     } catch (e) {}
     // 2) 云端关注 (登录态)
     try {
-      if (_loggedIn && _username) {
+      if (typeof _loggedIn !== 'undefined' && _loggedIn && typeof _username !== 'undefined' && _username) {
         var rows = await _get(
           SUPABASE_URL + '/rest/v1/user_follows?follower=eq.' + escUrl(_username) +
           '&select=following&limit=100'
@@ -16247,10 +16256,10 @@ function getLoginToken() {
     return safeList(authors).slice(0, 15);
   }
 
-  async function fetchRecommend(authors, excludeIds) {
+  async function fetchPool(authors, excludeIds) {
     var alist = authors.map(function (a) { return '%22' + escUrl(a) + '%22'; }).join(',');
     var q = SUPABASE_URL + '/rest/v1/videos?author=in.(' + alist + ')' +
-      '&removed=not.is.true&order=created_at.desc&limit=40' +
+      '&removed=not.is.true&order=created_at.desc&limit=' + POOL +
       '&select=video_id,title,author,thumbnail_url,duration,views,has_mp4,needs_rescrape,source_section,video_url,monsnode_video_id';
     var rows = await _get(q);
     if (!rows) return [];
@@ -16263,7 +16272,7 @@ function getLoginToken() {
       var pb = (b.has_mp4 === true) ? 0 : 1;
       return pa - pb;
     });
-    for (var j = 0; j < rows.length && out.length < MAX; j++) {
+    for (var j = 0; j < rows.length; j++) {
       var v = rows[j];
       if (!v || !v.video_id || ex[v.video_id] || seen[v.video_id]) continue;
       seen[v.video_id] = 1;
@@ -16272,12 +16281,56 @@ function getLoginToken() {
     return out;
   }
 
+  // 洗牌取一批, 尽量与上一批不同
+  var _lastKey = '';
+  function pickBatch(pool) {
+    if (!pool.length) return [];
+    var arr = pool.slice();
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    var batch = arr.slice(0, MAX);
+    var key = batch.map(function (v) { return v.video_id; }).join(',');
+    // 极小概率洗出完全相同的一批 → 再洗一次
+    if (key === _lastKey && arr.length > MAX) {
+      for (var k = arr.length - 1; k > 0; k--) {
+        var m = Math.floor(Math.random() * (k + 1));
+        var tt = arr[k]; arr[k] = arr[m]; arr[m] = tt;
+      }
+      batch = arr.slice(0, MAX);
+      key = batch.map(function (v) { return v.video_id; }).join(',');
+    }
+    _lastKey = key;
+    return batch;
+  }
+
+  function getAnchor() {
+    var a = document.getElementById(ANCHOR_ID);
+    if (!a) {
+      var grid = document.getElementById('videoGrid');
+      if (!grid || !grid.parentNode) return null;
+      a = document.createElement('div');
+      a.id = ANCHOR_ID;
+      a.style.cssText = 'max-width:1400px;margin:0 auto;';
+      // 锚点放在推荐条之后、主网格之前, 播放器挂在这里就是全宽
+      var strip = document.getElementById(STRIP_ID);
+      if (strip && strip.parentNode) strip.parentNode.insertBefore(a, strip.nextSibling);
+      else grid.parentNode.insertBefore(a, grid);
+    }
+    return a;
+  }
+
   function renderStrip(videos) {
     var old = document.getElementById(STRIP_ID);
     if (old) old.remove();
+    // 旧锚点一并清理 (播放器会被 closeInlinePlayer 关掉, 残留锚点无害但保持干净)
+    var oldA = document.getElementById(ANCHOR_ID);
+    if (oldA) oldA.remove();
     if (!videos.length) return;
     var grid = document.getElementById('videoGrid');
-    if (!grid) return;
+    if (!grid || !grid.parentNode) return;
+    if (typeof card !== 'function' || typeof showInlinePlayer !== 'function') return;
     var strip = document.createElement('div');
     strip.id = STRIP_ID;
     strip.style.cssText = 'margin:0 auto 16px;max-width:1400px;';
@@ -16289,36 +16342,69 @@ function getLoginToken() {
       '</div>' +
       '<div data-vdb-row style="display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;-webkit-overflow-scrolling:touch;"></div>';
     grid.parentNode.insertBefore(strip, grid);
+    // 先建好锚点, 播放器挂载用
+    getAnchor();
     var row = strip.querySelector('[data-vdb-row]');
     for (var i = 0; i < videos.length; i++) {
       try {
-        if (typeof card !== 'function') break; // 降级: 找不到卡片函数则不渲染
-        var c = card(videos[i]);
+        var v = videos[i];
+        var c = card(v);
         c.style.minWidth = '200px';
         c.style.maxWidth = '200px';
         c.style.flex = '0 0 auto';
+        // 捕获阶段拦截 card() 自带的点击 (它会把播放器插进横向条里导致错乱),
+        // 改为挂到推荐条下方的全宽锚点
+        (function (vv, cc) {
+          function playAtAnchor(e) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            var anchor = getAnchor();
+            if (anchor) showInlinePlayer(vv, anchor);
+            else showInlinePlayer(vv, cc);
+          }
+          cc.addEventListener('click', playAtAnchor, true);
+          cc.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') playAtAnchor(e);
+          }, true);
+        })(v, c);
         row.appendChild(c);
       } catch (e) {}
     }
-    strip.querySelector('[data-vdb-rf]').addEventListener('click', function () { load(true); });
+    strip.querySelector('[data-vdb-rf]').addEventListener('click', function () { shuffle(); });
   }
 
-  var _cache = null;
+  var _pool = [];
+  var _refreshCount = 0;
   async function load(force) {
     if (!isHome()) { hide(); return; }
-    if (_cache && !force) { renderStrip(_cache); return; }
+    if (_pool.length && !force) { renderStrip(pickBatch(_pool)); return; }
     var hist = [];
     try { hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 20); } catch (e) {}
     var authors = await collectAuthors();
     if (!authors.length) { hide(); return; } // 无信号 → 不打扰
-    var videos = await fetchRecommend(authors, hist);
-    _cache = videos;
-    if (isHome()) renderStrip(videos);
+    _pool = await fetchPool(authors, hist);
+    _refreshCount = 0;
+    if (isHome()) renderStrip(pickBatch(_pool));
+  }
+
+  // 换一批: 洗牌重取; 每点3次重新拉一次池子, 保证有新货
+  async function shuffle() {
+    if (!isHome()) return;
+    _refreshCount++;
+    if (_refreshCount % 3 === 0 || _pool.length <= MAX) {
+      var hist = [];
+      try { hist = (typeof getHistory === 'function' ? getHistory() : []).slice(0, 20); } catch (e) {}
+      var authors = await collectAuthors();
+      if (authors.length) _pool = await fetchPool(authors, hist);
+    }
+    if (isHome()) renderStrip(pickBatch(_pool));
   }
 
   function hide() {
     var el = document.getElementById(STRIP_ID);
     if (el) el.remove();
+    var a = document.getElementById(ANCHOR_ID);
+    if (a) a.remove();
   }
 
   function init() {
@@ -16334,7 +16420,7 @@ function getLoginToken() {
     }, 2000);
   }
 
-  window.VdbRecommend = { load: load, hide: hide };
+  window.VdbRecommend = { load: load, hide: hide, shuffle: shuffle };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
