@@ -21,7 +21,12 @@ from urllib.parse import urljoin
 
 ROU_BASE = "https://rou.video"
 
-# ---- 分类配置 (站主填写, 例: {"最新": "/home", "热门": "/hot", "国产": "/c/chinese"}) ----
+# ---- 分类配置 ----
+# 已知分类 (2026-10 实测网站描述): 国产AV, 自拍流出, 探花, 91大神,
+#   麻豆, 天美, 蜜桃, 91制片厂, 糖心Vlog, 星空无限, 精东, 杏吧
+# 两种配置方式:
+#  1) 环境变量 ROU_CATEGORIES="麻豆=/c/madou,天美=/c/tianmei" (精确)
+#  2) 留空则自动从首页导航发现分类链接 (fallback, 推荐)
 ROU_CATEGORIES = {
     u.strip(): v.strip()
     for u, v in (
@@ -29,6 +34,9 @@ ROU_CATEGORIES = {
         os.environ.get("ROU_CATEGORIES", "").split(",") if "=" in pair
     )
 }
+# 已知分类名 (用于前端展示 + 自动发现时匹配)
+ROU_KNOWN_CATS = ["国产AV", "自拍流出", "探花", "91大神",
+                  "麻豆", "天美", "蜜桃", "91制片厂", "糖心Vlog", "星空无限", "精东", "杏吧"]
 
 ROU_TIME_BUDGET = 240   # 本模块总时间预算(秒)
 ROU_MAX_PAGES_PER_CAT = 8  # 每个分类最多抓几页
@@ -128,7 +136,8 @@ def parse_rou_cards(html_text, source_url, category):
             "url": full,
             "video_url": full,
             "source_page": source_url,
-            "source_section": "rou",
+            # 子分类编码进 source_section: "rou" 或 "rou:麻豆"，前端按此过滤
+            "source_section": "rou:" + category if category and category != "首页" else "rou",
             "has_mp4": False,
             "needs_rescrape": True,
         })

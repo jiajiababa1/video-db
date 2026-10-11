@@ -5826,7 +5826,7 @@ self.onmessage = ({conn, data}) => {
         }
         if (activeAuthor) p += '&author=ilike.*' + encodeURIComponent(pgSan(activeAuthor.trim())) + '*';
         if (activeSection === 'rou' && rouFilter !== 'all') {
-            p += '&source_page=ilike.*' + encodeURIComponent(pgSan(rouFilter)) + '*';
+            p += '&source_section=ilike.*' + encodeURIComponent(pgSan(rouFilter)) + '*';
         }
         var isExtSection = activeSection === 'av4';
         if (!isExtSection && p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)';
@@ -7031,7 +7031,14 @@ self.onmessage = ({conn, data}) => {
     // ============ rou专区 ============
     // 子分类配置 (与爬虫 ROU_CATEGORIES 对应, 站主按网站实际栏目填写)
     // 格式: [{name:"显示名", path:"/路径"}, ...]
-    var ROU_CATS = [];
+    var ROU_CATS = [
+        {name:"国产AV", path:"rou:国产AV"}, {name:"自拍流出", path:"rou:自拍流出"},
+        {name:"探花", path:"rou:探花"}, {name:"91大神", path:"rou:91大神"},
+        {name:"麻豆", path:"rou:麻豆"}, {name:"天美", path:"rou:天美"},
+        {name:"蜜桃", path:"rou:蜜桃"}, {name:"91制片厂", path:"rou:91制片厂"},
+        {name:"糖心Vlog", path:"rou:糖心Vlog"}, {name:"星空无限", path:"rou:星空无限"},
+        {name:"精东", path:"rou:精东"}, {name:"杏吧", path:"rou:杏吧"}
+    ];
     var rouFilter = 'all';
     function rouSetFilter(f) {
         rouFilter = f;
