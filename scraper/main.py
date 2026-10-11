@@ -61,6 +61,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 
 try:
+    import rou as rou_mod
+except Exception:
+    rou_mod = None  # rou.py 缺失时跳过本站
+
+try:
     from curl_cffi import requests as creq  # 浏览器 TLS 指纹 (curl_cffi)
 except Exception:
     creq = None
@@ -1557,6 +1562,18 @@ def scrape_all():
             log(f"  详情相关合计 +{len(det_v)} 条")
         except Exception as e:
             log(f"  详情相关异常: {e}", "WARN")
+
+        log("阶段3d: rou.video 独立站 (专有栏目)")
+        try:
+            if rou_mod:
+                rou_v = rou_mod.crawl_rou(
+                    fetcher, min(deadline, time.time() + rou_mod.ROU_TIME_BUDGET), seen, log)
+                all_v.extend(rou_v)
+                log(f"  rou合计 +{len(rou_v)} 条")
+            else:
+                log("  rou.py 未找到, 跳过", "WARN")
+        except Exception as e:
+            log(f"  rou抓取异常: {e}", "WARN")
 
         stats["videos_found"] = len(all_v)
         log(f"阶段4: 保存 {len(all_v)} 条到数据库 ...")
