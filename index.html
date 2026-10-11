@@ -922,9 +922,6 @@ self.onmessage = ({conn, data}) => {
         .vid-card.av4-ext { border-style:dashed; }
         /* AV4 识别工具条 (仅 AV4 栏目显示) */
         #av4Bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 12px; margin:0 12px 8px; border:1px solid #2a2416; border-radius:8px; background:rgba(200,164,92,0.05); font-size:11px; color:#a09a8a; }
-        #rouBar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 12px; margin:0 12px 8px; border:1px solid #2a2416; border-radius:8px; background:rgba(200,164,92,0.05); font-size:11px; color:#a09a8a; }
-        #rouBar .rou-btn { padding:4px 10px; border-radius:6px; border:1px solid #3a352a; background:transparent; color:#a09a8a; cursor:pointer; font-size:11px; }
-        #rouBar .rou-btn.on { border-color:var(--vprimary); color:var(--vprimary); background:rgba(200,164,92,0.12); }
         #av4Bar .av4-btn { padding:4px 10px; border-radius:6px; border:1px solid #3a352a; background:transparent; color:#a09a8a; cursor:pointer; font-size:11px; }
         #av4Bar .av4-btn.on { border-color:var(--vprimary); color:var(--vprimary); background:rgba(200,164,92,0.12); }
         #av4Bar .av4-btn.act { border-color:var(--vprimary); color:#1a1808; background:var(--vprimary); font-weight:700; }
@@ -2158,7 +2155,6 @@ self.onmessage = ({conn, data}) => {
             <button class="vid-tab" data-section="home">🏠 推荐</button>
             <button class="vid-tab" data-section="latest">🆕 最新</button>
             <button class="vid-tab" data-section="av4">🎬 AV4</button>
-            <button class="vid-tab" data-section="rou">📺 rou专区</button>
             <button class="vid-tab" data-section="24h">🕐 24小时</button>
             <button class="vid-tab" data-section="3d">📅 3天</button>
             <button class="vid-tab" data-section="7d">📆 7天</button>
@@ -2174,10 +2170,6 @@ self.onmessage = ({conn, data}) => {
             <button class="av4-btn" data-av4f="dead" onclick="av4SetFilter('dead')">⚠️失效 <b id="av4CDead"></b></button>
             <button class="av4-btn act" id="av4DetectBtn" onclick="av4DetectVisible()">🔍 检测本页</button>
             <span id="av4Hint" style="opacity:0.7;"></span>
-        </div>
-        <div id="rouBar" style="display:none;">
-            <span>📺 rou分类:</span>
-            <span id="rouCatBtns"></span>
         </div>
         <div class="author-header" id="authorHeader">
             <button class="author-back" onclick="backToMainView()">← 返回全部</button>
@@ -5826,9 +5818,6 @@ self.onmessage = ({conn, data}) => {
             p += '&source_section=ilike.*' + encodeURIComponent(pgSan(activeSection)) + '*';
         }
         if (activeAuthor) p += '&author=ilike.*' + encodeURIComponent(pgSan(activeAuthor.trim())) + '*';
-        if (activeSection === 'rou' && rouFilter !== 'all') {
-            p += '&source_section=ilike.*' + encodeURIComponent(pgSan(rouFilter)) + '*';
-        }
         var isExtSection = activeSection === 'av4';
         if (!isExtSection && p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)';
         if (!isExtSection && playableFilter === 'playable') p += '&or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
@@ -7029,49 +7018,6 @@ self.onmessage = ({conn, data}) => {
         var h = document.getElementById('av4Hint');
         if (h) h.textContent = n.all ? ('本页 ✅' + n.playable + ' · 🔗' + n.external + ' · ⚠️' + n.dead) : '';
     }
-    // ============ rou专区 ============
-    // 子分类配置 (与爬虫 ROU_CATEGORIES 对应, 站主按网站实际栏目填写)
-    // 格式: [{name:"显示名", path:"/路径"}, ...]
-    var ROU_CATS = [
-        {name:"国产AV", path:"rou:国产AV"}, {name:"自拍流出", path:"rou:自拍流出"},
-        {name:"探花", path:"rou:探花"}, {name:"91大神", path:"rou:91大神"},
-        {name:"麻豆", path:"rou:麻豆"}, {name:"天美", path:"rou:天美"},
-        {name:"蜜桃", path:"rou:蜜桃"}, {name:"91制片厂", path:"rou:91制片厂"},
-        {name:"糖心Vlog", path:"rou:糖心Vlog"}, {name:"星空无限", path:"rou:星空无限"},
-        {name:"精东", path:"rou:精东"}, {name:"杏吧", path:"rou:杏吧"}
-    ];
-    var rouFilter = 'all';
-    function rouSetFilter(f) {
-        rouFilter = f;
-        try { localStorage.setItem('rou_filter', f); } catch (e) {}
-        rouUpdateBar();
-        loadVids(true);
-    }
-    function rouUpdateBar() {
-        var bar = document.getElementById('rouBar');
-        if (!bar) return;
-        var on = (typeof activeSection !== 'undefined' && activeSection === 'rou' && !activeAuthor);
-        bar.style.display = on ? '' : 'none';
-        if (!on) return;
-        var box = document.getElementById('rouCatBtns');
-        if (box && !box.dataset.built) {
-            box.dataset.built = '1';
-            var h = '<button class="rou-btn' + (rouFilter === 'all' ? ' on' : '') + '" data-rouf="all">全部</button>';
-            for (var i = 0; i < ROU_CATS.length; i++) {
-                h += '<button class="rou-btn' + (rouFilter === ROU_CATS[i].path ? ' on' : '') + '" data-rouf="' + ROU_CATS[i].path + '">' + ROU_CATS[i].name + '</button>';
-            }
-            box.innerHTML = h;
-            box.addEventListener('click', function (e) {
-                var b = e.target.closest('[data-rouf]');
-                if (b) rouSetFilter(b.getAttribute('data-rouf'));
-            });
-        }
-        if (box) {
-            var bs = box.querySelectorAll('[data-rouf]');
-            for (var j = 0; j < bs.length; j++) bs[j].classList.toggle('on', bs[j].getAttribute('data-rouf') === rouFilter);
-        }
-    }
-    try { var _rf = localStorage.getItem('rou_filter'); if (_rf) rouFilter = _rf; } catch (e) {}
     function av4SetFilter(f) {
         av4Filter = f;
         try { localStorage.setItem('av4_filter', f); } catch (e) {}
@@ -7452,23 +7398,6 @@ self.onmessage = ({conn, data}) => {
         ghDispatch(GH_WORKFLOW, { mode: (mode === 'resolve' ? 'resolve' : 'full') }, 'scrape').then(function(ok) {
             if (!ok) { setRefreshBusy(false, '🔄 更新'); lastTrigger = 0; }
             else setRefreshBusy(false, '🔄 更新');
-        });
-    }
-
-    // 📺 rou 一键更新 → 只触发 rou.video 独立站抓取 (scraper.yml mode=rou)
-    var lastRouTrigger = 0;
-    function triggerRouScrape(){
-        // 仅站主可用
-        if (!(window.isOwner && window.isOwner())) return;
-        var now = Date.now();
-        if (now - lastRouTrigger < COOLDOWN) {
-            toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastRouTrigger))/60000) + ' 分钟后可再触发');
-            return;
-        }
-        lastRouTrigger = now;
-        toast('📺 正在触发 rou.video 云端抓取...');
-        ghDispatch(GH_WORKFLOW, { mode: 'rou' }, 'rou').then(function(ok) {
-            if (!ok) lastRouTrigger = 0;
         });
     }
 
@@ -8414,7 +8343,6 @@ self.onmessage = ({conn, data}) => {
         else if(activeSection === 'watchlater') $stat.innerHTML='📌 <b>稍后观看</b> — 共 '+count.toLocaleString()+' 个视频 <button onclick="clearWatchLater()" style="margin-left:8px;padding:2px 8px;border-radius:4px;border:1px solid #c08080;background:transparent;color:#c08080;cursor:pointer;font-size:10px;">清空</button>' + _cloudStatusHtml;
         else if(activeSection === 'favs') $stat.innerHTML='⭐ <b>我的收藏</b> — 共 '+count.toLocaleString()+' 个视频' + _cloudStatusHtml;
         else if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+count.toLocaleString()+' 个视频';
-        else if (activeSection === 'rou') $stat.innerHTML='📺 <b>rou专区</b> — 共 '+count.toLocaleString()+' 个视频';
         else if (activeSection === 'av4') {
             var _am = av4MapLoad();
             var _pa = 0, _ex = 0, _de = 0;
@@ -11369,7 +11297,6 @@ self.onmessage = ({conn, data}) => {
         area.innerHTML =
             '<p style="color:var(--vtext);margin-bottom:6px;">🔄 爬虫控制</p>' +
             '<button class="cheat-btn accent" onclick="triggerScraper(\'full\');closeAdminPanel();" style="width:100%;margin-bottom:6px;">🚀 云端抓取 (只爬视频+MP4, 不补文案)</button>' +
-            '<button class="cheat-btn accent" onclick="triggerRouScrape();closeAdminPanel();" style="width:100%;margin-bottom:6px;background:rgba(120,180,220,0.15);color:#7ab8dc;">📺 rou 一键更新 (只抓 rou.video 独立站)</button>' +
             '<button class="cheat-btn accent" onclick="triggerTextBackfill(120);closeAdminPanel();" style="width:100%;margin-bottom:6px;background:rgba(200,180,100,0.15);color:#c8a45c;">📝 云端补文案 (只回填标题+作者, 120条)</button>' +
             '<button class="cheat-btn" onclick="batchBackfillText();closeAdminPanel();" style="width:100%;margin-bottom:6px;">📝 本地补文案 (备用: 本机逐条跑, 断点续跑)</button>' +
             '<a href="https://github.com/jiajiababa1/video-db/actions/workflows/scraper.yml" target="_blank" style="text-decoration:none;">' +
