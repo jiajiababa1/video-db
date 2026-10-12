@@ -5681,8 +5681,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         aiSyncPlayer(); aiMarkPlayerBtn();
         aiAutoTag(v);
 
-        // 确保播放器真的滚动到可视区 (原生平滑滚动在本环境会被丢弃, 用自实现滚动)
-        scrollElIntoView(player, 'nearest');
+        // 确保播放器真的滚动到可视区 (rAF 等布局完成后再算位置，避免量到 0 高度导致乱滚)
+        requestAnimationFrame(function(){ scrollElIntoView(player, 'nearest'); });
 
         var wrap = player.querySelector('.vpi-player-wrap');
         var isExtV = v && v.video_id && v.video_id.indexOf('av4_') === 0 && v.video_url && v.video_url.indexOf('http') === 0;
@@ -5738,21 +5738,13 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             }
             if (result.mp4Url && v.video_id) {
                 try {
-                    fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
-                        method: 'PATCH', headers: _h(),
-                        body: JSON.stringify({ duration: result.mp4Url, has_mp4: true, needs_rescrape: false })
+                    fetch(SUPABASE_URL + '/rest/v1/rpc/submit_mp4', {
+                        method: 'POST', headers: _h(),
+                        body: JSON.stringify({ p_video_id: v.video_id, p_mp4_url: result.mp4Url })
                     }).catch(function(){});
                 } catch(e) {}
             }
-            if (!result.mp4Url && v.video_id) {
-                // 解析失败, 标记需要重爬
-                try {
-                    fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
-                        method: 'PATCH', headers: _h(),
-                        body: JSON.stringify({ needs_rescrape: true })
-                    }).catch(function(){});
-                } catch(e) {}
-            }
+            // 解析失败标记改由后端断链巡检统一处理 (前端无写权限)
         }).catch(function() {
             renderVideoError(wrap, '网络错误', '请检查网络后重试');
         });
