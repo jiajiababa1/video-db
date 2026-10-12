@@ -67,6 +67,11 @@ jobs:
               echo "::warning::仓库里没有 $f, 已跳过"
             fi
           done
+          # 多页面公共资源 (multipage 分支步骤1)
+          if [ -d "assets" ]; then
+            cp -r assets _site/assets
+            echo "已发布: assets/"
+          fi
           # 如确实需要公开 TOTP 页面, 把 totp.html 加进上面的列表 (会暴露给所有人, 内含密钥请谨慎)
 
       - uses: actions/upload-pages-artifact@v5
