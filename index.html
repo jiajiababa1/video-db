@@ -2048,6 +2048,14 @@ body.dark-mode .view-video, body.dark-mode .view-game {
     * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
 
+
+/* 信任设备勾选 */
+body.dark-mode .auth-trust {
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    margin-top:14px; font-size:12px; color:var(--vmuted); cursor:pointer;
+    user-select:none;
+}
+body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c; cursor:pointer; }
 </style>
 <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
 
@@ -2273,6 +2281,7 @@ body.dark-mode .view-video, body.dark-mode .view-game {
                 <input type="tel" class="auth-digit" id="authD4" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="off">
             </div>
             <p class="auth-hint" id="authHint">在 iOS 快捷指令中查看当前密码</p>
+            <label class="auth-trust"><input type="checkbox" id="authTrust"> 信任此设备 90 天免密码</label>
         </div>
     </div>
 
@@ -4003,8 +4012,16 @@ body.dark-mode .view-video, body.dark-mode .view-game {
             // 后台校验会话, 失效则回到密码锁
             extendAuth().then(function(ok){ if (!ok) { localStorage.removeItem('vid_gate_token'); if (document.body.classList.contains('dark-mode')) showAuthOverlay(); } });
         } else {
-            // 未认证 / 每次从游戏进入 → 必须输入动态密码
-            showAuthOverlay();
+            // 未认证 → 先试受信任设备免密登录，失败才弹密码框
+            fetch(SUPABASE_URL + '/rest/v1/rpc/device_gate_login', {method:'POST', headers:{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json'}, body: JSON.stringify({p_device_id: getDeviceId()})}).then(function(r){ return r.ok ? r.json() : null; }).then(function(_tj){
+                if (_tj && _tj.ok && _tj.token) {
+                    localStorage.setItem('vid_gate_token', _tj.token);
+                    __authPassedThisLoad = true;
+                    enterVideoMode();
+                } else {
+                    showAuthOverlay();
+                }
+            }).catch(function(){ showAuthOverlay(); });
         }
     }
     function goBackToGame() {
@@ -4150,6 +4167,13 @@ body.dark-mode .view-video, body.dark-mode .view-game {
             if (j && j.length && j[0].ok && j[0].token) {
                 localStorage.setItem('vid_gate_token', j[0].token);
                 hideAuthOverlay();
+                try {
+                    var _trust = document.getElementById('authTrust');
+                    if (_trust && _trust.checked) {
+                        fetch(SUPABASE_URL + '/rest/v1/rpc/trust_device', {method:'POST', headers:_h(),
+                            body: JSON.stringify({p_token: j[0].token, p_device_id: getDeviceId(), p_label: '站主手机'})}).catch(function(){});
+                    }
+                } catch(e) {}
             } else {
                 // 抖动错误效果
                 allDigits.forEach(function(d) { d.classList.add('error'); });
@@ -12626,6 +12650,9 @@ function getLoginToken() {
             s.removeItem('login_user'); s.removeItem('login_hash'); s.removeItem('login_token'); s.removeItem('login_time');
         });
         localStorage.removeItem('login_remember');
+        // 退出登录同时取消本机受信任设备免密 (下次需重新输密码+勾选)
+        try { fetch(SUPABASE_URL + '/rest/v1/rpc/untrust_device', {method:'POST', headers:{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json'}, body: JSON.stringify({p_device_id: getDeviceId()})}).catch(function(){}); } catch(e) {}
+        try { localStorage.removeItem('vid_gate_token'); } catch(e) {}
         // 退出登录清掉本机 TL 密钥残留 (站主的可从账号云端恢复, 别人登录不会蹭到)
         try { localStorage.removeItem('tl_api_key'); } catch (e) {}
         _username = ''; _loggedIn = false;
