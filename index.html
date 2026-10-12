@@ -982,8 +982,10 @@ self.onmessage = ({conn, data}) => {
         .vid-thumb { position:relative; width:100%; padding-top:56.25%; background:#0a0a0c; overflow:hidden; }
         .vid-thumb img {
             position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
-            transition:transform 0.5s; background:#0a0a0c;
+            transition:transform 0.5s, opacity 0.45s ease; background:#0a0a0c;
+            opacity:0;
         }
+        .vid-thumb img.loaded { opacity:1; }
         .vid-card:hover .vid-thumb img { transform:scale(1.04); }
         .vid-noimg {
             position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
@@ -8370,7 +8372,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
 
         var pu = v.thumbnail_url || '';
         var imgHtml = pu
-            ? '<img src="' + esc(pu) + '" alt="" loading="lazy" decoding="async" onerror="var p=this.parentElement;this.style.display=\'none\';var n=p&&p.querySelector(\'.vid-noimg\');if(n)n.style.display=\'flex\';">'
+            ? '<img src="' + esc(pu) + '" alt="" loading="lazy" decoding="async" onload="this.classList.add(\'loaded\')" onerror="var p=this.parentElement;this.style.display=\'none\';var n=p&&p.querySelector(\'.vid-noimg\');if(n)n.style.display=\'flex\';">'
             : '';
         var noImgDisplay = pu ? 'display:none;' : '';
         var _secTxt = firstSection(v.source_section);
