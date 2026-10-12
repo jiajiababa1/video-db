@@ -2261,9 +2261,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <div id="browserBookmarks" style="display:none;margin-bottom:4px;padding:6px 8px;background:var(--vcard);border:1px solid var(--vborder);border-radius:var(--radius-sm);font-size:11px;max-height:120px;overflow-y:auto;"></div>
             <div style="display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap;">
                 <button class="cheat-btn" onclick="browserGoTo('https://monsnode.com')" style="font-size:10px;padding:2px 8px;">monsnode</button>
-                <button class="cheat-btn" onclick="browserGoTo('https://x.com')" style="font-size:10px;padding:2px 8px;">X</button>
-                <button class="cheat-btn" onclick="browserGoTo('https://youtube.com')" style="font-size:10px;padding:2px 8px;">YouTube</button>
-                <button class="cheat-btn" onclick="browserGoTo('https://google.com')" style="font-size:10px;padding:2px 8px;">Google</button>
+                <button class="cheat-btn" onclick="window.open('https://x.com','_blank')" style="font-size:10px;padding:2px 8px;" title="X 禁止嵌入，点击在新标签页打开">X ↗</button>
+                <button class="cheat-btn" onclick="window.open('https://youtube.com','_blank')" style="font-size:10px;padding:2px 8px;" title="YouTube 禁止嵌入，点击在新标签页打开">YouTube ↗</button>
+                <button class="cheat-btn" onclick="window.open('https://google.com','_blank')" style="font-size:10px;padding:2px 8px;" title="Google 禁止嵌入，点击在新标签页打开">Google ↗</button>
                 <button class="cheat-btn" onclick="browserOpenInNewTab()" style="font-size:10px;padding:2px 8px;background:rgba(100,160,200,0.1);color:#4a9adf;">🔗 新标签打开</button>
             </div>
             <iframe id="browserFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" style="flex:1;width:100%;min-height:500px;border:1px solid var(--vborder);border-radius:var(--radius-sm);background:#fff;"></iframe>
@@ -12331,6 +12331,18 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
 
     // ============ 内置浏览器 + 视频抓取 ============
     var _browserHistory = [], _browserIdx = -1;
+    // 这些站发了 X-Frame-Options 禁止被 iframe 嵌入，前端无法绕过，直接走新标签页
+    var _browserBlockedDomains = ['x.com', 'twitter.com', 'youtube.com', 'youtu.be', 'google.com', 'facebook.com', 'instagram.com'];
+    function _browserIsBlocked(url) {
+        try {
+            var h = new URL(url).hostname.toLowerCase();
+            for (var i = 0; i < _browserBlockedDomains.length; i++) {
+                var d = _browserBlockedDomains[i];
+                if (h === d || h.endsWith('.' + d)) return true;
+            }
+        } catch(e) {}
+        return false;
+    }
 
     function openBrowser(url) {
         document.getElementById('browserOverlay').classList.add('on');
@@ -12362,6 +12374,13 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             else url = 'https://' + url;
         }
         document.getElementById('browserUrl').value = url;
+        // 禁止嵌入的站：直接新标签页打开，不浪费 iframe
+        if (_browserIsBlocked(url)) {
+            document.getElementById('browserStatus').textContent = '⚠️ 该站禁止嵌入，已用新标签页打开';
+            try { toast('该站禁止 iframe 嵌入，已在新标签页打开'); } catch(e) {}
+            window.open(url, '_blank');
+            return;
+        }
         document.getElementById('browserStatus').textContent = '⏳ 加载中...';
         document.getElementById('browserFrame').src = url;
         _browserIdx++;
