@@ -1,0 +1,31 @@
+name: MP4直链回填
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: '每轮处理数量'
+        required: false
+        default: '200'
+      workers:
+        description: '并发数'
+        required: false
+        default: '10'
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 回填MP4直链
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          BATCH="${{ github.event.inputs.batch }}"; [ -z "$BATCH" ] && BATCH=200
+          WORKERS="${{ github.event.inputs.workers }}"; [ -z "$WORKERS" ] && WORKERS=10
+          python3 scraper/mp4_backfill.py --batch "$BATCH" --workers "$WORKERS"

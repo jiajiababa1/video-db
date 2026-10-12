@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<script>
+/* env-guard: 官方站点运行环境校验 (防整站下载盗用) */
+(function(){
+  var _d = function(a){ return String.fromCharCode.apply(null, a); };
+  var _H = [[106,105,97,106,105,97,98,97,98,97,49,46,103,105,116,104,117,98,46,105,111]];
+  function _ok(){
+    try{
+      var h = String(location.hostname||'').toLowerCase();
+      var p = String(location.protocol||'').toLowerCase();
+      if(p!=='https:' && p!=='http:') return false;
+      if(window.top!==window.self) return false;
+      for(var i=0;i<_H.length;i++){ if(h===_d(_H[i])) return true; }
+      return false;
+    }catch(e){ return false; }
+  }
+  function _lock(){
+    if(window.__vdb_locked) return;
+    window.__vdb_locked = true;
+    try{ window.fetch = function(){ return Promise.reject(new Error('net blocked')); }; }catch(e){}
+    try{
+      var css=document.createElement('style');
+      css.textContent='html.__vdb_locked body>*{display:none!important}';
+      document.documentElement.appendChild(css);
+      document.documentElement.classList.add('__vdb_locked');
+      var box=document.createElement('div');
+      box.setAttribute('style','position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#08080a;color:#e4e0d8;font-family:sans-serif;text-align:center;padding:24px;');
+      box.innerHTML='<div><div style="font-size:44px;margin-bottom:16px;">🔒</div><div style="font-size:17px;font-weight:700;">此页面仅可在官方站点使用</div><div style="font-size:13px;color:#8a8578;margin-top:10px;"><a href="https://jiajiababa1.github.io/video-db/" style="color:#c8a45c;">jiajiababa1.github.io/video-db</a></div></div>';
+      document.documentElement.appendChild(box);
+    }catch(e){}
+  }
+  if(!_ok()){ _lock(); }
+})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>播放 - VideoDB</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#08080a;color:#e4e0d8;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh}
+  .bar{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #1c1a16}
+  .bar a{color:#c8a45c;text-decoration:none;font-size:14px}
+  .bar .t{flex:1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  video{width:100%;max-height:62vh;background:#000;display:block}
+  .info{padding:14px}
+  .info h1{font-size:15px;line-height:1.5;margin-bottom:8px}
+  .info .m{font-size:12px;color:#8a8578}
+  .msg{padding:40px 20px;text-align:center;color:#8a8578;font-size:14px;line-height:2}
+</style>
+</head>
+<body>
+<div class="bar"><a href="./index.html">‹ 返回</a><span class="t" id="t">加载中…</span></div>
+<video id="v" controls playsinline webkit-playsinline referrerpolicy="no-referrer"></video>
+<div class="info"><h1 id="h"></h1><div class="m" id="m"></div></div>
+<div class="msg" id="msg" style="display:none"></div>
+<script>
+(function(){
+  'use strict';
+  var q = new URLSearchParams(location.search);
+  var vid = q.get('v') || '';
+  if(!vid){ show('缺少视频参数'); return; }
+  /* 与 index.html 同一套 XOR+Base64 混淆 key 存放 */
+  var _sk=[86,105,100,68,98,75,101,121];
+  function _dec(b){var s=atob(b),o='';for(var i=0;i<s.length;i++)o+=String.fromCharCode(s.charCodeAt(i)^_sk[i%_sk.length]);return o;}
+  var KEY=_dec('MxAuLAAMBhAZAC4NNzEsSBgALTcrJTdMNSotcisgFSEAKi59TC4cMyYKVwkLBAwzLA08BgoSCD8sMzcNEQILMzozDQ1UAggjOggKChUvCDM8CFYgEBIISDsMM31WKj0vPyANMwsoCEAlMzcNVAIIPyMLVnALByYzJjA8FQsEDzxlJiAFUgQhGiwnHicRAggvYgonDVQGDzhjJw4FUAYfNGUnV3RMB1QTAFk8ExIOU0A4ODIjOBwIOC4DKwM2CikJMAQgcxotCRoZWz0mVxFUTQ==');
+  var SB=_dec('Ph0QNBFxSlYwDA43Ej0HGj0ODyYPLRwWLgARJkw4EAk3CwU3B2UGFg==');
+  var H={'apikey':KEY,'Authorization':'Bearer '+KEY};
+  function show(t){var e=document.getElementById('msg');e.style.display='';e.textContent=t;}
+  fetch(SB+'/rest/v1/videos?video_id=eq.'+encodeURIComponent(vid)+'&select=video_id,title,author,views,duration,video_url,has_mp4&limit=1',{headers:H})
+    .then(function(r){return r.json();})
+    .then(function(rows){
+      var v=rows[0];
+      if(!v){show('视频不存在或已删除');return;}
+      document.getElementById('t').textContent=v.title||vid;
+      document.getElementById('h').textContent=v.title||vid;
+      document.getElementById('m').textContent=(v.author?'@'+v.author+' · ':'')+(v.views?('▶ '+v.views):'');
+      var url=(v.video_url||'');
+      /* 优先后端已解析的直链 (#1 解析后端化)；否则提示回主站 */
+      if(url.indexOf('video.twimg.com')>=0||url.indexOf('.mp4')>=0){
+        var vd=document.getElementById('v');
+        vd.src=url; vd.play().catch(function(){});
+      }else{
+        show('该视频暂无直链，正在后端解析中…请稍后回主站观看');
+      }
+    })
+    .catch(function(){show('加载失败，请检查网络');});
+})();
+</script>
+</body>
+</html>
