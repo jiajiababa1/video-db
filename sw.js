@@ -1,5 +1,5 @@
 /* VideoDB Service Worker (#2 PWA) — 应用壳缓存，离线可开 */
-var CACHE = 'vdb-shell-v1';
+var CACHE = 'vdb-shell-v2';
 var SHELL = ['./', './index.html', './manifest.json'];
 self.addEventListener('install', function(e) {
   e.waitUntil(caches.open(CACHE).then(function(c) { return c.addAll(SHELL); })
