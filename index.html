@@ -9648,7 +9648,64 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         } catch(e) {}
     }
 
-    // 点击「同作者视频」: 卡片在列表里 → 定位打开; 不在 → 拉完整数据直接播放
+    // 原地换片：在当前播放器内直接切换视频，不滚动不跳位置
+    function switchInlineVideo(v) {
+        var player = currentInlinePlayer;
+        if (!player || !v) return;
+        if (v.video_id) addToHistory(v.video_id);
+        currentInlineVideo = v;
+        currentInlineOpenAt = Date.now();
+        // 更新元信息
+        player.querySelector('.vpi-title').textContent = v.title || v.video_id || '视频';
+        var authorEl = player.querySelector('.vpi-author');
+        var followBtn = player.querySelector('.vpi-follow-author');
+        if (v.author) {
+            authorEl.style.display = '';
+            authorEl.textContent = '@' + v.author; authorEl.style.cursor = 'pointer';
+            if (followBtn) {
+                followBtn.style.display = '';
+                var fon = isFollowing(v.author);
+                followBtn.classList.toggle('on', fon);
+                followBtn.innerHTML = fon ? '★ 已关注' : '☆ 关注作者';
+            }
+        } else {
+            authorEl.style.display = 'none';
+            if (followBtn) followBtn.style.display = 'none';
+        }
+        var views = parseInt(v.views) || 0;
+        player.querySelector('.vpi-views').textContent = views > 0 ? '👁 ' + formatNum(views) : '';
+        var _sec = firstSection(v.source_section);
+        player.querySelector('.vpi-section').textContent = _sec ? '#' + _sec : '';
+        syncFavWlButtons(v.video_id);
+        // 清空旧视频，重新解析新视频（复用 showInlinePlayer 的解析流程，不滚动）
+        var wrap = player.querySelector('.vpi-player-wrap');
+        var oldVids = wrap.querySelectorAll('video');
+        for (var oi = 0; oi < oldVids.length; oi++) { try { oldVids[oi].pause(); } catch(_e) {} }
+        wrap.innerHTML = '<div class="vpi-spinner"></div>';
+        var dur = v.duration || '';
+        if (dur.indexOf('http') === 0 && (dur.indexOf('.mp4') >= 0 || dur.indexOf('video.twimg.com') >= 0)) {
+            setInlineVideo(wrap, dur);
+            currentInlineMp4 = dur;
+            updateInlineBtns(player, dur, v);
+            loadRelatedVideos(v);
+            return;
+        }
+        resolveVideoSource(v).then(function(result) {
+            if (!player.isConnected) return;
+            if (result.mp4Url) {
+                setInlineVideo(wrap, result.mp4Url);
+                currentInlineMp4 = result.mp4Url;
+                updateInlineBtns(player, result.mp4Url, v);
+                loadRelatedVideos(v);
+            } else {
+                renderVideoError(wrap, '暂无可用视频源', '点击原站链接在 monsnode 查看');
+            }
+        }).catch(function() {
+            if (player.isConnected) renderVideoError(wrap, '网络错误', '请检查网络后重试');
+        });
+    }
+
+    // 点击「同作者视频」: 播放器开着 → 原地换片; 否则卡片在列表里 → 定位打开; 不在 → 拉完整数据直接播放
     async function playRelatedVideo(videoId) {
         if (!videoId) return;
         var v = null;
@@ -9659,6 +9716,11 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             if (!data.length) { toast('❌ 视频不存在'); return; }
             v = data[0];
         } catch(e) { toast('❌ 加载失败'); return; }
+        // 原地换片：播放器开着时直接换内容，不关闭、不滚动、不跳位置
+        if (currentInlinePlayer && currentInlinePlayer.isConnected) {
+            switchInlineVideo(v);
+            return;
+        }
         closeInlinePlayer(true);
         _savedScrollY = 0;
         // 作者页用 .author-row (无 dataset.vid，用 _vidData)，主页用 .vid-card
