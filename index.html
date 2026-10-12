@@ -9659,9 +9659,10 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         } catch(e) { toast('❌ 加载失败'); return; }
         closeInlinePlayer(true);
         _savedScrollY = 0;
-        var cards = document.querySelectorAll('.vid-card');
+        // 作者页用 .author-row (无 dataset.vid，用 _vidData)，主页用 .vid-card
+        var cards = document.querySelectorAll('.vid-card, .author-row');
         for (var i = 0; i < cards.length; i++) {
-            var vid = cards[i].dataset.vid;
+            var vid = cards[i].dataset.vid || (cards[i]._vidData && cards[i]._vidData.video_id);
             var badge = cards[i].querySelector('.vid-badge');
             if (!vid && badge) vid = badge.textContent.toLowerCase();
             if (vid === videoId && cards[i].isConnected) {
