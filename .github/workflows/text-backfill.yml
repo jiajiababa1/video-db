@@ -7,7 +7,7 @@ name: Text Backfill (只补文案)
 # 说明:
 #   • 只跑 scraper/text_backfill.py: 给无标题视频回填推文原文(title)+作者,
 #     顺手带 MP4。不抓列表、不碰新视频 —— 与 scraper.yml 的抓取任务完全解耦。
-#   • 定时每 6 小时跑 400 条; 站内「📝 补文案」按钮可手动触发 (默认 120 条)。
+#   • 定时每 6 小时跑 1000 条; 站内「📝 补文案」按钮可手动触发 (默认 120 条)。
 #   • 需要仓库 Secrets: SUPABASE_URL / SUPABASE_KEY (必须是 service_role,
 #     与 scraper.yml 用同一套即可)。
 #   • 注意: monsnode 会对 GitHub Actions 机房 IP 弹 Cloudflare 挑战,
@@ -15,7 +15,7 @@ name: Text Backfill (只补文案)
 #     「📝 本地补文案 (备用)」逐条补。
 on:
   schedule:
-    - cron: '20 */6 * * *'   # 每 6 小时 :20, 每次 400 条
+    - cron: '20 */6 * * *'   # 每 6 小时 :20, 每次 1000 条
   workflow_dispatch:
     inputs:
       limit:
@@ -47,7 +47,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           LIM="${{ github.event.inputs.limit }}"
-          if [ -z "$LIM" ]; then LIM="400"; fi
+          if [ -z "$LIM" ]; then LIM="1000"; fi
           python -u scraper/text_backfill.py --limit "$LIM"
 
   # ============ 失败告警: 任一 job 失败时推送 ntfy ============

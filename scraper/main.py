@@ -111,6 +111,7 @@ CARD_SPLIT = '<div class="listn"'
 RE_MID = re.compile(r"redirect\.php\?v=(\d+)")
 RE_IMG_SRC = re.compile(r'<img\b[^>]*?\bsrc="([^"]*)"', re.S)
 RE_IMG_ALT = re.compile(r'<img\b[^>]*?\balt="([^"]*)"', re.S)
+RE_A_TITLE = re.compile(r'<a\b[^>]*?\btitle="([^"]*)"', re.S)
 RE_AUTHOR = re.compile(
     r'<div class="user">\s*<a[^>]*>\s*<div>\s*<span>([^<]*)</span>', re.S
 )
@@ -571,6 +572,10 @@ def parse_cards(html_text, source_url, section):
         alt_m = RE_IMG_ALT.search(chunk)
         au_m = RE_AUTHOR.search(chunk)
         title = htmlmod.unescape(alt_m.group(1)).strip() if alt_m else ""
+        if not title:
+            a_t_m = RE_A_TITLE.search(chunk)
+            if a_t_m:
+                title = htmlmod.unescape(a_t_m.group(1)).strip()
         thumb = htmlmod.unescape(src_m.group(1)).strip() if src_m else ""
         author = htmlmod.unescape(au_m.group(1)).strip() if au_m else ""
         out.append({
