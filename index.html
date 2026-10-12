@@ -8564,12 +8564,17 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             '<span class="ar-meta">' + date + '</span>' +
             '<span class="ar-status" title="'+(hasMp4?'已缓存':'点击解析')+'">' + statusIcon + '</span>' +
             '<div class="ar-loading"></div>';
-        row.addEventListener('click', function(e) {
-            if (e.target.closest('.vid-copy')) return;
+        // 用 onclick (iOS 上比 addEventListener 更可靠)
+        row.onclick = function(e) {
+            if (e.target.closest && e.target.closest('.vid-copy')) return;
             row.classList.add('loading');
-            showInlinePlayer(v, row);
+            try {
+                showInlinePlayer(v, row);
+            } catch(_err) {
+                try { toast('播放失败: ' + (_err && _err.message || _err)); } catch(_e2) {}
+            }
             setTimeout(function() { row.classList.remove('loading'); }, 2000);
-        });
+        };
         row._vidData = v;
         return row;
     }
