@@ -1792,7 +1792,8 @@ body.dark-mode .vid-header {
     border-radius: 22px !important;
     border: 1px solid rgba(255,255,255,0.10) !important;
     padding: 12px 18px !important;
-    top: 10px !important;
+    /* 安全区: 吸顶时避开灵动岛/刘海 */
+    top: calc(env(safe-area-inset-top, 0px) + 8px) !important;
 }
 body.dark-mode .vid-header::before {
     content:''; position:absolute; inset:0; border-radius:22px; pointer-events:none;
