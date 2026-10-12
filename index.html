@@ -9673,10 +9673,16 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             }
         }
         try { toast('⚠️ 没找到卡片，走临时卡片'); } catch(_e) {}
-        var tmpCard = card(v);
-        tmpCard.setAttribute('data-tmp-related', '1');
-        $grid.insertBefore(tmpCard, $grid.firstChild);
-        showInlinePlayer(v, tmpCard);
+        try {
+            var tmpCard = card(v);
+            tmpCard.setAttribute('data-tmp-related', '1');
+            $grid.insertBefore(tmpCard, $grid.firstChild);
+            try { toast('📦 临时卡片已插入'); } catch(_e2) {}
+            showInlinePlayer(v, tmpCard);
+            try { toast('▶️ 播放器已调用'); } catch(_e3) {}
+        } catch(_err) {
+            try { toast('❌ 兜底失败: ' + (_err && _err.message || _err)); } catch(_e4) {}
+        }
     }
 
     // 清理 playRelatedVideo 产生的临时卡片 (避免污染视频列表)
