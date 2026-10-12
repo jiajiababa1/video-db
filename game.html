@@ -1,0 +1,1560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>2048 - 游戏</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+        .game-wrapper { max-width:500px; margin:0 auto; padding:24px 16px; text-align:center; }
+        .game-top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+        .game-logo {
+            font-size:68px; font-weight:800; color:var(--accent); cursor:pointer;
+            letter-spacing:-2px; line-height:1;
+            font-family: var(--font-serif);
+            transition:transform 0.3s; position:relative;
+        }
+        .game-logo:hover { transform:scale(1.04); }
+        .game-logo:active { transform:scale(0.95); }
+        .game-logo .click-hint {
+            position:absolute; bottom:-14px; left:50%; transform:translateX(-50%);
+            font-size:9px; font-weight:400; letter-spacing:0; color:#a09487; font-family:var(--font-sans);
+            white-space:nowrap; opacity:0; transition:opacity 0.3s;
+        }
+        .game-logo:hover .click-hint { opacity:1; }
+        .game-scores { display:flex; gap:8px; }
+        .score-card {
+            background:rgba(255,255,255,0.45); backdrop-filter:var(--glass-blur);
+            -webkit-backdrop-filter:var(--glass-blur);
+            border:1px solid rgba(255,255,255,0.6);
+            color:#3d3828; padding:8px 16px; border-radius:var(--radius-md);
+            text-align:center; min-width:72px; position:relative;
+            box-shadow:var(--glass-shadow);
+        }
+        .score-card .label { font-size:10px; text-transform:uppercase; opacity:0.6; letter-spacing:2px; font-family:var(--font-mono); }
+        .score-card .value { font-size:22px; font-weight:700; display:block; transition:transform 0.15s; font-family:var(--font-serif); }
+        .score-card .value.pop { transform:scale(1.3); }
+        .score-card .plus {
+            position:absolute; top:-6px; right:-2px; color:#c8a45c; font-size:16px;
+            font-weight:700; opacity:0; transition:all 0.35s cubic-bezier(0.4,0,0.2,1);
+            pointer-events:none;
+        }
+        .score-card .plus.show { opacity:1; top:-24px; animation:floatUp 0.5s; }
+        @keyframes floatUp { 0%{opacity:1;transform:translateY(0)} 100%{opacity:0;transform:translateY(-16px)} }
+        .btn {
+            background:rgba(143,122,102,0.85); backdrop-filter:var(--glass-blur);
+            -webkit-backdrop-filter:var(--glass-blur);
+            color:#f5f0e8; border:1px solid rgba(255,255,255,0.2); padding:10px 20px;
+            border-radius:var(--radius-md); font-size:14px; cursor:pointer; font-weight:600;
+            transition:all 0.2s; font-family:var(--font-sans);
+            box-shadow:var(--glass-shadow);
+        }
+        .btn:hover { background:rgba(159,139,119,0.9); transform:translateY(-1px); }
+        .btn:active { transform:scale(0.95); }
+        .btn.undo-btn { background:rgba(184,168,138,0.8); font-size:12px; padding:8px 14px; margin-left:8px; }
+        .btn.undo-btn:disabled { opacity:0.4; cursor:default; }
+        .game-subtitle { font-size:14px; color:#a09487; margin-bottom:12px; font-family:var(--font-serif); }
+        .game-container { transition:opacity 0.3s; }
+        @media (max-width:640px) {
+        }
+        .game-subtitle b { color:var(--accent); }
+        .board-wrap { position:relative; max-width:420px; margin:0 auto; }
+        .board {
+            position:relative; background:rgba(184,168,138,0.7); backdrop-filter:var(--glass-blur-lg);
+            -webkit-backdrop-filter:var(--glass-blur-lg);
+            border:1px solid rgba(255,255,255,0.3); border-radius:var(--radius-lg);
+            padding:12px; display:grid; grid-template-columns:repeat(4,1fr);
+            gap:12px; aspect-ratio:1; box-shadow:0 8px 0 rgba(155,139,123,0.5),0 12px 40px rgba(0,0,0,0.18);
+            touch-action:none;
+            -webkit-user-select:none; user-select:none;
+            -webkit-touch-callout:none;
+        }
+        .cell {
+            background:rgba(214,205,184,0.7); border-radius:var(--radius-sm); display:flex;
+            align-items:center; justify-content:center; font-size:32px;
+            font-weight:700; transition:all 0.12s ease-in-out;
+            animation:cellPop 0.18s cubic-bezier(0.4,0,0.2,1);
+            font-family:var(--font-serif);
+            border:1px solid rgba(255,255,255,0.2);
+        }
+        @keyframes cellPop { 0%{transform:scale(0);opacity:0} 50%{transform:scale(1.15)} 100%{transform:scale(1);opacity:1} }
+        .cell.cell-merge { animation:mergePop 0.2s; }
+        @keyframes mergePop { 0%{transform:scale(1)} 40%{transform:scale(1.25)} 100%{transform:scale(1)} }
+        .cell-2    { background:#eee4da; color:#776e65; }
+        .cell-4    { background:#ede0c8; color:#776e65; }
+        .cell-8    { background:#d4b46e; color:#3d3828; }
+        .cell-16   { background:#c8a45c; color:#2a2410; }
+        .cell-32   { background:#b8944a; color:#fff; }
+        .cell-64   { background:#a88438; color:#fff; }
+        .cell-128  { background:#8a7040; color:#fff; font-size:26px; box-shadow:0 0 10px rgba(138,112,64,0.4); }
+        .cell-256  { background:#7a6240; color:#fff; font-size:26px; box-shadow:0 0 12px rgba(122,98,64,0.5); }
+        .cell-512  { background:#6a5438; color:#fff; font-size:26px; box-shadow:0 0 14px rgba(106,84,56,0.5); }
+        .cell-1024 { background:#5a4632; color:#fff; font-size:20px; box-shadow:0 0 18px rgba(90,70,50,0.5); }
+        .cell-2048 { background:#c8a45c; color:#1a1808; font-size:20px; box-shadow:0 0 32px rgba(200,164,92,0.7); animation:glow 1s infinite alternate; }
+        .cell-super{ background:#2a2418; color:#c8a45c; font-size:16px; box-shadow:0 0 20px rgba(42,36,24,0.8); }
+        @keyframes glow { from{box-shadow:0 0 20px rgba(200,164,92,0.5)} to{box-shadow:0 0 44px rgba(200,164,92,0.9)} }
+        .overlay {
+            position:absolute; inset:0; background:rgba(238,228,218,0.6); backdrop-filter:var(--glass-blur-lg);
+            -webkit-backdrop-filter:var(--glass-blur-lg);
+            border-radius:var(--radius-lg);
+            display:flex; flex-direction:column; align-items:center; justify-content:center;
+            z-index:10; animation:fadeIn 0.4s;
+        }
+        @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+        .overlay .msg { font-size:42px; font-weight:800; color:#3d3828; margin-bottom:8px; font-family:var(--font-serif); }
+        .game-footer { margin-top:20px; color:#b8a88a; font-size:12px; display:flex; justify-content:center; gap:16px; align-items:center; }
+        .game-stats { font-size:11px; color:#b8a88a; margin-top:4px; }
+        .game-stats span { margin:0 6px; }
+        .hint-dot {
+            display:inline-block; width:5px; height:5px; background:#ccc; border-radius:50%;
+            vertical-align:middle; margin-left:4px; opacity:0.3;
+        }
+
+        /* ============ 快捷键面板 ============ */
+        .shortcuts-panel {
+            position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) scale(0.9);
+            background:rgba(255,255,255,0.65); backdrop-filter:var(--glass-blur-lg);
+            -webkit-backdrop-filter:var(--glass-blur-lg);
+            border:1px solid rgba(255,255,255,0.7); border-radius:var(--radius-lg); padding:24px 28px; z-index:999;
+            box-shadow:var(--glass-shadow); opacity:0; pointer-events:none;
+            transition:all 0.25s; min-width:280px;
+        }
+        .shortcuts-panel.on { opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+        .shortcuts-panel h3 { font-size:16px; margin-bottom:12px; color:#3d3828; font-family:var(--font-serif); }
+        .shortcuts-panel .row { display:flex; justify-content:space-between; padding:6px 0; font-size:13px; border-bottom:1px solid rgba(0,0,0,0.06); }
+        .shortcuts-panel kbd {
+            background:rgba(238,228,218,0.7); padding:2px 8px; border-radius:var(--radius-sm); font-family:var(--font-mono);
+            font-size:11px; border:1px solid rgba(0,0,0,0.08);
+        }
+        .shortcuts-overlay {
+            position:fixed; inset:0; background:rgba(0,0,0,0.3); backdrop-filter:blur(4px);
+            -webkit-backdrop-filter:blur(4px); z-index:998;
+            opacity:0; pointer-events:none; transition:opacity 0.25s;
+        }
+        .shortcuts-overlay.on { opacity:1; pointer-events:auto; }
+
+        /* ============ 视频视图 ============ */
+        body.dark-mode { background:var(--vbg); position:relative; }
+        body.dark-mode::after {
+            content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+            background:
+                radial-gradient(ellipse 600px 400px at 15% 10%, rgba(200,164,92,0.06), transparent),
+                radial-gradient(ellipse 500px 500px at 85% 30%, rgba(139,58,58,0.04), transparent),
+                radial-gradient(ellipse 700px 400px at 50% 90%, rgba(90,122,90,0.03), transparent);
+        }
+        .vid-header {
+            position:sticky; top:0; z-index:50; background:var(--vheader);
+            backdrop-filter:var(--glass-blur);
+            -webkit-backdrop-filter:var(--glass-blur);
+            border-bottom:1px solid var(--glass-dark-border);
+            padding:calc(12px + env(safe-area-inset-top, 0px)) 20px 12px 20px;
+        }
+        .vid-header-top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+        /* 平板适配 (641-1024px): 头部操作区更紧凑, 云端触发按钮不再拥挤 */
+        @media (max-width: 1024px) and (min-width: 641px) {
+            .vid-header-top { gap:8px; }
+            .vid-btn { padding:6px 10px; }
+            .vid-search { min-width:100px; }
+        }
+        .vid-logo {
+            font-size:18px; font-weight:700; color:var(--vtext); white-space:nowrap; flex-shrink:0; cursor:pointer;
+            font-family:var(--font-serif); letter-spacing:0.5px;
+        }
+    /* game.html 独立页补充 */
+    .game-nav { text-align: center; padding: 12px; }
+    .game-nav a { color: var(--vprimary); text-decoration: none; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="game-nav"><a href="index.html">← 回视频站</a></div>
+    <div class="view-game" id="gameView">
+        <div class="game-wrapper">
+            <div class="game-top-bar">
+                <button onclick="event.stopPropagation();showCheatDialog()" style="width:36px;height:36px;border-radius:var(--radius-md);border:1px solid rgba(255,255,255,0.5);background:rgba(255,255,255,0.4);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);cursor:pointer;font-size:16px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glass-shadow);" title="外挂密码">🔑</button>
+                <div class="game-logo" id="gameLogo">2048<span class="click-hint">点 5 次进入</span></div>
+                <div class="game-scores">
+                    <div class="score-card">
+                        <span class="label">SCORE</span>
+                        <span class="value" id="gameScore">0</span>
+                        <span class="plus" id="scorePlus">+0</span>
+                    </div>
+                    <div class="score-card">
+                        <span class="label">BEST</span>
+                        <span class="value" id="gameBest">0</span>
+                    </div>
+                </div>
+            </div>
+            <p class="game-subtitle" id="gameSubtitle">合并数字达到 <b>2048</b> 即可胜出<span class="hint-dot"></span></p>
+            <!-- 2048 游戏容器 -->
+            <div class="game-container" id="gc-2048">
+                <div class="board-wrap"><div class="board" id="board"></div></div>
+                <div style="margin-top:18px;">
+                    <button class="btn" onclick="newGame()">新游戏</button>
+                    <button class="btn undo-btn" id="undoBtn" onclick="undoMove()" disabled>↩ 撤销</button>
+                </div>
+                <div style="margin-top:10px;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">
+                    <button class="btn undo-btn" onclick="toggleSound()" id="soundBtn" style="font-size:12px;padding:6px 12px;">🔊</button>
+                    <button class="btn undo-btn" onclick="showGameStats()" style="font-size:12px;padding:6px 12px;">📊</button>
+                    <button class="btn undo-btn" onclick="shareGameResult()" style="font-size:12px;padding:6px 12px;">📤</button>
+                    <button class="btn undo-btn" onclick="toggleDarkGame()" id="darkToggleBtn" style="font-size:12px;padding:6px 12px;">🌙</button>
+                </div>
+                <p class="game-stats">步数: <span id="moveCount">0</span> | 最佳: <span id="best2048Stat">0</span></p>
+            </div>
+            <p class="game-footer">方向键 / WASD 移动 ｜ 手机滑动 ｜ 按 <kbd style="background:rgba(238,228,218,0.6);padding:1px 6px;border-radius:var(--radius-sm);font-size:11px;border:1px solid rgba(0,0,0,0.06);">?</kbd> 查看快捷键</p>
+        </div>
+        <!-- 快捷键面板 -->
+        <div class="shortcuts-overlay" id="shortcutsOverlay" onclick="toggleShortcuts()"></div>
+        <div class="shortcuts-panel" id="shortcutsPanel">
+            <h3>快捷键</h3>
+            <div class="row"><span>移动</span><span><kbd>方向键</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></div>
+            <div class="row"><span>新游戏</span><span><kbd>N</kbd></span></div>
+            <div class="row"><span>撤销</span><span><kbd>Ctrl+Z</kbd></span></div>
+            <div class="row"><span>进入视频库</span><span><kbd>Ctrl+Shift+V</kbd></span></div>
+            <div class="row"><span>返回游戏</span><span><kbd>Esc</kbd></span></div>
+            <div class="row"><span>搜索</span><span><kbd>/</kbd></span></div>
+            <div class="row"><span>关闭面板</span><span><kbd>?</kbd> / 点击空白</span></div>
+        </div>
+    </div>
+
+    <!-- ==================== 外挂密码弹窗 ==================== -->
+    <div class="cheat-dialog-overlay" id="cheatDialogOverlay">
+        <div class="cheat-dialog">
+            <button class="vid-modal-close" onclick="closeCheatDialog()" style="position:absolute;top:12px;right:12px;z-index:10;">✕</button>
+            <p class="title">🔑 输入外挂密码</p>
+            <p class="desc">连续点击步数旁边的灰色小点触发</p>
+            <input type="text" id="cheatCodeInput" placeholder="输入密码" autocomplete="off" autofocus>
+            <div class="actions">
+                <button class="btn-cancel" onclick="closeCheatDialog()">取消</button>
+                <button class="cheat-btn accent" onclick="checkCheatCode()">确认</button>
+            </div>
+        </div>
+    </div>
+<script src="assets/common.js"></script>
+<script>
+/* ==== inlined src/game-engine.js ==== */
+    // ============================================================
+    // 2048 游戏引擎 (增强版: 撤销、移动计数、合并动画)
+    // ============================================================
+    var gs = { grid:[], score:0, best:0, over:false, won:false, moves:0 };
+    var gsHistory = [];
+    var boardEl = document.getElementById('board');
+    var scoreEl = document.getElementById('gameScore');
+    var bestEl = document.getElementById('gameBest');
+    var scorePlusEl = document.getElementById('scorePlus');
+    var moveCountEl = document.getElementById('moveCount');
+    var undoBtn = document.getElementById('undoBtn');
+    var mergedCells = [];
+
+    function saveGameState() {
+        try { localStorage.setItem('game2048_state', JSON.stringify({grid:gs.grid, score:gs.score, moves:gs.moves, over:gs.over, won:gs.won})); } catch(e) {}
+    }
+    function loadGameState() {
+        try { var s = JSON.parse(localStorage.getItem('game2048_state')||'null'); return s; } catch(e) { return null; }
+    }
+    function initGame() {
+        var saved = loadGameState();
+        if (saved && saved.grid && !saved.over && saved.moves > 0) {
+            gs = { grid:saved.grid, score:saved.score, over:false, won:saved.won||false, moves:saved.moves };
+        } else {
+            gs = { grid:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]], score:0, over:false, won:false, moves:0 };
+        }
+        gs.best = parseInt(localStorage.getItem('best2048')||'0');
+        gsHistory = [];
+        bestEl.textContent = gs.best;
+        scoreEl.textContent = gs.score;
+        moveCountEl.textContent = gs.moves;
+        undoBtn.disabled = true;
+        var bs = document.getElementById('best2048Stat');
+        if (bs) bs.textContent = gs.best;
+        if (!saved || saved.over || saved.moves === 0) { addTile(); addTile(); }
+        drawBoard();
+    }
+
+    function saveHistory() {
+        gsHistory.push({
+            grid: gs.grid.map(function(r){return r.slice();}),
+            score: gs.score, moves: gs.moves
+        });
+        if (gsHistory.length > 20) gsHistory.shift();
+        undoBtn.disabled = false;
+    }
+
+    function undoMove() {
+        if (!gsHistory.length || gs.over) return;
+        var prev = gsHistory.pop();
+        gs.grid = prev.grid;
+        gs.score = prev.score;
+        gs.moves = prev.moves;
+        gs.over = false; gs.won = false;
+        scoreEl.textContent = gs.score;
+        moveCountEl.textContent = gs.moves;
+        if (!gsHistory.length) undoBtn.disabled = true;
+        drawBoard();
+    }
+
+    function addTile() {
+        var e = []; for (var r=0;r<4;r++) for (var c=0;c<4;c++) if(!gs.grid[r][c]) e.push([r,c]);
+        if(!e.length) return;
+        var p = e[Math.floor(Math.random()*e.length)];
+        gs.grid[p[0]][p[1]] = Math.random()<0.9?2:4;
+    }
+
+    function drawBoard() {
+        var existing = boardEl.querySelectorAll('.cell');
+        for (var r=0;r<4;r++) for (var c=0;c<4;c++) {
+            var idx = r*4+c;
+            var cell = existing[idx];
+            if (!cell) { cell = document.createElement('div'); cell.className='cell'; boardEl.appendChild(cell); }
+            var v = gs.grid[r][c];
+            cell.className = 'cell';
+            cell.textContent = '';
+            if (v) {
+                cell.textContent = v;
+                cell.classList.add(v<=2048?'cell-'+v:'cell-super');
+                if (mergedCells.some(function(m){return m[0]===r&&m[1]===c;})) {
+                    cell.classList.add('cell-merge');
+                }
+            }
+        }
+        var ov = boardEl.querySelector('.overlay');
+        if (ov) ov.remove();
+        mergedCells = [];
+        scoreEl.textContent = gs.score;
+        moveCountEl.textContent = gs.moves;
+        if (gs.score > gs.best){
+            gs.best = gs.score;
+            localStorage.setItem('best2048', gs.best);
+            bestEl.textContent = gs.best;
+            bestEl.parentElement.querySelector('.value').classList.add('pop');
+            setTimeout(function(){bestEl.parentElement.querySelector('.value').classList.remove('pop');},200);
+        }
+        if (gs.over) {
+            var maxT = 0;
+            for (var r=0;r<4;r++) for (var c=0;c<4;c++) if (gs.grid[r][c]>maxT) maxT=gs.grid[r][c];
+            var o = document.createElement('div'); o.className = 'overlay';
+            o.innerHTML = '<span class="msg">'+(gs.won?'🎉 赢了！':'游戏结束')+'</span><span style="font-size:14px;color:#776e65;">分数: '+gs.score+' | 步数: '+gs.moves+' | 最高: '+maxT+'</span><div style="margin-top:12px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap;"><button class="btn" onclick="newGame()">再来一局</button>'+(gs.won?'<button class="btn undo-btn" onclick="gs.over=false;this.parentElement.parentElement.remove();">▶ 继续游戏</button>':'')+'<button class="btn undo-btn" onclick="undoMove()">↩ 撤销</button><button class="btn undo-btn" onclick="shareGameResult()">📤 分享</button><button class="btn undo-btn" onclick="showGameStats()">📊 统计</button></div>';
+            boardEl.appendChild(o);
+            recordGameResult(gs.won, gs.score, maxT, gs.moves);
+        }
+    }
+
+    function slide(row){
+        var a=row.filter(function(v){return v!==0;});
+        for(var i=0;i<a.length-1;i++) {
+            if(a[i]===a[i+1]){a[i]*=2;gs.score+=a[i];if(a[i]===2048)gs.won=true;a.splice(i+1,1);}
+        }
+        while(a.length<4)a.push(0); return a;
+    }
+
+    function showPlus(v){
+        scorePlusEl.textContent='+'+v; scorePlusEl.classList.add('show');
+        setTimeout(function(){scorePlusEl.classList.remove('show');},500);
+    }
+
+    // ============ 音效 ============
+    var _soundOn = localStorage.getItem('sfx2048') !== 'off';
+    var _audioCtx = null;
+    function playSfx(type) {
+        if (!_soundOn) return;
+        try {
+            if (!_audioCtx) _audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+            var ctx = _audioCtx;
+            var osc = ctx.createOscillator(); var gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            if (type === 'merge') { osc.frequency.value = 440 + Math.random()*200; osc.type='sine'; gain.gain.setValueAtTime(0.08,ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.15); osc.start(); osc.stop(ctx.currentTime+0.15); }
+            else if (type === 'move') { osc.frequency.value = 200; osc.type='triangle'; gain.gain.setValueAtTime(0.03,ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.08); osc.start(); osc.stop(ctx.currentTime+0.08); }
+            else if (type === 'win') { var notes=[523,659,784,1047]; for (var i=0;i<notes.length;i++){ (function(f,d){ var o=ctx.createOscillator(),g=ctx.createGain();o.connect(g);g.connect(ctx.destination);o.frequency.value=f;o.type='sine';g.gain.setValueAtTime(0.06,ctx.currentTime+d);g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+d+0.2);o.start(ctx.currentTime+d);o.stop(ctx.currentTime+d+0.2);})(notes[i],i*0.1);} return; }
+            else if (type === 'over') { osc.frequency.value=300;osc.type='sawtooth';osc.frequency.exponentialRampToValueAtTime(100,ctx.currentTime+0.4);gain.gain.setValueAtTime(0.06,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.4);osc.start();osc.stop(ctx.currentTime+0.4); }
+        } catch(e) {}
+    }
+    function toggleSound() { _soundOn = !_soundOn; localStorage.setItem('sfx2048', _soundOn?'on':'off'); toast(_soundOn?'🔊 音效已开启':'🔇 音效已关闭'); updateSoundBtn(); }
+    function updateSoundBtn() { var b=document.getElementById('soundBtn'); if(b) b.textContent = _soundOn?'🔊':'🔇'; }
+
+    // ============ 游戏统计 ============
+    function getGameStats() { try { return JSON.parse(localStorage.getItem('stats2048')||'{}'); } catch(e) { return {}; } }
+    function saveGameStats(s) { localStorage.setItem('stats2048', JSON.stringify(s)); }
+    function recordGameResult(won, score, maxTile, moves) {
+        var s = getGameStats();
+        s.gamesPlayed = (s.gamesPlayed||0)+1;
+        if (won) s.gamesWon = (s.gamesWon||0)+1;
+        if (score > (s.bestScore||0)) s.bestScore = score;
+        if (maxTile > (s.maxTileEver||0)) s.maxTileEver = maxTile;
+        s.totalMoves = (s.totalMoves||0)+moves;
+        s.totalScore = (s.totalScore||0)+score;
+        saveGameStats(s);
+        checkAchievements(score, maxTile, won, moves);
+        var bs = document.getElementById('best2048Stat');
+        if (bs) bs.textContent = s.bestScore || 0;
+    }
+    var ACHIEVEMENTS = [
+        {id:'first_win', name:'🏆 初尝胜果', desc:'首次达到 2048', check:function(s){return s.maxTileEver>=2048;}},
+        {id:'speedrun', name:'⚡ 速战速决', desc:'50步内达到 2048', check:function(s){return s.maxTileEver>=2048 && s.fastestWin<=50;}},
+        {id:'high_scorer', name:'💎 高分玩家', desc:'单局超过 20000 分', check:function(s){return s.bestScore>=20000;}},
+        {id:'persistent', name:'🔥 百战不殆', desc:'玩满 10 局', check:function(s){return s.gamesPlayed>=10;}},
+        {id:'master', name:'👑 大师', desc:'达到 4096', check:function(s){return s.maxTileEver>=4096;}},
+        {id:'efficient', name:'🎯 精准射手', desc:'单局超过 50000 分', check:function(s){return s.bestScore>=50000;}},
+    ];
+    function checkAchievements(score, maxTile, won, moves) {
+        var s = getGameStats();
+        if (won && moves <= 50) s.fastestWin = Math.min(s.fastestWin||999, moves);
+        if (score > (s.bestScore||0)) s.bestScore = score;
+        if (maxTile > (s.maxTileEver||0)) s.maxTileEver = maxTile;
+        saveGameStats(s);
+        var unlocked = {}; try { unlocked = JSON.parse(localStorage.getItem('achievements2048')||'{}'); } catch(e) {}
+        for (var i=0;i<ACHIEVEMENTS.length;i++) {
+            if (!unlocked[ACHIEVEMENTS[i].id] && ACHIEVEMENTS[i].check(s)) {
+                unlocked[ACHIEVEMENTS[i].id] = Date.now();
+                toast('🎉 解锁成就: ' + ACHIEVEMENTS[i].name);
+            }
+        }
+        localStorage.setItem('achievements2048', JSON.stringify(unlocked));
+    }
+    function statBox(label, val) {
+        return '<div style="background:rgba(184,168,138,0.15);padding:10px;border-radius:8px;text-align:center;"><div style="font-size:20px;font-weight:700;color:var(--accent);">'+val+'</div><div style="font-size:10px;opacity:0.6;">'+label+'</div></div>';
+    }
+    function showGameStats() {
+        var s = getGameStats();
+        var unlocked = {}; try { unlocked = JSON.parse(localStorage.getItem('achievements2048')||'{}'); } catch(e) {}
+        var html = '<div style="max-width:380px;margin:0 auto;text-align:left;font-size:12px;color:var(--text);">';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">';
+        html += statBox('总局数', s.gamesPlayed||0);
+        html += statBox('胜局数', s.gamesWon||0);
+        html += statBox('最高分', s.bestScore||0);
+        html += statBox('最大方块', s.maxTileEver||0);
+        html += statBox('总步数', s.totalMoves||0);
+        html += statBox('总得分', s.totalScore||0);
+        html += '</div>';
+        html += '<div style="font-size:13px;font-weight:700;margin-bottom:8px;">🏅 成就 (' + Object.keys(unlocked).length + '/' + ACHIEVEMENTS.length + ')</div>';
+        for (var i=0;i<ACHIEVEMENTS.length;i++) {
+            var has = unlocked[ACHIEVEMENTS[i].id];
+            html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;opacity:' + (has?1:0.4) + ';">';
+            html += '<span style="font-size:16px;">' + (has?'✅':'🔒') + '</span>';
+            html += '<div><div style="font-weight:600;font-size:12px;">' + ACHIEVEMENTS[i].name + '</div>';
+            html += '<div style="font-size:10px;opacity:0.6;">' + ACHIEVEMENTS[i].desc + '</div></div></div>';
+        }
+        html += '</div>';
+        var ov = document.createElement('div');
+        ov.className = 'cheat-dialog-overlay on';
+        ov.id = 'gameStatsOverlay';
+        ov.innerHTML = '<div class="cheat-dialog" style="max-width:420px;max-height:80vh;overflow-y:auto;"><button onclick="document.getElementById(\'gameStatsOverlay\').remove()" style="position:absolute;top:8px;right:8px;background:none;border:none;font-size:18px;cursor:pointer;color:inherit;">✕</button><p class="title" style="margin-bottom:12px;">📊 游戏统计</p>' + html + '<button class="cheat-btn danger" style="width:100%;margin-top:12px;" onclick="if(confirm(\'确定重置全部统计？\')){localStorage.removeItem(\'stats2048\');localStorage.removeItem(\'achievements2048\');document.getElementById(\'gameStatsOverlay\').remove();toast(\'已重置\');}">🗑️ 重置统计</button></div>';
+        document.body.appendChild(ov);
+    }
+
+    function shareGameResult() {
+        var maxTile = 0;
+        for (var r=0;r<4;r++) for (var c=0;c<4;c++) if (gs.grid[r][c]>maxTile) maxTile=gs.grid[r][c];
+        var text = '🎮 2048\n分数: ' + gs.score + ' | 最高: ' + gs.best + '\n最高方块: ' + maxTile + ' | 步数: ' + gs.moves + (gs.won?' 🏆':'');
+        var url = location.origin + location.pathname;
+        if (/\.perchance\.org$/i.test(location.hostname) && window.generatorName) url = 'https://perchance.org/' + window.generatorName;
+        if (document.documentElement.classList.contains('wechat')) {
+            var full = text + '\n' + url;
+            if (window.__wxCopy) window.__wxCopy(full);
+            toast('📋 成绩已复制 · 点右上角 ··· 分享给朋友');
+            return;
+        }
+        if (navigator.share) navigator.share({title:'我的2048', text:text + '\n' + url}).catch(function(){});
+        else { navigator.clipboard.writeText(text + '\n' + url).catch(function(){}); toast('📋 结果已复制'); }
+    }
+
+    function toggleDarkGame() {
+        document.body.classList.toggle('dark-mode');
+        var btn = document.getElementById('darkToggleBtn');
+        if (btn) btn.textContent = document.body.classList.contains('dark-mode') ? '🎮' : '🌙';
+    }
+
+    function moveGame(dir){
+        if(gs.over)return;
+        saveHistory();
+        var oldGrid=gs.grid.map(function(r){return r.slice();}); var g=gs.grid;
+        if(dir==='left') for(var r=0;r<4;r++)g[r]=slide(g[r]);
+        else if(dir==='right') for(var r=0;r<4;r++){g[r].reverse();g[r]=slide(g[r]);g[r].reverse();}
+        else if(dir==='up') for(var c=0;c<4;c++){var col=[g[0][c],g[1][c],g[2][c],g[3][c]];col=slide(col);for(var r2=0;r2<4;r2++)g[r2][c]=col[r2];}
+        else if(dir==='down') for(var c=0;c<4;c++){var col2=[g[0][c],g[1][c],g[2][c],g[3][c]];col2.reverse();col2=slide(col2);col2.reverse();for(var r3=0;r3<4;r3++)g[r3][c]=col2[r3];}
+        var changed=false;
+        for(var rr=0;rr<4;rr++)for(var cc=0;cc<4;cc++){
+            if(g[rr][cc]!==oldGrid[rr][cc]){changed=true;
+                if(g[rr][cc]&&oldGrid[rr][cc]&&g[rr][cc]===oldGrid[rr][cc]*2) mergedCells.push([rr,cc]);
+            }
+        }
+        if(changed){
+            gs.moves++;
+            if (mergedCells.length) { playSfx('merge'); showPlus(mergedCells.reduce(function(s,m){var v=gs.grid[m[0]][m[1]];return s+v;},0)); }
+            else playSfx('move');
+            addTile(); drawBoard(); saveGameState();
+            if(chkOver()){gs.over=true; playSfx(gs.won?'win':'over'); drawBoard();}
+        } else { gsHistory.pop(); } // 无效移动，移除历史
+    }
+
+    function chkOver(){
+        for(var r=0;r<4;r++)for(var c=0;c<4;c++){
+            if(!gs.grid[r][c])return false;
+            if(c<3&&gs.grid[r][c]===gs.grid[r][c+1])return false;
+            if(r<3&&gs.grid[r][c]===gs.grid[r+1][c])return false;
+        } return true;
+    }
+
+    function newGame(){ try{localStorage.removeItem('game2048_state');}catch(e){} initGame(); }
+</script>
+    <script>
+/* ==== inlined src/sha256-utils.js ==== */
+    function sha256(str) {
+        try {
+            if (!crypto || !crypto.subtle || !crypto.subtle.digest) throw new Error('no crypto');
+            var buffer = new TextEncoder().encode(str);
+            return crypto.subtle.digest('SHA-256', buffer).then(function(hash) {
+                return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+            }).catch(function() {
+                return sha256_fallback(str);
+            });
+        } catch(e) {
+            return Promise.resolve(sha256_fallback(str));
+        }
+    }
+    function sha256_fallback(s) {
+        function S(X,n){return(X>>>n)|(X<<(32-n));}
+        function R(X,n){return(X>>>n);}
+        function Ch(x,y,z){return((x&y)^((~x)&z));}
+        function Maj(x,y,z){return((x&y)^(x&z)^(y&z));}
+        function Sigma0(x){return S(x,2)^S(x,13)^S(x,22);}
+        function Sigma1(x){return S(x,6)^S(x,11)^S(x,25);}
+        function Gamma0(x){return S(x,7)^S(x,18)^R(x,3);}
+        function Gamma1(x){return S(x,17)^S(x,19)^R(x,10);}
+        function safeAdd(x,y){var l=(x&0xFFFF)+(y&0xFFFF);var m=(x>>16)+(y>>16)+(l>>16);return(m<<16)|(l&0xFFFF);}
+        var K=[1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298];
+        var H=[1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225];
+        var b=[],i,l=s.length*8;
+        for(i=0;i<l;i+=8)b[i>>5]|=(s.charCodeAt(i/8)&255)<<(24-i%32);
+        b[i>>5]|=128<<(24-i%32);b[((i+64>>9)<<4)+15]=l;
+        for(var j=0;j<b.length;j+=16){
+            var w=new Array(64),a=H[0],c=H[1],d=H[2],e=H[3],f=H[4],g=H[5],h=H[6],k=H[7];
+            for(i=0;i<64;i++){
+                if(i<16)w[i]=b[j+i];
+                else w[i]=safeAdd(safeAdd(safeAdd(Gamma1(w[i-2]),w[i-7]),Gamma0(w[i-15])),w[i-16]);
+                var t1=safeAdd(safeAdd(safeAdd(safeAdd(k,Sigma1(f)),Ch(f,g,h)),K[i]),w[i]);
+                var t2=safeAdd(Sigma0(a),Maj(a,c,d));
+                k=h;h=g;g=f;f=safeAdd(e,t1);e=d;d=c;c=a;a=safeAdd(t1,t2);
+            }
+            H[0]=safeAdd(a,H[0]);H[1]=safeAdd(c,H[1]);H[2]=safeAdd(d,H[2]);H[3]=safeAdd(e,H[3]);
+            H[4]=safeAdd(f,H[4]);H[5]=safeAdd(g,H[5]);H[6]=safeAdd(h,H[6]);H[7]=safeAdd(k,H[7]);
+        }
+        var r='';for(i=0;i<8;i++)r+=((H[i]>>>24)&255).toString(16).padStart(2,'0')+((H[i]>>>16)&255).toString(16).padStart(2,'0')+((H[i]>>>8)&255).toString(16).padStart(2,'0')+(H[i]&255).toString(16).padStart(2,'0');
+        return r;
+    }
+
+</script>
+    <script>
+/* ==== inlined src/twelvelabs.js ==== */
+/* ============================================================
+   twelvelabs.js — Twelve Labs 视频理解接入 (AI 打标 / 语义搜索)
+   ------------------------------------------------------------
+   为什么需要它: 库里 4 万条视频没有标题, 爬虫只留下了 ~80 个来源关键词,
+   所以"按类型找片"基本无从下手。Twelve Labs 的 Pegasus 能直接"看懂"画面,
+   为每条视频生成中文标题 + 类型标签, 把不可搜索的数据变成可搜索的数据。
+
+   提供的能力 (window.TL):
+     1. analyze(doc)        — 单条视频 → {t:中文标题, g:[标签], s:一句话描述}
+     2. tagMany(docs, opts) — 批量打标队列 (串行 + 进度回调 + 可停止 + 额度错误立即熔断)
+     3. 本地标签库          — localStorage 里的 {video_id: 标注}, 搜索直接可命中
+     4. indexVideo(doc)     — 把视频索引进 Marengo 索引 (深度索引, 供语义搜索)
+     5. semanticSearch(q)   — 跨已索引视频的语义搜索 ("在浴室里的自慰" 这种自然语言)
+     6. 可选云同步          — 若 videos 表有 ai_title/ai_tags 列, 打标结果同时写回数据库
+
+   安全约定: API 密钥只存 localStorage ('tl_api_key'), 绝不写进源码 —
+   因为 index.html/main.pjs 是公开源码, 任何写死在这里的密钥都会被别人抄走。
+
+   ES5 风格, 不依赖 DOM。
+   ============================================================ */
+(function (global) {
+    'use strict';
+
+    var API = 'https://api.twelvelabs.io/v1.3';
+    var LS = {
+        key: 'tl_api_key',
+        store: 'tl_tags_v1',
+        index: 'tl_index_id',
+        map: 'tl_vidmap_v1',
+        usage: 'tl_usage_v1',
+        mode: 'tl_semantic_v1',
+        win: 'tl_window_v1'
+    };
+
+    /* ---------------- 分析窗口 (成本开关) ----------------
+       实测: 一个 1080p 长片全片分析 ≈ 33.6 万输入 token / 78 秒;
+       只取前 60 秒 ≈ 1.9 万 token / 17 秒 —— 便宜 17 倍且内容判断基本一致。
+       所以默认只分析前 60 秒, 可在 AI 面板里改成 30/90/全片。 ---- */
+    var WINDOWS = [30, 60, 90, 0];
+    function windowSec() {
+        var v = parseInt(lsGet(LS.win, '60'), 10);
+        if (isNaN(v) || WINDOWS.indexOf(v) < 0) v = 60;
+        return v;
+    }
+    function setWindowSec(v) { v = parseInt(v, 10); if (WINDOWS.indexOf(v) < 0) v = 60; lsSet(LS.win, String(v)); return v; }
+    function windowLabel() { var w = windowSec(); return w ? ('前 ' + w + ' 秒') : '全片'; }
+
+    /* ---------------- 标注词表 (中文优先, 覆盖库里既有的日文关键词体系) ---------------- */
+    var VOCAB = [
+        '巨乳', '美乳', '大胸', '泳装', '比基尼', '死库水', '制服', '女高中生', '女大学生', 'OL',
+        '人妻', '熟女', '辣妹', '偶像', '素人', '内衣', '丝袜', '过膝袜', '内裤', '走光',
+        '偷拍', '露出', '野外', '自慰', '口交', '中出', '潮吹', '乳交', '放尿', '痴汉',
+        '电车', '按摩', '健身房', '浴室', '淋浴', '温泉', '混浴', 'cosplay', '全裸', '性感',
+        '写真', '屁股', '乳头', '美腿', '跳舞', '自拍', '直播', '多人', '单人', '骑乘',
+        '后入', '颜射', '调教', '双人', '浴衣', '睡衣', '短裙', '运动服', '护士', '女教师'
+    ];
+
+    var SCHEMA = {
+        type: 'object',
+        properties: {
+            title_zh: { type: 'string', description: '简体中文标题，不超过18个字，概括画面主体与看点；不要写作者名，不要写"视频""画面"这类空话' },
+            tags: { type: 'array', items: { type: 'string' }, description: '2-5个类型标签，优先取自给定词表' },
+            summary: { type: 'string', description: '一句话简体中文描述人物、服装、动作与场景，不超过30字' }
+        },
+        required: ['title_zh', 'tags', 'summary']
+    };
+
+    var PROMPT_HEAD = '你是中文成人视频内容标注助手。观看视频后用简体中文输出标注。\n';
+    var PROMPT_TAIL = '\n【输出要求】\n' +
+        '- title_zh：不超过 18 个字的简体中文标题，概括画面主体与看点。\n' +
+        '- tags：2-5 个类型标签。\n' +
+        '- summary：一句话（不超过 30 字）描述人物、服装、动作与场景。\n' +
+        '只输出 JSON，不要解释。';
+
+    function buildPrompt() {
+        return PROMPT_HEAD +
+            '【类型标签词表】优先从下列词表中选取（可多选），词表不合适时可自创简短标签：\n' +
+            VOCAB.join(' ') + PROMPT_TAIL;
+    }
+
+    /* ---------------- 小工具 ---------------- */
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    function lsGet(k, d) { try { var v = localStorage.getItem(k); return (v === null || v === undefined) ? d : v; } catch (e) { return d; } }
+    function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+    function lsJson(k, d) { try { var v = JSON.parse(lsGet(k, 'null')); return (v === null || v === undefined) ? d : v; } catch (e) { return d; } }
+    function dayKey() { var d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+    function norm(s) { return String(s === undefined || s === null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
+
+    /* ---------------- 密钥 ---------------- */
+    function key() { return String(lsGet(LS.key, '') || '').trim(); }
+    function setKey(k) { lsSet(LS.key, String(k === undefined || k === null ? '' : k).trim()); }
+    function configured() { return !!key(); }
+
+    /* ---------------- HTTP ---------------- */
+    function errText(status, data, txt) {
+        var extra = '';
+        if (data && (data.message || data.error)) extra = '：' + String(data.message || data.error).slice(0, 120);
+        else if (!data && txt) extra = '：' + String(txt).replace(/\s+/g, ' ').slice(0, 120);
+        if (status === 401 || status === 403) return 'API 密钥无效或无权限 (401/403)';
+        if (status === 402) return '额度不足 (402)：免费额度已用完或需升级套餐';
+        if (status === 404) return '接口不存在 (404)';
+        if (status === 413) return '视频过大/过长，超出模型限制 (413)';
+        if (status === 422) return '请求参数不被接受 (422)' + extra;
+        if (status === 429) return '请求过于频繁 (429)：稍后重试';
+        if (status >= 500) return 'Twelve Labs 服务暂时不可用 (' + status + ')';
+        return '请求失败 (' + status + ')' + extra;
+    }
+    function fatal(status) { return status === 401 || status === 402 || status === 403; }
+
+    async function req(path, opts) {
+        opts = opts || {};
+        if (!key()) return { ok: false, noKey: true, err: '未配置 Twelve Labs API 密钥' };
+        var headers = { 'x-api-key': key() };
+        var init = { method: opts.method || 'GET', headers: headers };
+        if (opts.body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
+        var res, txt = '';
+        try { res = await fetch(API + path, init); }
+        catch (e) { return { ok: false, net: true, err: '网络错误：' + ((e && e.message) || e) }; }
+        try { txt = await res.text(); } catch (e2) {}
+        var data = null;
+        try { data = txt ? JSON.parse(txt) : null; } catch (e3) { data = null; }
+        if (!res.ok) return { ok: false, status: res.status, data: data, err: errText(res.status, data, txt) };
+        return { ok: true, status: res.status, data: data };
+    }
+
+    /* ---------------- 用量统计 (本地估算, 便于自己掌握额度消耗) ---------------- */
+    function usage() {
+        var u = lsJson(LS.usage, null);
+        if (!u || typeof u !== 'object') u = { day: dayKey(), today: 0, total: 0, inTok: 0, outTok: 0, errs: 0 };
+        if (u.day !== dayKey()) { u.day = dayKey(); u.today = 0; }
+        return u;
+    }
+    function bumpUsage(o) {
+        var u = usage();
+        o = o || {};
+        if (o.ok) { u.today++; u.total++; u.inTok += (o.inTok || 0); u.outTok += (o.outTok || 0); }
+        else u.errs++;
+        lsSet(LS.usage, JSON.stringify(u));
+        return u;
+    }
+
+    /* ---------------- MP4 直链解析 (与播放器同一套约定) ---------------- */
+    // duration 字段被爬虫复用: 可能真的是时长, 也可能是解析出来的 MP4 URL
+    function mp4Of(doc) {
+        if (!doc) return '';
+        if (doc.mp4_url && /^https?:/i.test(doc.mp4_url)) return doc.mp4_url;
+        var d = String(doc.duration || '');
+        if (/^https?:/i.test(d) && (d.indexOf('.mp4') >= 0 || d.indexOf('video.twimg.com') >= 0)) return d;
+        if (doc.video_url && /\.mp4(\?|$)/i.test(doc.video_url)) return doc.video_url;
+        return '';
+    }
+
+    /* ---------------- 本地 AI 标注库 ---------------- */
+    function emptyStore() { return { v: 1, items: {} }; }
+    function store() { var s = lsJson(LS.store, null); if (!s || !s.items) s = emptyStore(); return s; }
+    function saveStore(s) { lsSet(LS.store, JSON.stringify(s)); }
+    function get(id) { return store().items[id] || null; }
+    function put(id, rec) { var s = store(); s.items[id] = rec; saveStore(s); return rec; }
+    function del(id) { var s = store(); delete s.items[id]; saveStore(s); }
+    function size() { var s = store(), n = 0; for (var k in s.items) if (Object.prototype.hasOwnProperty.call(s.items, k)) n++; return n; }
+    function all() { return store().items; }
+    function tagCounts(limit) {
+        var s = store(), m = {}, k, i, g;
+        for (k in s.items) {
+            if (!Object.prototype.hasOwnProperty.call(s.items, k)) continue;
+            g = s.items[k].g || [];
+            for (i = 0; i < g.length; i++) m[g[i]] = (m[g[i]] || 0) + 1;
+        }
+        var a = [];
+        for (k in m) if (Object.prototype.hasOwnProperty.call(m, k)) a.push([k, m[k]]);
+        a.sort(function (x, y) { return y[1] - x[1]; });
+        return limit ? a.slice(0, limit) : a;
+    }
+    // 查询词 → 本地已打标视频 (命中任意词即为命中, 返回命中详情供 UI 标注原因)
+    function matchTerms(terms) {
+        var s = store(), out = [], k, i, j, t;
+        if (!terms || !terms.length) return out;
+        for (k in s.items) {
+            if (!Object.prototype.hasOwnProperty.call(s.items, k)) continue;
+            var it = s.items[k];
+            var g = it.g || [];
+            var hay = norm((it.t || '') + ' ' + (it.s || '') + ' ' + g.join(' '));
+            var hit = [];
+            for (i = 0; i < terms.length; i++) {
+                t = norm(terms[i]);
+                if (!t) continue;
+                if (hay.indexOf(t) >= 0) { hit.push(t); continue; }
+                for (j = 0; j < g.length; j++) {
+                    var gg = norm(g[j]);
+                    if (gg && (gg.indexOf(t) >= 0 || t.indexOf(gg) >= 0)) { hit.push(t); break; }
+                }
+            }
+            if (hit.length) out.push({ video_id: k, hit: hit, title: it.t || '', tags: g });
+        }
+        return out;
+    }
+    // 全部已打标视频的 video_id (供"只看 AI 打标过的"筛选)
+    function ids() { var s = store(), a = []; for (var k in s.items) if (Object.prototype.hasOwnProperty.call(s.items, k)) a.push(k); return a; }
+
+    /* ---------------- 可选扩展点: 云同步 ---------------- */
+    // 目前标注只存本机 (localStorage). 如果以后给 videos 表加了 ai_title / ai_tags 列,
+    // 在 AI 面板里把 `window.TL_globalTags` 设为 true 并调用 TL.setPusher(fn) 即可
+    // 把标注同时写回数据库, 全站所有设备都能搜到. (需要先在 Supabase 跑 SQL, 见 src/README.md)
+    var pusher = null;
+    function setPusher(fn) { pusher = (typeof fn === 'function') ? fn : null; }
+    function push(id, rec) {
+        if (!pusher || !global.TL_globalTags) return Promise.resolve({ ok: false, off: true });
+        try { return Promise.resolve(pusher(id, rec)); } catch (e) { return Promise.resolve({ ok: false, err: String(e) }); }
+    }
+
+    /* ---------------- 分析 (AI 打标) ---------------- */
+    function parseJsonText(t) {
+        if (!t) return null;
+        var s = String(t).trim();
+        var m = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
+        if (m) s = m[1].trim();
+        var a = s.indexOf('{'), b = s.lastIndexOf('}');
+        if (a >= 0 && b > a) s = s.slice(a, b + 1);
+        try { return JSON.parse(s); } catch (e) { return null; }
+    }
+    function cleanRec(obj) {
+        obj = obj || {};
+        var tags = [];
+        var raw = obj.tags;
+        if (typeof raw === 'string') raw = raw.split(/[\s,，、\/|]+/);
+        if (raw && raw.length) {
+            for (var i = 0; i < raw.length && tags.length < 6; i++) {
+                var x = String(raw[i] || '').replace(/^[#\s]+/, '').trim().slice(0, 14);
+                if (x && tags.indexOf(x) < 0) tags.push(x);
+            }
+        }
+        return {
+            t: String(obj.title_zh || obj.title || '').replace(/\s+/g, ' ').trim().slice(0, 40),
+            g: tags,
+            s: String(obj.summary || '').replace(/\s+/g, ' ').trim().slice(0, 90)
+        };
+    }
+
+    async function analyze(doc, opts) {
+        opts = opts || {};
+        if (!key()) return { ok: false, noKey: true, err: '未配置 Twelve Labs API 密钥' };
+        var url = opts.url || mp4Of(doc);
+        if (!url) return { ok: false, nomp4: true, err: '这条没有可分析的 MP4 直链' };
+        var win = (opts.windowSec === undefined) ? windowSec() : opts.windowSec;
+        var t0 = Date.now();
+        var body = {
+            model_name: 'pegasus1.5',
+            video: { type: 'url', url: url },
+            prompt: opts.prompt || buildPrompt(),
+            response_format: { type: 'json_schema', json_schema: SCHEMA },
+            stream: false,
+            temperature: 0.2,
+            max_tokens: 900
+        };
+        if (win > 0) { body.start_time = 0; body.end_time = win; }
+        var r = await req('/analyze', { method: 'POST', body: body });
+        // 网络抖动 / 5xx 重试一次 (不会重复计费: 只有服务端没接受才重发)
+        if (!r.ok && (r.net || (r.status >= 500))) {
+            await sleep(2200);
+            r = await req('/analyze', { method: 'POST', body: body });
+        }
+        if (!r.ok) { bumpUsage({ ok: false }); return r; }
+        var payload = r.data && r.data.data;
+        var rec = cleanRec(parseJsonText(payload));
+        if (!rec.t && !rec.g.length) {
+            bumpUsage({ ok: false });
+            return { ok: false, err: 'AI 未返回可解析的标注', raw: String(payload || '').slice(0, 200) };
+        }
+        var u = (r.data && r.data.usage) || {};
+        rec.ts = Date.now();
+        rec.ms = Date.now() - t0;
+        rec.src = opts.source || 'ai';
+        rec.w = win;
+        bumpUsage({ ok: true, inTok: u.input_tokens || 0, outTok: u.output_tokens || 0 });
+        if (opts.store !== false && doc && doc.video_id) {
+            put(doc.video_id, rec);
+            push(doc.video_id, rec);
+        }
+        return { ok: true, rec: rec, raw: payload, usage: u, ms: rec.ms };
+    }
+
+    /* ---------------- 批量打标队列 ---------------- */
+    var q = { running: false, stop: false, done: 0, total: 0, tagged: 0, failed: 0, err: '' };
+    function queueState() { return { running: q.running, stop: q.stop, done: q.done, total: q.total, tagged: q.tagged, failed: q.failed, err: q.err, pct: q.total ? Math.round(q.done * 100 / q.total) : 0 }; }
+    function stopTagging() { q.stop = true; }
+
+    async function tagMany(docs, opts) {
+        opts = opts || {};
+        if (q.running) return { ok: false, err: '已有打标任务在运行' };
+        docs = (docs || []).filter(function (d) { return d && d.video_id; });
+        q = { running: true, stop: false, done: 0, total: docs.length, tagged: 0, failed: 0, err: '' };
+        if (opts.onProgress) opts.onProgress(queueState());
+        for (var i = 0; i < docs.length; i++) {
+            if (q.stop) break;
+            var doc = docs[i];
+            if (get(doc.video_id)) { q.done++; if (opts.onProgress) opts.onProgress(queueState()); continue; }
+            var url = mp4Of(doc);
+            if (!url && opts.resolve) { try { var rr = await opts.resolve(doc); url = (rr && (rr.mp4Url || rr)) || ''; } catch (e) {} }
+            if (!url) { q.failed++; q.done++; if (opts.onProgress) opts.onProgress(queueState()); continue; }
+            if (opts.onDoc) opts.onDoc(doc, queueState());
+            var res = await analyze(doc, { url: url, store: true });
+            if (res.ok) { q.tagged++; }
+            else {
+                q.failed++;
+                if (res.net) { q.err = res.err; break; }                      // 网络断了 → 停
+                if (res.noKey || fatal(res.status) || res.status === 429) { q.err = res.err || 'AI 调用被拒绝'; break; }  // 密钥/额度/限流 → 立即熔断
+                q.err = res.err || '失败';
+                if (res.nomp4) { /* 单条无直链, 继续下一条 */ }
+            }
+            q.done++;
+            if (opts.onProgress) opts.onProgress(queueState());
+            if (i < docs.length - 1) await sleep(opts.gap === undefined ? 500 : opts.gap);
+        }
+        q.running = false;
+        q.stop = false;
+        if (opts.onProgress) opts.onProgress(queueState());
+        return { ok: true, tagged: q.tagged, failed: q.failed, done: q.done, err: q.err };
+    }
+
+    /* ---------------- 索引 + 语义搜索 (Marengo) ---------------- */
+    async function ensureIndex(force) {
+        if (!force) { var cached = lsGet(LS.index, ''); if (cached) return cached; }
+        var list = await req('/indexes?page_limit=1');
+        if (!list.ok) return { err: list.err, status: list.status };
+        var arr = (list.data && list.data.data) || [];
+        if (arr.length) { lsSet(LS.index, arr[0]._id); return arr[0]._id; }
+        var made = await req('/indexes', {
+            method: 'POST',
+            body: {
+                index_name: 'VideoDB AI Index',
+                models: [{ model_name: 'marengo3.0', model_options: ['visual', 'audio'] }],
+                addons: ['thumbnail']
+            }
+        });
+        if (!made.ok) return { err: made.err, status: made.status };
+        var id = made.data && made.data._id;
+        if (id) lsSet(LS.index, id);
+        return id || { err: '创建索引失败' };
+    }
+    function indexId() { return lsGet(LS.index, ''); }
+    function vidMap() { return lsJson(LS.map, {}); }
+    function indexedCount() { var m = vidMap(), n = 0; for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) n++; return n; }
+
+    async function indexVideo(doc, opts) {
+        opts = opts || {};
+        if (!key()) return { ok: false, err: '未配置 API 密钥' };
+        var url = opts.url || mp4Of(doc);
+        if (!url) return { ok: false, err: '这条没有可索引的 MP4 直链' };
+        if (!doc || !doc.video_id) return { ok: false, err: '缺少 video_id' };
+        var map = vidMap();
+        if (map[doc.video_id] && !opts.force) return { ok: true, videoId: map[doc.video_id], cached: true };
+        var idx = await ensureIndex();
+        if (typeof idx !== 'string') return { ok: false, err: idx.err || '无法创建/找到索引', status: idx.status };
+        var t = await req('/tasks', {
+            method: 'POST',
+            body: { index_id: idx, video_url: url, enable_video_stream: true, user_metadata: JSON.stringify({ db_id: doc.video_id }) }
+        });
+        if (!t.ok) return t;
+        var taskId = t.data && t.data._id, vid = t.data && t.data.video_id;
+        for (var i = 0; i < 90; i++) {
+            await sleep(opts.pollMs || 4000);
+            var st = await req('/tasks/' + taskId);
+            if (!st.ok) return st;
+            var s = st.data && st.data.status;
+            if (opts.onProgress) opts.onProgress(s, i);
+            if (s === 'ready') {
+                vid = (st.data && st.data.video_id) || vid;
+                map = vidMap();
+                map[doc.video_id] = vid || taskId;
+                lsSet(LS.map, JSON.stringify(map));
+                return { ok: true, videoId: map[doc.video_id], indexId: idx };
+            }
+            if (s === 'failed') return { ok: false, err: '索引失败：视频无法下载或格式不受支持' };
+            if (st.data && st.data.status === 'indexing' && i > 60) break;
+        }
+        return { ok: false, err: '索引超时（视频可能较大，稍后会自动完成）' };
+    }
+
+    async function semanticSearch(text, opts) {
+        opts = opts || {};
+        var idx = indexId();
+        if (!idx) return { ok: false, noIndex: true, err: '还没有索引：先对想搜的视频做「深度索引」' };
+        var r = await req('/search', {
+            method: 'POST',
+            body: {
+                index_id: idx,
+                query_text: text,
+                search_options: opts.searchOptions || ['visual', 'audio'],
+                group_by: 'video',
+                page_limit: opts.limit || 50
+            }
+        });
+        if (!r.ok) return r;
+        var data = (r.data && r.data.data) || [];
+        var map = vidMap(), rev = {};
+        for (var k in map) if (Object.prototype.hasOwnProperty.call(map, k)) rev[map[k]] = k;
+        var items = [];
+        for (var i = 0; i < data.length; i++) {
+            var tlId = data[i].id || data[i].video_id;
+            var dbId = rev[tlId];
+            if (dbId) items.push({ video_id: dbId, rank: data[i].rank || (i + 1), tl: tlId });
+        }
+        return { ok: true, items: items, pool: r.data && r.data.search_pool, page: r.data && r.data.page_info, unmapped: data.length - items.length };
+    }
+
+    /* ---------------- 连接自检 ---------------- */
+    async function status() {
+        if (!key()) return { ok: false, configured: false, err: '未配置 API 密钥' };
+        var r = await req('/indexes?page_limit=5');
+        if (!r.ok) return { ok: false, configured: true, err: r.err, status: r.status };
+        var arr = (r.data && r.data.data) || [];
+        return { ok: true, configured: true, indexes: arr.map(function (x) { return { id: x._id, name: x.index_name, videos: x.video_count, duration: x.total_duration }; }) };
+    }
+
+    global.TL = {
+        version: '1.1.0',
+        VOCAB: VOCAB, WINDOWS: WINDOWS,
+        key: key, setKey: setKey, configured: configured, status: status,
+        windowSec: windowSec, setWindowSec: setWindowSec, windowLabel: windowLabel,
+        buildPrompt: buildPrompt, mp4Of: mp4Of,
+        analyze: analyze, tagMany: tagMany, stopTagging: stopTagging, queueState: queueState,
+        get: get, put: put, del: del, size: size, all: all, ids: ids, tagCounts: tagCounts, matchTerms: matchTerms,
+        usage: usage, setPusher: setPusher, push: push,
+        ensureIndex: ensureIndex, indexId: indexId, indexVideo: indexVideo, indexedCount: indexedCount, vidMap: vidMap,
+        semanticSearch: semanticSearch,
+        req: req
+    };
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+    <script>
+/* ==== inlined src/search-engine.js ==== */
+/* ============================================================
+   search-engine.js — 超级搜索内核 (纯逻辑, 无 DOM 依赖)
+   ------------------------------------------------------------
+   职责:
+     1. 查询解析 — 空格=AND, "短语", -排除, 字段前缀 (@作者 #分区 id: src: url:),
+        日期 after:/before:, 排序 sort:hot|new
+     2. 过滤树生成 — 把解析结果翻译成 PostgREST 过滤串 (多字段 or(...) 嵌套 and=(...))
+     3. 相关性打分 — 标题/作者/来源关键词/分区/ID 分级加权 + 质量信号 (可播/播放量/时间/点赞)
+     4. 高亮与"命中原因" — 结果卡片上标出为什么这条视频会出现 (无标题视频靠这个才看得懂)
+     5. 候选检索策略 — 严格 AND / 宽松 OR / 不同排序 的多路召回, 合并后本地排序
+     6. 建议与纠错 — 作者/关键词/分区 词表 + 编辑距离 "你是不是想搜…"
+   全部字段名对应 Supabase public.videos 表。ES5 风格 (兼容微信 X5 老内核)。
+   ============================================================ */
+(function (global) {
+    'use strict';
+
+    /* ---------------- 字段分组 ---------------- */
+    // SERVER_COL: 真正存在于 Supabase videos 表、可用于服务端过滤的列
+    var SERVER_COL = {
+        all: ['title', 'author', 'source_section', 'source_page', 'video_id', 'monsnode_video_id', 'video_url'],
+        title: ['title'],
+        author: ['author'],
+        key: ['source_page', 'video_url'],
+        section: ['source_section'],
+        id: ['video_id', 'monsnode_video_id'],
+        url: ['video_url', 'source_page']
+    };
+    // COL: 客户端"打分/高亮"用的字段分组 —— 额外包含 'ai' (Twelve Labs 生成的
+    // 中文标题/标签, 只存在于本地标签库, 服务端没有这一列, 所以绝不能进 SERVER_COL)
+    var COL = {
+        all: SERVER_COL.all.concat(['ai']),
+        title: ['title'],
+        ai: ['ai'],
+        author: ['author'],
+        key: ['source_page', 'video_url'],
+        section: ['source_section'],
+        id: ['video_id', 'monsnode_video_id'],
+        url: ['video_url', 'source_page']
+    };
+    var FIELD_ALIAS = {
+        t: 'title', title: 'title', biaoti: 'title',
+        a: 'author', author: 'author', by: 'author',
+        k: 'key', kw: 'key', key: 'key', src: 'key', from: 'key', laiyuan: 'key',
+        s: 'section', section: 'section', fenqu: 'section',
+        u: 'url', url: 'url', lianjie: 'url',
+        id: 'id'
+    };
+
+    /* ---------------- 权重表 (可整体替换以便调参) ---------------- */
+    var W = {
+        idExact: 1000, idPrefix: 420,
+        titleExact: 400, titlePrefix: 330, titleWord: 300, titleHas: 235,
+        titlePhrase: 300, fullInTitle: 430,
+        authorExact: 300, authorPrefix: 200, authorHas: 130,
+        keyExact: 205, keyHas: 95,
+        pageHas: 45, urlHas: 50,
+        sectionExact: 95, sectionHas: 45,
+        allTerms: 165, termHit: 30,
+        qHasTitleQ: 60,
+        qTitle: 55, qMp4: 45, qThumb: 12, qRescrape: -12,
+        viewsMax: 70, voteMax: 30, freshMax: 70, freshHalfLifeDays: 150
+    };
+
+    /* ---------------- 文本归一化 ---------------- */
+    var RE_CJK = /[\u2e80-\u9fff\uf900-\ufaff\u3040-\u30ff]/;
+
+    function normalize(s) {
+        if (s === undefined || s === null) return '';
+        s = String(s);
+        if (typeof s.normalize === 'function') { try { s = s.normalize('NFKC'); } catch (e) {} }
+        return s.toLowerCase();
+    }
+    function stripMarks(s) {
+        return String(s).replace(/[(),\\*%"'`;:!?~^$#@+=\[\]{}|<>\/]/g, ' ');
+    }
+    // 只保留 PostgREST ilike 里安全的字符 (逗号/括号/反斜杠/星号是语法字符)
+    function pgSan(s) {
+        return String(s === undefined || s === null ? '' : s)
+            .replace(/[(),\\*%_]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+    function hasCJK(s) { return RE_CJK.test(s); }
+    function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+
+    /* ---------------- 查询解析 ---------------- */
+    function splitTerms(raw) {
+        var out = [], buf = '', quote = '', i, ch;
+        for (i = 0; i < raw.length; i++) {
+            ch = raw.charAt(i);
+            if (quote) {
+                if (ch === quote) { quote = ''; continue; }
+                buf += ch;
+                continue;
+            }
+            if (ch === '"' || ch === '\u201c' || ch === '\u300c') { quote = (ch === '"' ? '"' : (ch === '\u201c' ? '\u201d' : '\u300d')); continue; }
+            if (/\s/.test(ch) || ch === '\u3001' || ch === '\uff0c') {
+                if (buf) { out.push({ text: buf, phrase: quote === '' && buf.indexOf(' ') >= 0 }); buf = ''; }
+                continue;
+            }
+            buf += ch;
+        }
+        if (buf) out.push({ text: buf, phrase: false });
+        return out;
+    }
+
+    function parse(raw) {
+        var src = normalize(raw).trim();
+        var res = { raw: String(raw === undefined || raw === null ? '' : raw).trim(), terms: [], after: '', before: '', sort: '', mode: '' };
+        if (!src) return res;
+        var toks = splitTerms(src);
+        var quoted = (String(raw).match(/"[^"]+"|\u201c[^\u201d]+\u201d|\u300c[^\u300d]+\u300d/g) || []).map(function (s) {
+            return s.replace(/^["\u201c\u300c]|["\u201d\u300d]$/g, '');
+        });
+        for (var i = 0; i < toks.length; i++) {
+            var t = toks[i].text;
+            if (!t) continue;
+            if (t === '|' || t === 'or' || t === 'OR') { res.mode = 'any'; continue; }
+            if (t.indexOf('after:') === 0) { res.after = t.slice(6); continue; }
+            if (t.indexOf('before:') === 0) { res.before = t.slice(7); continue; }
+            if (t.indexOf('sort:') === 0) { res.sort = t.slice(5); continue; }
+            var neg = false;
+            if (t.charAt(0) === '-' || t.charAt(0) === '\uff01') { neg = true; t = t.slice(1); }
+            var field = 'all';
+            var m = /^([a-z#@]+):(.*)$/.exec(t);
+            if (m && FIELD_ALIAS[m[1]]) { field = FIELD_ALIAS[m[1]]; t = m[2]; }
+            else if (t.charAt(0) === '@' && t.length > 1) { field = 'author'; t = t.slice(1); }
+            else if ((t.charAt(0) === '#' || t.charAt(0) === '\uff03') && t.length > 1) { field = 'section'; t = t.slice(1); }
+            t = t.replace(/^["'\u201c\u300c]+|["'\u201d\u300d]+$/g, '').trim();
+            if (!t) continue;
+            if (!/[\w\u2e80-\u9fff\uf900-\ufaff\u3040-\u30ff]/.test(t)) continue; // 纯符号/emoji 不当搜索词
+            res.terms.push({ text: t, neg: neg, field: field });
+        }
+        if (res.mode === 'any' || quoted.length) { /* 短语已通过引号包裹在 text 内 */ }
+        return res;
+    }
+
+    function positiveTerms(p) { var o = []; for (var i = 0; i < p.terms.length; i++) if (!p.terms[i].neg) o.push(p.terms[i]); return o; }
+    function negativeTerms(p) { var o = []; for (var i = 0; i < p.terms.length; i++) if (p.terms[i].neg) o.push(p.terms[i]); return o; }
+
+    /* ---------------- 过滤树 ---------------- */
+    function orGroup(term, loose) {
+        var cols = SERVER_COL[term.field] || SERVER_COL.all;
+        var v = pgSan(term.text);
+        if (!v) return '';
+        var parts = [];
+        for (var i = 0; i < cols.length; i++) parts.push(cols[i] + '.ilike.*' + encodeURIComponent(v) + '*');
+        if (loose && v.length >= 3) {
+            // 宽松召回: 缩短词尾, 兜住截断/后缀打错 (bikni -> bik)
+            var cut = v.slice(0, Math.max(2, Math.ceil(v.length * 0.7)));
+            for (var j = 1; j < cols.length + 1 && j < 3; j++) parts.push(cols[j % cols.length] + '.ilike.*' + encodeURIComponent(cut) + '*');
+        }
+        return 'or(' + parts.join(',') + ')';
+    }
+
+    function buildFilter(p, opts) {
+        opts = opts || {};
+        var pos = positiveTerms(p), neg = negativeTerms(p), i, parts = [];
+        if (opts.mode === 'any' || p.mode === 'any') {
+            // 任一词匹配: 拍平成单个 or=(字段…,字段…) —— 顶层 or=() 才是合法语法, 嵌套 or() 只在 and=() 内合法
+            var flat = [];
+            for (i = 0; i < pos.length; i++) {
+                var cols = SERVER_COL[pos[i].field] || SERVER_COL.all, v = pgSan(pos[i].text);
+                if (!v) continue;
+                for (var j = 0; j < cols.length; j++) flat.push(cols[j] + '.ilike.*' + encodeURIComponent(v) + '*');
+                if (pos.length > 1 && v.length >= 4) {
+                    var cut = v.slice(0, Math.max(2, Math.ceil(v.length * 0.7)));
+                    flat.push('title.ilike.*' + encodeURIComponent(cut) + '*');
+                    flat.push('author.ilike.*' + encodeURIComponent(cut) + '*');
+                }
+            }
+            if (flat.length) parts.push('or=(' + flat.join(',') + ')');
+        } else {
+            var only = opts.only ? SERVER_COL[opts.only] : null;
+            for (i = 0; i < pos.length; i++) {
+                if (only) {
+                    var v2 = pgSan(pos[i].text);
+                    if (!v2) continue;
+                    var sub = [];
+                    for (var oi = 0; oi < only.length; oi++) sub.push(only[oi] + '.ilike.*' + encodeURIComponent(v2) + '*');
+                    parts.push('or(' + sub.join(',') + ')');
+                } else {
+                    parts.push(orGroup(pos[i], opts.loose && pos.length > 1));
+                }
+            }
+        }
+        for (i = 0; i < neg.length; i++) parts.push(orGroup(neg[i]) ? 'not.' + orGroup(neg[i]) : '');
+        if (p.after) parts.push('created_at.gte.' + encodeURIComponent(pgSan(p.after)));
+        if (p.before) parts.push('created_at.lt.' + encodeURIComponent(pgSan(p.before)));
+        parts = parts.filter(function (x) { return !!x; });
+        if (!parts.length) return '';
+        if (parts.length === 1) {
+            // 单条件: 顶层 or=(...) / 否定项用 and=(not.or(...)) 包裹 (嵌套语法)
+            if (parts[0].indexOf('not.') === 0) return '&and=(' + parts[0] + ')';
+            if (parts[0].indexOf('or=') === 0) return '&' + parts[0];
+            return '&' + parts[0].replace(/^or\(/, 'or=(');
+        }
+        return '&and=(' + parts.join(',') + ')';
+    }
+
+    // 供 UI 显示的可移除筛选碎片
+    function chips(p) {
+        var out = [], i, t;
+        for (i = 0; i < p.terms.length; i++) {
+            t = p.terms[i];
+            out.push({ kind: t.neg ? 'not' : (t.field === 'all' ? 'term' : t.field), text: t.text, label: (t.neg ? '−' : '') + (t.field === 'all' ? '' : ({ author: '@', section: '#', key: '🔑', id: 'id:', url: 'url:' }[t.field] || '')) + t.text });
+        }
+        if (p.after) out.push({ kind: 'date', text: 'after:' + p.after, label: '🗓 ≥' + p.after });
+        if (p.before) out.push({ kind: 'date', text: 'before:' + p.before, label: '🗓 <' + p.before });
+        return out;
+    }
+
+    /* ---------------- 文档字段 ---------------- */
+    // 从 source_page 里抽出爬虫当初用的搜索词 (monsnode search.php?search=巨乳)
+    function keyOf(page) {
+        if (!page) return '';
+        var m = /[?&](?:search|q|keyword|kw|tag)=([^&#]+)/i.exec(page);
+        if (!m) return '';
+        var v = m[1].replace(/\+/g, ' ');
+        try { v = decodeURIComponent(v); } catch (e) {}
+        return normalize(v).trim();
+    }
+    function decodeUrl(u) {
+        if (!u) return '';
+        var s = String(u);
+        try { s = decodeURIComponent(s); } catch (e) {}
+        return normalize(s);
+    }
+
+    /* ---------------- AI 标注 (Twelve Labs) ---------------- */
+    // 标注只存在本地标签库 (localStorage) 或由调用方挂在 doc.__ai 上:
+    //   {t: 中文标题, g: [标签], s: 一句话描述}
+    function aiOf(doc) {
+        if (!doc) return null;
+        if (doc.__ai) return doc.__ai;
+        if (global.TL && global.TL.get) { try { return global.TL.get(doc.video_id) || null; } catch (e) { return null; } }
+        return null;
+    }
+    function aiText(doc) {
+        var a = aiOf(doc);
+        if (!a) return '';
+        return normalize((a.t || '') + ' ' + (a.s || '') + ' ' + ((a.g || []).join(' ')));
+    }
+    function aiTitleOf(doc) { var a = aiOf(doc); return (a && a.t) ? String(a.t) : ''; }
+    function aiTagsOf(doc) { var a = aiOf(doc); return (a && a.g) ? a.g : []; }
+
+    function fields(doc) {
+        var title = normalize(doc.title);
+        var author = normalize(doc.author);
+        var section = normalize(doc.source_section).replace(/\|/g, ' ');
+        var key = keyOf(doc.source_page);
+        var page = decodeUrl(doc.source_page);
+        var url = decodeUrl(doc.video_url);
+        var ids = normalize(doc.video_id) + ' ' + normalize(doc.monsnode_video_id);
+        return {
+            title: title, author: author, section: section, key: key,
+            page: page + ' ' + url, url: url, ids: ids,
+            ai: aiText(doc),
+            // key 抽不到时, 用整条 URL 当关键词兜底
+            keyAny: key || decodeUrl(doc.source_page)
+        };
+    }
+
+    function wordHit(hay, needle) {
+        if (!hay || !needle) return 0;
+        var idx = hay.indexOf(needle);
+        if (idx < 0) return 0;
+        if (idx === 0) return 1;                                   // 前缀
+        var prev = hay.charAt(idx - 1);
+        if (/[\s\u3000\-_./|,，、#@+&#;:：·~]/.test(prev)) return 2;  // 词边界
+        return 3;                                                  // 任意子串
+    }
+    function fieldScore(fv, term, w) {
+        var hit = wordHit(fv, term);
+        if (!hit) return { s: 0 };
+        if (fv === term) return { s: w.exact, kind: 'exact' };
+        if (hit === 1) return { s: w.prefix, kind: 'prefix' };
+        if (hit === 2) return { s: w.word, kind: 'word' };
+        return { s: w.has, kind: 'has' };
+    }
+
+    /* ---------------- 相关性打分 ---------------- */
+    function scoreDoc(doc, p, now) {
+        var f = fields(doc);
+        var pos = positiveTerms(p), neg = negativeTerms(p);
+        var score = 0, reasons = [], i, t, term, hit;
+        now = now || Date.now();
+
+        // 否定项命中 → 直接判死
+        for (i = 0; i < neg.length; i++) {
+            t = neg[i];
+            if (termHit(f, t).hit) return { score: -1e9, reasons: [], excluded: true };
+        }
+
+        // 语义搜索命中 (Twelve Labs Marengo) → 按服务端相关度直接置顶
+        if (doc.__semRank) {
+            score += 6000 - Math.min(999, doc.__semRank);
+            reasons.push({ field: 'sem', label: '语义匹配', text: '#' + doc.__semRank });
+        }
+
+        var allHit = pos.length > 0;
+        var anyHit = pos.length === 0;        for (i = 0; i < pos.length; i++) {
+            t = pos[i];
+            hit = termHit(f, t);
+            if (!hit.hit) allHit = false; else anyHit = true;
+            score += hit.s;
+            if (hit.reason && reasons.length < 3) reasons.push(hit.reason);
+        }
+        if (pos.length > 1) {
+            if (allHit) score += W.allTerms;
+        }
+        // 服务器宽松召回带回来的"半个都没沾上"的结果: 保留但压到最后
+        if (!anyHit) score -= 320;
+        // 整串命中标题
+        var q = normalize(p.raw).replace(/[\-"'@#]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (q && pos.length > 1 && f.title.indexOf(q) >= 0) score += W.fullInTitle;
+        if (q && f.title.indexOf(q) === 0) score += W.qHasTitleQ;
+        // AI 标注里整串命中 (搜"浴室 自慰"命中 AI 描述) → 额外加权
+        if (q && f.ai && f.ai.indexOf(q) >= 0) score += 260;
+        // 有 AI 标注 ≈ 已知内容 → 轻微加权, 让"看得懂的片"排在前面
+        if (f.ai) score += 25;
+
+        // 质量信号
+        if (doc.title) score += W.qTitle;
+        var hasMp4 = doc.has_mp4 === true || (doc.duration && String(doc.duration).indexOf('video.twimg.com') >= 0);
+        if (hasMp4) score += W.qMp4;
+        if (doc.thumbnail_url) score += W.qThumb;
+        if (doc.needs_rescrape === true || doc.playable === false) score += W.qRescrape;
+        var views = parseInt(doc.views, 10) || 0;
+        if (views > 0) score += clamp(17 * Math.log(views + 1) / Math.LN10, 0, W.viewsMax);
+        var votes = (parseInt(doc.vote_up, 10) || 0) - (parseInt(doc.vote_down, 10) || 0);
+        if (votes > 0) score += clamp(votes * 3, 0, W.voteMax);
+        var ts = Date.parse(doc.created_at || doc.scraped_at || '') || 0;
+        if (ts) {
+            var days = Math.max(0, (now - ts) / 86400000);
+            score += W.freshMax * Math.exp(-days / W.freshHalfLifeDays);
+        }
+        return { score: score, reasons: reasons, allTerms: allHit, matched: anyHit };
+    }
+
+    // 单个词条 → 各字段最高分 + 命中原因
+    var COL_TARGETS = {
+        title: [['title', 'title']],
+        ai: [['ai', 'ai']],
+        author: [['author', 'author']],
+        source_section: [['section', 'section']],
+        source_page: [['keyAny', 'key'], ['page', 'page']],
+        video_id: [['ids', 'ids']],
+        monsnode_video_id: [['ids', 'ids']],
+        video_url: [['url', 'url'], ['page', 'url']]
+    };
+    var FIELD_WEIGHTS = {
+        title: { exact: W.titleExact, prefix: W.titlePrefix, word: W.titleWord, has: W.titleHas },
+        ai: { exact: 340, prefix: 300, word: 268, has: 205 },
+        author: { exact: W.authorExact, prefix: W.authorPrefix, word: W.authorPrefix, has: W.authorHas },
+        key: { exact: W.keyExact, prefix: W.keyExact, word: W.keyHas, has: W.keyHas },
+        section: { exact: W.sectionExact, prefix: W.sectionHas, word: W.sectionHas, has: W.sectionHas },
+        ids: { exact: W.idExact, prefix: W.idPrefix, word: W.idPrefix, has: W.idPrefix },
+        url: { exact: W.urlHas, prefix: W.urlHas, word: W.urlHas, has: W.urlHas },
+        page: { exact: W.pageHas, prefix: W.pageHas, word: W.pageHas, has: W.pageHas }
+    };
+    var RE_LABEL = { title: '标题', ai: 'AI标签', sem: '语义匹配', author: '作者', key: '来源关键词', keyAny: '来源关键词', section: '分区', ids: '视频ID', url: '链接', page: '来源页' };
+    var ICONS = { title: '🎯', ai: '🤖', sem: '🧠', author: '👤', key: '🔑', keyAny: '🔑', section: '🏷', ids: '🆔', url: '🔗', page: '🔗' };
+
+    function termHit(f, t) {
+        var best = { s: 0, hit: false, reason: null };
+        var cols = COL[t.field] || COL.all;
+        var seen = {};
+        for (var i = 0; i < cols.length; i++) {
+            var targets = COL_TARGETS[cols[i]] || [];
+            for (var k = 0; k < targets.length; k++) {
+                var fk = targets[k][0], wk = targets[k][1];
+                if (seen[fk]) continue;
+                seen[fk] = 1;
+                var val = f[fk];
+                if (!val) continue;
+                var r = fieldScore(val, t.text, FIELD_WEIGHTS[wk] || FIELD_WEIGHTS.title);
+                if (!r.s) continue;
+                var reason = { field: fk, label: RE_LABEL[fk] || '匹配', text: t.text, kind: r.kind };
+                if (r.s > best.s) best = { s: r.s, hit: true, reason: reason };
+                else best.hit = true;
+            }
+        }
+        return best;
+    }
+
+    function rank(docs, p, opts) {
+        opts = opts || {};
+        var now = opts.now || Date.now();
+        var out = [];
+        for (var i = 0; i < docs.length; i++) {
+            var d = docs[i];
+            var sc = scoreDoc(d, p, now);
+            if (sc.excluded) continue;
+            d.__score = sc.score;
+            d.__reasons = sc.reasons;
+            d.__matched = sc.matched;
+            d.__reasonLabel = reasonLabel(sc.reasons);
+            out.push(d);
+        }
+        if (opts.sort === 'new') {
+            out.sort(function (a, b) { return (Date.parse(b.created_at || 0) || 0) - (Date.parse(a.created_at || 0) || 0); });
+        } else if (opts.sort === 'hot') {
+            out.sort(function (a, b) { return (parseInt(b.views, 10) || 0) - (parseInt(a.views, 10) || 0); });
+        } else {
+            out.sort(function (a, b) {
+                if (b.__score !== a.__score) return b.__score - a.__score;
+                return (Date.parse(b.created_at || 0) || 0) - (Date.parse(a.created_at || 0) || 0);
+            });
+        }
+        return out;
+    }
+
+    function reasonLabel(reasons) {
+        if (!reasons || !reasons.length) return '';
+        var r = reasons[0];
+        var icon = ICONS[r.field] || '🔎';
+        return icon + ' ' + r.label + '「' + r.text + '」';
+    }
+
+    /* ---------------- 高亮 ---------------- */
+    function escHtml(s) {
+        return String(s === undefined || s === null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    // 返回转义后的 HTML, 命中的词条包 <mark class="sr-hl">
+    function highlight(text, p) {
+        var out = escHtml(text);
+        if (!p || !p.terms || !p.terms.length) return out;
+        var toks = [];
+        for (var i = 0; i < p.terms.length; i++) {
+            var t = p.terms[i];
+            if (t.neg || !t.text) continue;
+            if (t.field === 'section' || t.field === 'id' || t.field === 'url') continue;
+            toks.push(t.text);
+        }
+        toks.sort(function (a, b) { return b.length - a.length; });
+        for (var k = 0; k < toks.length; k++) {
+            var raw = toks[k];
+            if (!raw) continue;
+            var re = new RegExp(escapeRe(escHtml(raw)), 'gi');
+            out = out.replace(re, function (m) { return '<mark class="sr-hl">' + m + '</mark>'; });
+        }
+        return out;
+    }
+
+    /* ---------------- 展示标题 (无标题视频) ---------------- */
+    function displayTitle(doc) {
+        var t = doc.title ? String(doc.title).replace(/\s+/g, ' ').trim() : '';
+        if (t) return t;
+        // 没有原始标题 → 优先用 AI 生成的中文标题 (这才是"能看懂的标题")
+        var ai = aiTitleOf(doc);
+        if (ai) return ai;
+        var key = keyOf(doc.source_page);
+        var bits = [];
+        if (key) bits.push('🔑 ' + key);
+        if (doc.author) bits.push('@' + doc.author);
+        if (!bits.length) bits.push(String(doc.video_id || '无标题'));
+        return '(无标题) ' + bits.join(' · ');
+    }
+
+    /* ---------------- 多路召回策略 ---------------- */
+    // 说明: 全站 views/vote 目前基本为 0, 所以"热度"排序没有意义 → 一律按时间倒序,
+    //       靠"标题优先召回 + 本地相关性排序"决定前几屏质量。
+    function buildStrategies(p, opts) {
+        opts = opts || {};
+        var limit = opts.limit || 120;
+        var mode = opts.mode || 'smart';
+        var pos = positiveTerms(p);
+        if (!pos.length) return [{ key: 'plain', params: '', order: 'created_at.desc', limit: limit }];
+        var strict = buildFilter(p, { mode: 'all' });
+        var titleOnly = (opts.titleFilter !== undefined) ? opts.titleFilter : '';
+        if (opts.titleFilter === undefined) {
+            var plain = true;
+            for (var pi = 0; pi < pos.length; pi++) if (pos[pi].field !== 'all') plain = false;
+            if (plain) titleOnly = buildFilter(p, { mode: 'all', only: 'title' });
+        }
+        var loose = buildFilter(p, { mode: 'any' });
+        var strategies = [];
+        var ORDER = 'created_at.desc';
+        if (titleOnly && titleOnly !== strict) strategies.push({ key: 'title', params: titleOnly, order: ORDER, limit: limit });
+        strategies.push({ key: 'strict', params: strict, order: ORDER, limit: limit });
+        if (mode === 'smart' && pos.length > 1 && loose && loose !== strict) {
+            strategies.push({ key: 'loose', params: loose, order: ORDER, limit: Math.min(80, limit) });
+        } else if (mode === 'any') {
+            strategies = [{ key: 'any', params: loose, order: ORDER, limit: limit }];
+        }
+        return strategies;
+    }
+
+    /* ---------------- 词表 + 纠错 ---------------- */
+    function emptyVocab() { return { authors: {}, keys: {}, sections: {}, recent: [], total: 0 }; }
+    function vocabAdd(v, doc) {
+        if (!v) return v;
+        var a = normalize(doc.author);
+        if (a) v.authors[a] = (v.authors[a] || 0) + 1;
+        var k = keyOf(doc.source_page);
+        if (k) v.keys[k] = (v.keys[k] || 0) + 1;
+        var s = String(doc.source_section || '').split(/[|,]/)[0].trim();
+        if (s && s.length <= 20) v.sections[s] = (v.sections[s] || 0) + 1;
+        v.total += 1;
+        return v;
+    }
+    function topOf(map, n) {
+        var arr = [];
+        for (var k in map) if (Object.prototype.hasOwnProperty.call(map, k)) arr.push([k, map[k]]);
+        arr.sort(function (a, b) { return b[1] - a[1]; });
+        return arr.slice(0, n);
+    }
+    function levenshtein(a, b) {
+        a = String(a); b = String(b);
+        if (a === b) return 0;
+        if (!a.length) return b.length;
+        if (!b.length) return a.length;
+        var prev = [], cur = [], i, j;
+        for (j = 0; j <= b.length; j++) prev[j] = j;
+        for (i = 1; i <= a.length; i++) {
+            cur[0] = i;
+            for (j = 1; j <= b.length; j++) {
+                cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+            }
+            prev = cur.slice();
+        }
+        return prev[b.length];
+    }
+    // 从词表里找近似词 ('你是不是想搜…')
+    function fuzzySuggest(q, vocab, limit) {
+        var qt = normalize(q).trim();
+        if (!qt || !vocab) return [];
+        var out = [], qtok = qt.split(/\s+/)[0] || qt;
+        var buckets = [['author', vocab.authors], ['key', vocab.keys], ['section', vocab.sections]];
+        for (var bi = 0; bi < buckets.length; bi++) {
+            var kind = buckets[bi][0], map = buckets[bi][1] || {};
+            for (var word in map) {
+                if (!Object.prototype.hasOwnProperty.call(map, word)) continue;
+                if (word === qtok) continue;
+                if (word.length > qtok.length + 3 || qtok.length > word.length + 3) continue;
+                var d = levenshtein(word, qtok);
+                var maxD = qtok.length <= 3 ? 1 : (qtok.length <= 6 ? 2 : 3);
+                if (d <= maxD) out.push({ text: word, kind: kind, dist: d, n: map[word] });
+                else if (word.length > 2 && word.indexOf(qtok) === 0) out.push({ text: word, kind: kind, dist: 0.5, n: map[word] });
+            }
+        }
+        out.sort(function (a, b) { return (a.dist - b.dist) || (b.n - a.n); });
+        var seen = {}, res = [];
+        for (var i = 0; i < out.length && res.length < (limit || 5); i++) {
+            if (seen[out[i].text]) continue;
+            seen[out[i].text] = 1;
+            res.push(out[i]);
+        }
+        return res;
+    }
+
+    /* ---------------- 建议词 (输入时下拉) ---------------- */
+    function guessKindOf(tok) {
+        var t = String(tok || '');
+        if (/^@/.test(t)) return 'author';
+        if (/^#/.test(t)) return 'section';
+        if (/^(id:|src:|url:|key:|kw:)/.test(t)) return 'plain';
+        return 'plain';
+    }
+
+    global.SmartSearch = {
+        version: '1.1.0',
+        COL: COL, SERVER_COL: SERVER_COL, W: W,
+        normalize: normalize, pgSan: pgSan, hasCJK: hasCJK, escapeRe: escapeRe, escHtml: escHtml,
+        parse: parse, positiveTerms: positiveTerms, negativeTerms: negativeTerms,
+        buildFilter: buildFilter, buildStrategies: buildStrategies, chips: chips,
+        fields: fields, scoreDoc: scoreDoc, rank: rank, displayTitle: displayTitle,
+        highlight: highlight, escHtml: escHtml, keyOf: keyOf,
+        aiOf: aiOf, aiText: aiText, aiTitleOf: aiTitleOf, aiTagsOf: aiTagsOf,
+        emptyVocab: emptyVocab, vocabAdd: vocabAdd, topOf: topOf,
+        levenshtein: levenshtein, fuzzySuggest: fuzzySuggest, guessKindOf: guessKindOf,
+        reasonLabel: reasonLabel
+    };
+})(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : this));
+
+</script>
+</body>
+</html>
