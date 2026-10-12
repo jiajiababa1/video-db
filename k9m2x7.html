@@ -2,6 +2,51 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+<script>
+/* env-guard: 官方站点运行环境校验 (防整站下载盗用) */
+(function(){
+  var _d = function(a){ return String.fromCharCode.apply(null, a); };
+  /* 白名单主机: jiajiababa1.github.io (charcode 存放, 防文本搜索定位) */
+  var _H = [[106,105,97,106,105,97,98,97,98,97,49,46,103,105,116,104,117,98,46,105,111]];
+  function _ok(){
+    try{
+      var h = String(location.hostname||'').toLowerCase();
+      var p = String(location.protocol||'').toLowerCase();
+      if(p!=='https:' && p!=='http:') return false; /* file:/data: 等本地打开直接拦 */
+      if(window.top!==window.self) return false;      /* 禁止被第三方页面 iframe 嵌入 */
+      for(var i=0;i<_H.length;i++){ if(h===_d(_H[i])) return true; }
+      return false;
+    }catch(e){ return false; }
+  }
+  function _lock(){
+    if(window.__vdb_locked) return;
+    window.__vdb_locked = true;
+    try{ /* 清掉本机鉴权残留, 防 token 被盗用 */
+      var ks=['vid_gate_token','login_token','gh_token','sb_token'];
+      for(var i=0;i<ks.length;i++){
+        try{ localStorage.removeItem(ks[i]); }catch(e){}
+        try{ sessionStorage.removeItem(ks[i]); }catch(e){}
+      }
+    }catch(e){}
+    try{ /* 熔断网络: 全部数据接口失效, 列表/播放/登录/解析统统不可用 */
+      window.fetch = function(){ return Promise.reject(new Error('net blocked')); };
+      if(window.XMLHttpRequest){ window.XMLHttpRequest = function(){ throw new Error('net blocked'); }; }
+    }catch(e){}
+    try{ /* 锁屏覆盖 */
+      var css=document.createElement('style');
+      css.textContent='html.__vdb_locked body>*{display:none!important}';
+      document.documentElement.appendChild(css);
+      document.documentElement.classList.add('__vdb_locked');
+      var box=document.createElement('div');
+      box.setAttribute('style','position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#08080a;color:#e4e0d8;font-family:-apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif;text-align:center;padding:24px;');
+      box.innerHTML='<div><div style="font-size:44px;margin-bottom:16px;">🔒</div><div style="font-size:17px;font-weight:700;margin-bottom:10px;">此页面仅可在官方站点使用</div><div style="font-size:13px;color:#8a8578;line-height:1.9;">检测到当前访问地址非官方站点,<br>全部功能已被禁用。<br><br>请前往官方地址:<br><a href="https://jiajiababa1.github.io/video-db/" style="color:#c8a45c;">jiajiababa1.github.io/video-db</a></div></div>';
+      document.documentElement.appendChild(box);
+    }catch(e){}
+  }
+  if(!_ok()){ _lock(); }
+  setInterval(function(){ if(!window.__vdb_locked && !_ok()){ _lock(); } }, 4000); /* 运行中持续复查 */
+})();
+</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
