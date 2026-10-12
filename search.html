@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>搜索 - VideoDB</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+    body { background: var(--vbg); color: var(--vtext); }
+    .s-wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+    .s-box { display: flex; gap: 8px; margin-bottom: 12px; }
+    .s-box input {
+        flex: 1; padding: 12px 16px; border-radius: 10px; font-size: 15px;
+        border: 1px solid var(--vborder); background: var(--vcard); color: var(--vtext);
+    }
+    .s-box button {
+        padding: 12px 24px; border-radius: 10px; border: none; cursor: pointer;
+        background: var(--vprimary); color: #1a1808; font-size: 15px; font-weight: 700;
+    }
+    .s-help { font-size: 12px; color: var(--vmuted); margin-bottom: 16px; line-height: 1.8; }
+    .s-help code { background: rgba(200,164,92,.1); padding: 1px 6px; border-radius: 4px; color: var(--vprimary); }
+    .s-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+    .s-card {
+        border-radius: 10px; overflow: hidden; border: 1px solid var(--vborder);
+        background: var(--vcard); text-decoration: none; color: inherit;
+    }
+    .s-card:hover { border-color: var(--vprimary); }
+    .s-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0a0a0c; }
+    .s-card .t { padding: 10px; font-size: 13px; line-height: 1.4; }
+    .s-card .a { padding: 0 10px 10px; font-size: 11px; color: var(--vmuted); }
+    .s-more { text-align: center; margin-top: 20px; }
+    .s-more button {
+        padding: 10px 32px; border-radius: 10px; border: 1px solid var(--vborder);
+        background: transparent; color: var(--vtext); cursor: pointer;
+    }
+    .s-empty { text-align: center; padding: 60px 20px; color: var(--vmuted); }
+</style>
+</head>
+<body>
+<div id="vdbNav"></div>
+<div class="s-wrap">
+    <div class="s-box">
+        <input id="q" placeholder="搜标题、作者… 试试 @作者名" autocomplete="off">
+        <button onclick="doSearch(true)">搜索</button>
+    </div>
+    <div class="s-help">
+        语法：<code>@作者</code> 只搜作者 · <code>-排除词</code> 排除 · 空格=都要命中 ·
+        <a href="videos.html" style="color:var(--vprimary);">回视频站用完整超级搜索</a>
+    </div>
+    <div class="s-grid" id="grid"></div>
+    <div class="s-empty" id="empty" style="display:none;">😶 没有找到，换个词试试</div>
+    <div class="s-more" id="moreBox" style="display:none;">
+        <button onclick="doSearch(false)">加载更多</button>
+    </div>
+</div>
+<script src="assets/common.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/auth.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+(function() {
+'use strict';
+var C = window.VdbCommon, Api = window.VdbApi;
+var curQ = '', offset = 0, total = 0;
+var LIMIT = 48;
+
+function cardHtml(v) {
+    return '<a class="s-card" href="watch.html?v=' + encodeURIComponent(v.video_id) + '">' +
+        '<img src="' + C.esc(v.thumbnail_url || '') + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+        '<div class="t">' + C.esc(v.title || v.video_id) + '</div>' +
+        '<div class="a">' + C.esc(v.author ? '@' + v.author : '') + '</div></a>';
+}
+
+window.doSearch = async function(reset) {
+    var q = document.getElementById('q').value.trim();
+    if (!q) return;
+    if (reset) { curQ = q; offset = 0; document.getElementById('grid').innerHTML = ''; }
+    // @作者 语法
+    var author = null, kw = curQ;
+    var m = curQ.match(/^@(\S+)\s*(.*)$/);
+    if (m) { author = m[1]; kw = m[2]; }
+    try {
+        var res;
+        if (author && !kw) {
+            res = await Api.videos({ author: author, limit: LIMIT, offset: offset });
+        } else {
+            res = await Api.search(kw || author || '', { limit: LIMIT, offset: offset });
+        }
+        total = res.total;
+        var g = document.getElementById('grid');
+        if (reset && !res.data.length) {
+            document.getElementById('empty').style.display = '';
+        } else {
+            document.getElementById('empty').style.display = 'none';
+        }
+        res.data.forEach(function(v) { g.insertAdjacentHTML('beforeend', cardHtml(v)); });
+        offset += res.data.length;
+        document.getElementById('moreBox').style.display = offset < total ? '' : 'none';
+        try { history.replaceState(null, '', 'search.html?q=' + encodeURIComponent(curQ)); } catch (e) {}
+    } catch (e) {
+        C.toast('搜索失败: ' + (e.message || '网络错误'));
+    }
+};
+
+document.getElementById('q').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') doSearch(true);
+});
+// 支持 ?q= 直达
+try {
+    var mq = new RegExp('[?&]q=([^&]*)').exec(location.search);
+    if (mq) { document.getElementById('q').value = decodeURIComponent(mq[1]); doSearch(true); }
+} catch (e) {}
+})();
+</script>
+</body>
+</html>

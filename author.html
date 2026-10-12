@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>作者 - VideoDB</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+    body { background: var(--vbg); color: var(--vtext); }
+    .a-wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+    .a-head { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+    .a-ava {
+        width: 64px; height: 64px; border-radius: 50%; background: rgba(200,164,92,.15);
+        display: flex; align-items: center; justify-content: center; font-size: 28px;
+        border: 1px solid var(--vborder);
+    }
+    .a-head h2 { font-size: 20px; }
+    .a-head .cnt { font-size: 12px; color: var(--vmuted); margin-top: 4px; }
+    .a-head button {
+        margin-left: auto; padding: 8px 20px; border-radius: 20px; cursor: pointer;
+        border: 1px solid var(--vprimary); background: transparent; color: var(--vprimary); font-size: 13px;
+    }
+    .a-head button.on { background: var(--vprimary); color: #1a1808; }
+    .a-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+    .a-card {
+        border-radius: 10px; overflow: hidden; border: 1px solid var(--vborder);
+        background: var(--vcard); text-decoration: none; color: inherit;
+    }
+    .a-card:hover { border-color: var(--vprimary); }
+    .a-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0a0a0c; }
+    .a-card .t { padding: 10px; font-size: 13px; line-height: 1.4; }
+    .a-more { text-align: center; margin-top: 20px; }
+    .a-more button {
+        padding: 10px 32px; border-radius: 10px; border: 1px solid var(--vborder);
+        background: transparent; color: var(--vtext); cursor: pointer;
+    }
+</style>
+</head>
+<body>
+<div id="vdbNav"></div>
+<div class="a-wrap">
+    <div class="a-head">
+        <div class="a-ava">👤</div>
+        <div>
+            <h2 id="aName">…</h2>
+            <div class="cnt" id="aCnt"></div>
+        </div>
+        <button id="followBtn" onclick="toggleFollow()">☆ 关注</button>
+    </div>
+    <div class="a-grid" id="grid"></div>
+    <div class="a-more" id="moreBox" style="display:none;">
+        <button onclick="loadMore()">加载更多</button>
+    </div>
+</div>
+<script src="assets/common.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/auth.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+(function() {
+'use strict';
+var C = window.VdbCommon, Api = window.VdbApi;
+var author = '', offset = 0, total = 0;
+var LIMIT = 48;
+
+try {
+    var m = new RegExp('[?&]a=([^&]*)').exec(location.search);
+    author = m ? decodeURIComponent(m[1]) : '';
+} catch (e) {}
+if (!author) { document.getElementById('aName').textContent = '缺少作者名'; }
+else {
+    document.getElementById('aName').textContent = '@' + author;
+    document.title = '@' + author + ' - VideoDB';
+    updateFollowBtn();
+    loadMore();
+}
+
+function isFollowing() {
+    return Api.store.get('vdb_follows', []).indexOf(author) >= 0;
+}
+function updateFollowBtn() {
+    var b = document.getElementById('followBtn');
+    var on = isFollowing();
+    b.classList.toggle('on', on);
+    b.textContent = on ? '★ 已关注' : '☆ 关注';
+}
+window.toggleFollow = function() {
+    var fl = Api.store.get('vdb_follows', []);
+    var i = fl.indexOf(author);
+    if (i >= 0) fl.splice(i, 1); else fl.push(author);
+    Api.store.set('vdb_follows', fl);
+    updateFollowBtn();
+    C.toast(i >= 0 ? '已取消关注' : '已关注 @' + author);
+};
+
+window.loadMore = async function() {
+    try {
+        var res = await Api.videos({ author: author, limit: LIMIT, offset: offset, order: 'created_at.desc' });
+        total = res.total;
+        document.getElementById('aCnt').textContent = '共 ' + total + ' 个视频';
+        var g = document.getElementById('grid');
+        res.data.forEach(function(v) {
+            g.insertAdjacentHTML('beforeend',
+                '<a class="a-card" href="watch.html?v=' + encodeURIComponent(v.video_id) + '">' +
+                '<img src="' + C.esc(v.thumbnail_url || '') + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+                '<div class="t">' + C.esc(v.title || v.video_id) + '</div></a>');
+        });
+        offset += res.data.length;
+        document.getElementById('moreBox').style.display = offset < total ? '' : 'none';
+    } catch (e) {
+        C.toast('加载失败');
+    }
+};
+})();
+</script>
+</body>
+</html>

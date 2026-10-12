@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>设置 - VideoDB</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+    body { background: var(--vbg); color: var(--vtext); }
+    .s-wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 60px; }
+    .s-sec { border: 1px solid var(--vborder); border-radius: 12px; padding: 20px; background: var(--vcard); margin-bottom: 16px; }
+    .s-sec h3 { font-size: 15px; margin-bottom: 12px; }
+    .s-sec label { display: block; font-size: 12px; color: var(--vmuted); margin: 10px 0 4px; }
+    .s-sec input {
+        width: 100%; padding: 10px 12px; border-radius: 8px; font-size: 13px;
+        border: 1px solid var(--vborder); background: var(--vbg); color: var(--vtext);
+    }
+    .s-sec button {
+        margin-top: 12px; padding: 9px 20px; border-radius: 8px; cursor: pointer; font-size: 13px;
+        border: 1px solid var(--vprimary); background: transparent; color: var(--vprimary); margin-right: 8px;
+    }
+    .s-sec button.danger { border-color: rgba(139,58,58,.4); color: #c08080; }
+    .s-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; font-size: 13px; }
+    .s-row .v { color: var(--vmuted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="vdbNav"></div>
+<div class="s-wrap">
+    <div class="s-sec">
+        <h3>👤 账号</h3>
+        <div class="s-row"><span>当前用户</span><span class="v" id="curUser">未登录</span></div>
+        <button class="danger" onclick="VdbAuth.logout()">退出登录</button>
+    </div>
+    <div class="s-sec">
+        <h3>🔑 GitHub Token</h3>
+        <p style="font-size:12px;color:var(--vmuted);margin-bottom:8px;">用于触发云端抓取（需 Actions 写权限），只存本机。</p>
+        <label>Token</label>
+        <input id="ghToken" type="password" placeholder="ghp_xxx">
+        <button onclick="saveGh()">保存</button>
+        <button class="danger" onclick="clearGh()">清除</button>
+    </div>
+    <div class="s-sec">
+        <h3>🗑 缓存</h3>
+        <p style="font-size:12px;color:var(--vmuted);margin-bottom:8px;">清理本机缓存的搜索、历史等数据。</p>
+        <button class="danger" onclick="clearCache()">清理缓存</button>
+    </div>
+    <div class="s-sec">
+        <h3>ℹ️ 关于</h3>
+        <div class="s-row"><span>版本</span><span class="v">app-v2 多页面</span></div>
+        <div class="s-row"><span>架构</span><span class="v">GitHub Pages + Supabase</span></div>
+    </div>
+</div>
+<script src="assets/common.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/auth.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+(function() {
+'use strict';
+var C = window.VdbCommon;
+try {
+    var u = window.VdbAuth.currentUser();
+    document.getElementById('curUser').textContent = u ? '@' + u : '未登录';
+    var t = localStorage.getItem('gh_token') || '';
+    if (t) document.getElementById('ghToken').value = t;
+} catch (e) {}
+
+window.saveGh = function() {
+    var t = document.getElementById('ghToken').value.trim();
+    try { localStorage.setItem('gh_token', t); } catch (e) {}
+    C.toast(t ? '已保存' : '已清空');
+};
+window.clearGh = function() {
+    try { localStorage.removeItem('gh_token'); } catch (e) {}
+    document.getElementById('ghToken').value = '';
+    C.toast('已清除');
+};
+window.clearCache = function() {
+    if (!confirm('确定清理本机缓存？')) return;
+    try {
+        ['ss_recent', 'vdb_hist'].forEach(function(k) { localStorage.removeItem(k); });
+    } catch (e) {}
+    C.toast('缓存已清理');
+};
+})();
+</script>
+</body>
+</html>

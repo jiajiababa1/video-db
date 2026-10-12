@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>我的库 - VideoDB</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+    body { background: var(--vbg); color: var(--vtext); }
+    .l-wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+    .l-tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+    .l-tabs button {
+        padding: 8px 18px; border-radius: 20px; border: 1px solid var(--vborder);
+        background: transparent; color: var(--vmuted); cursor: pointer; font-size: 13px;
+    }
+    .l-tabs button.on { border-color: var(--vprimary); color: var(--vprimary); background: rgba(200,164,92,.1); }
+    .l-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+    .l-card {
+        border-radius: 10px; overflow: hidden; border: 1px solid var(--vborder);
+        background: var(--vcard); text-decoration: none; color: inherit; position: relative;
+    }
+    .l-card:hover { border-color: var(--vprimary); }
+    .l-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0a0a0c; }
+    .l-card .t { padding: 10px; font-size: 13px; line-height: 1.4; }
+    .l-card .x {
+        position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%;
+        background: rgba(0,0,0,.6); color: #fff; border: none; cursor: pointer; font-size: 14px;
+    }
+    .l-empty { text-align: center; padding: 60px 20px; color: var(--vmuted); }
+    .l-empty a { color: var(--vprimary); }
+</style>
+</head>
+<body>
+<div id="vdbNav"></div>
+<div class="l-wrap">
+    <div class="l-tabs" id="tabs">
+        <button data-t="fav" class="on">⭐ 收藏</button>
+        <button data-t="wl">📌 稍后观看</button>
+        <button data-t="hist">🕐 历史</button>
+        <button data-t="follow">👤 关注</button>
+    </div>
+    <div class="l-grid" id="grid"></div>
+    <div class="l-empty" id="empty" style="display:none;"></div>
+</div>
+<script src="assets/common.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/auth.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+(function() {
+'use strict';
+var C = window.VdbCommon, Api = window.VdbApi;
+var cur = 'fav';
+var KEYS = { fav: 'vdb_fav', wl: 'vdb_wl', hist: 'vdb_hist', follow: 'vdb_follows' };
+
+function items() { return Api.store.get(KEYS[cur], []); }
+
+async function render() {
+    var g = document.getElementById('grid'), e = document.getElementById('empty');
+    g.innerHTML = ''; e.style.display = 'none';
+    if (cur === 'follow') {
+        var fl = items();
+        if (!fl.length) {
+            e.style.display = '';
+            e.innerHTML = '还没有关注任何作者<br><a href="videos.html">去逛逛</a>';
+            return;
+        }
+        fl.forEach(function(a) {
+            g.insertAdjacentHTML('beforeend',
+                '<a class="l-card" href="author.html?a=' + encodeURIComponent(a) + '">' +
+                '<div class="t" style="font-size:15px;text-align:center;padding:20px;">👤 ' + C.esc(a) + '</div></a>');
+        });
+        return;
+    }
+    var ids = items();
+    if (!ids.length) {
+        var names = { fav: '收藏', wl: '稍后观看', hist: '观看历史' };
+        e.style.display = '';
+        e.innerHTML = '空空如也，还没有' + names[cur] + '<br><a href="videos.html">去逛逛</a>';
+        return;
+    }
+    // 按 ID 批量拉
+    try {
+        var iset = ids.slice(0, 100).map(function(id) { return '%22' + encodeURIComponent(id) + '%22'; }).join(',');
+        var r = await fetch(window.VdbCommon.SUPABASE_URL + '/rest/v1/videos?video_id=in.(' + iset + ')&select=video_id,title,author,thumbnail_url&limit=100',
+            { headers: { 'apikey': window.VdbCommon.SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + window.VdbCommon.SUPABASE_ANON_KEY } });
+        var rows = await r.json();
+        var map = {};
+        rows.forEach(function(v) { map[v.video_id] = v; });
+        ids.forEach(function(id) {
+            var v = map[id];
+            if (!v) return;
+            g.insertAdjacentHTML('beforeend',
+                '<div class="l-card"><a href="watch.html?v=' + encodeURIComponent(v.video_id) + '" style="text-decoration:none;color:inherit;">' +
+                '<img src="' + C.esc(v.thumbnail_url || '') + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+                '<div class="t">' + C.esc(v.title || v.video_id) + '</div></a>' +
+                '<button class="x" data-id="' + C.esc(v.video_id) + '">×</button></div>');
+        });
+        g.querySelectorAll('.x').forEach(function(b) {
+            b.onclick = function(ev) {
+                ev.preventDefault();
+                var arr = items().filter(function(x) { return x !== b.dataset.id; });
+                Api.store.set(KEYS[cur], arr);
+                render();
+                C.toast('已移除');
+            };
+        });
+    } catch (err) {
+        C.toast('加载失败');
+    }
+}
+
+document.getElementById('tabs').addEventListener('click', function(e) {
+    var b = e.target.closest('[data-t]');
+    if (!b) return;
+    cur = b.dataset.t;
+    this.querySelectorAll('button').forEach(function(x) { x.classList.toggle('on', x === b); });
+    render();
+});
+render();
+})();
+</script>
+</body>
+</html>
