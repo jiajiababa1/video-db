@@ -1756,8 +1756,8 @@ self.onmessage = ({conn, data}) => {
    原理: 多层 backdrop 折射 + 镜面高光 + 渐变折射边 + 弹簧动效
    ============================================================ */
 :root {
-    --lg-blur: blur(28px) saturate(190%) brightness(1.12);
-    --lg-blur-sm: blur(16px) saturate(170%) brightness(1.08);
+    --lg-blur: blur(20px) saturate(170%) brightness(1.08);
+    --lg-blur-sm: blur(12px) saturate(160%) brightness(1.05);
     --lg-spring: cubic-bezier(0.32, 0.72, 0, 1);
     --lg-spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
     --lg-sheen: linear-gradient(135deg,
@@ -1781,12 +1781,11 @@ body.dark-mode::after {
         radial-gradient(ellipse 700px 500px at 85% 25%, rgba(120,90,160,0.10), transparent 60%),
         radial-gradient(ellipse 800px 600px at 50% 70%, rgba(60,120,160,0.08), transparent 60%),
         radial-gradient(ellipse 500px 400px at 80% 90%, rgba(200,164,92,0.08), transparent 60%) !important;
-    animation: lg-ambient 24s ease-in-out infinite alternate;
+    animation: lg-ambient 32s ease-in-out infinite alternate; will-change: transform;
 }
 @keyframes lg-ambient {
-    0% { transform: scale(1) translate(0,0); opacity:1; }
-    50% { transform: scale(1.08) translate(-2%, 1%); opacity:0.85; }
-    100% { transform: scale(1.04) translate(2%, -1%); opacity:1; }
+    0% { transform: scale(1) translate(0,0); }
+    100% { transform: scale(1.03) translate(-1%, 0.5%); }
 }
 
 /* ---------- 顶栏: 悬浮玻璃 ---------- */
@@ -1876,14 +1875,15 @@ body.dark-mode .vid-btn.primary, body.dark-mode .btn-primary-glass {
 
 /* ---------- 视频卡片: 液态玻璃 ---------- */
 body.dark-mode .vid-card {
-    background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 50%, rgba(255,255,255,0.04)) !important;
-    backdrop-filter: var(--lg-blur-sm) !important;
-    -webkit-backdrop-filter: var(--lg-blur-sm) !important;
+    background: linear-gradient(160deg, rgba(38,38,48,0.92), rgba(22,22,30,0.88) 50%, rgba(30,30,40,0.90)) !important;
+    /* 性能: 卡片去掉 backdrop-filter，玻璃感靠渐变+镜面高光维持 */
     border: 1px solid rgba(255,255,255,0.10) !important;
     border-radius: 20px !important;
     box-shadow: var(--lg-specular), 0 8px 28px rgba(0,0,0,0.3) !important;
     transition: transform 0.5s var(--lg-spring), box-shadow 0.5s var(--lg-spring), border-color 0.4s !important;
     overflow: hidden;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 260px;
 }
 /* 卡片顶部折射高光 */
 body.dark-mode .vid-card::before {
@@ -1901,7 +1901,7 @@ body.dark-mode .vid-card:hover {
     transform: translateY(-6px) scale(1.015) !important;
     border-color: rgba(200,164,92,0.35) !important;
     box-shadow: var(--lg-specular), var(--lg-shadow-hover) !important;
-    background: linear-gradient(160deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.06)) !important;
+    background: linear-gradient(160deg, rgba(48,48,60,0.95), rgba(28,28,38,0.92) 50%, rgba(38,38,50,0.93)) !important;
 }
 body.dark-mode .vid-card:hover::after { opacity:1; }
 body.dark-mode .vid-card:active { transform: scale(0.97) !important; transition-duration:0.12s; }
