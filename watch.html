@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>观看 - 视频库</title>
+<link rel="stylesheet" href="assets/common.css">
+<style>
+    body { background: var(--vbg); color: var(--vtext); }
+    .watch-wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .watch-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .watch-back {
+        padding: 8px 16px; border-radius: 8px; border: 1px solid var(--vborder);
+        background: transparent; color: var(--vtext); cursor: pointer; font-size: 14px;
+    }
+    .watch-back:hover { border-color: var(--vprimary); color: var(--vprimary); }
+    .watch-player {
+        width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px;
+        overflow: hidden; border: 1px solid var(--vborder); position: relative;
+    }
+    .watch-player video { width: 100%; height: 100%; }
+    .watch-loading {
+        position: absolute; inset: 0; display: flex; align-items: center;
+        justify-content: center; color: var(--vmuted); font-size: 14px;
+    }
+    .watch-info { margin-top: 14px; }
+    .watch-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; line-height: 1.4; }
+    .watch-meta { display: flex; gap: 16px; color: var(--vmuted); font-size: 13px; flex-wrap: wrap; }
+    .watch-meta .author { color: var(--vprimary); cursor: pointer; }
+    .watch-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .watch-btn {
+        padding: 8px 16px; border-radius: 8px; border: 1px solid var(--vborder);
+        background: transparent; color: var(--vtext); cursor: pointer; font-size: 13px;
+    }
+    .watch-btn:hover { border-color: var(--vprimary); color: var(--vprimary); }
+    .watch-related { margin-top: 24px; }
+    .watch-related h3 { font-size: 15px; margin-bottom: 12px; color: var(--vtext); }
+    .rel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .rel-card {
+        border-radius: 8px; overflow: hidden; border: 1px solid var(--vborder);
+        cursor: pointer; background: var(--vcard); text-decoration: none; color: inherit;
+    }
+    .rel-card:hover { border-color: var(--vprimary); }
+    .rel-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0a0a0c; }
+    .rel-card .t {
+        padding: 8px; font-size: 12px; line-height: 1.4; color: var(--vtext);
+        overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+        -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+    .watch-error { text-align: center; padding: 60px 20px; color: var(--vmuted); }
+</style>
+</head>
+<body>
+<div class="watch-wrap">
+    <div class="watch-top">
+        <button class="watch-back" onclick="history.back()">← 返回</button>
+        <span style="color:var(--vmuted);font-size:13px;">视频播放</span>
+    </div>
+    <div class="watch-player" id="playerBox">
+        <div class="watch-loading" id="loadingMsg">⏳ 加载中...</div>
+    </div>
+    <div class="watch-info" id="infoBox" style="display:none;">
+        <div class="watch-title" id="vTitle"></div>
+        <div class="watch-meta">
+            <span class="author" id="vAuthor"></span>
+            <span id="vViews"></span>
+            <span id="vDate"></span>
+        </div>
+        <div class="watch-actions">
+            <button class="watch-btn" id="btnOrig">↗️ 原站</button>
+            <button class="watch-btn" id="btnDl">⬇️ 下载</button>
+            <button class="watch-btn" id="btnShare">🔗 分享</button>
+        </div>
+    </div>
+    <div class="watch-related" id="relBox" style="display:none;">
+        <h3>🎬 同作者视频</h3>
+        <div class="rel-grid" id="relGrid"></div>
+    </div>
+    <div class="watch-error" id="errBox" style="display:none;"></div>
+</div>
+<script src="assets/common.js"></script>
+<script>
+(function() {
+'use strict';
+var C = window.VdbCommon;
+var SB = C.SUPABASE_URL, KEY = C.SUPABASE_ANON_KEY;
+
+function qs(k) {
+    var m = new RegExp('[?&]' + k + '=([^&]*)').exec(location.search);
+    return m ? decodeURIComponent(m[1]) : '';
+}
+function h() {
+    return { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' };
+}
+function showErr(msg) {
+    document.getElementById('loadingMsg').style.display = 'none';
+    var e = document.getElementById('errBox');
+    e.style.display = '';
+    e.innerHTML = '<div style="font-size:40px;margin-bottom:12px;">😢</div><div>' + C.esc(msg) + '</div>' +
+        '<div style="margin-top:16px;"><button class="watch-back" onclick="location.href=\'index.html\'">回首页</button></div>';
+}
+
+async function main() {
+    var vid = qs('v');
+    if (!vid) { showErr('缺少视频 ID'); return; }
+    try {
+        // 拉视频数据
+        var r = await fetch(SB + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(vid) + '&select=*&limit=1', { headers: h() });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        var rows = await r.json();
+        if (!rows.length) { showErr('视频不存在或已删除'); return; }
+        var v = rows[0];
+
+        // 解析播放地址: duration 直链优先
+        var mp4 = '';
+        var dur = v.duration || '';
+        if (/^https?:\/\/.+\.mp4/i.test(dur)) mp4 = dur;
+        else if (v.video_url && /^https?:\/\/.+\.mp4/i.test(v.video_url)) mp4 = v.video_url;
+
+        var box = document.getElementById('playerBox');
+        document.getElementById('loadingMsg').style.display = 'none';
+        if (mp4) {
+            var video = document.createElement('video');
+            video.src = mp4;
+            video.controls = true;
+            video.autoplay = true;
+            video.playsInline = true;
+            video.setAttribute('referrerpolicy', 'no-referrer');
+            box.appendChild(video);
+        } else {
+            box.innerHTML = '<div class="watch-loading">⚠️ 暂无可播放地址<br><span style="font-size:12px;">请回列表页重试，或等待云端解析</span></div>';
+        }
+
+        // 信息
+        document.getElementById('infoBox').style.display = '';
+        document.getElementById('vTitle').textContent = v.title || v.video_id;
+        var au = document.getElementById('vAuthor');
+        au.textContent = v.author ? '@' + v.author : '';
+        au.onclick = function() { location.href = 'index.html#/author/' + encodeURIComponent(v.author); };
+        document.getElementById('vViews').textContent = v.views ? '👁 ' + Number(v.views).toLocaleString() : '';
+        document.getElementById('vDate').textContent = (v.created_at || '').slice(0, 10);
+        document.getElementById('btnOrig').onclick = function() {
+            if (v.url) window.open(v.url, '_blank'); else C.toast('无原站链接');
+        };
+        document.getElementById('btnDl').onclick = function() {
+            if (!mp4) { C.toast('无可下载地址'); return; }
+            var a = document.createElement('a'); a.href = mp4; a.download = ''; a.click();
+        };
+        document.getElementById('btnShare').onclick = function() {
+            var url = location.origin + location.pathname + '?v=' + encodeURIComponent(vid);
+            if (navigator.clipboard) navigator.clipboard.writeText(url).then(function(){ C.toast('🔗 链接已复制'); });
+            else C.toast(url);
+        };
+        document.title = (v.title || v.video_id) + ' - 视频库';
+
+        // 同作者视频
+        if (v.author) {
+            try {
+                var r2 = await fetch(SB + '/rest/v1/videos?select=video_id,title,thumbnail_url&author=eq.' +
+                    encodeURIComponent(v.author).replace(/'/g, '%27') +
+                    '&video_id=neq.' + encodeURIComponent(vid) +
+                    '&has_mp4=is.true&removed=not.is.true&order=views.desc&limit=12', { headers: h() });
+                if (r2.ok) {
+                    var rel = await r2.json();
+                    if (rel.length) {
+                        document.getElementById('relBox').style.display = '';
+                        var g = document.getElementById('relGrid');
+                        rel.forEach(function(d) {
+                            var a = document.createElement('a');
+                            a.className = 'rel-card';
+                            a.href = 'watch.html?v=' + encodeURIComponent(d.video_id);
+                            a.innerHTML = '<img src="' + C.esc(d.thumbnail_url || '') + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+                                '<div class="t">' + C.esc(d.title || d.video_id) + '</div>';
+                            g.appendChild(a);
+                        });
+                    }
+                }
+            } catch (e) {}
+        }
+    } catch (e) {
+        showErr('加载失败: ' + (e.message || '网络错误'));
+    }
+}
+document.addEventListener('DOMContentLoaded', main);
+})();
+</script>
+</body>
+</html>
