@@ -2255,6 +2255,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 <button class="cheat-btn" onclick="browserToggleBookmarks()" style="font-size:11px;padding:4px 8px;background:rgba(200,164,92,0.1);color:var(--vprimary);" title="书签">⭐</button>
                 <button class="cheat-btn" onclick="browserAddBookmark()" style="font-size:11px;padding:4px 8px;background:rgba(100,200,100,0.1);color:#5a9a5a;" title="加书签">+</button>
                 <button class="cheat-btn" onclick="scrapeBrowserPage()" style="font-size:11px;padding:4px 12px;background:rgba(200,164,92,0.1);color:#c8a45c;">📥抓取</button>
+                <button class="cheat-btn" onclick="browserReaderMode()" style="font-size:11px;padding:4px 12px;background:rgba(100,160,200,0.1);color:#4a9adf;" title="代理抓取正文阅读（突破 iframe 限制）">📖阅读</button>
                 <button class="vid-modal-close" onclick="closeBrowser()" style="position:static;">✕</button>
             </div>
             <div id="browserStatus" style="font-size:10px;color:var(--vmuted);margin-bottom:4px;min-height:14px;"></div>
@@ -12374,6 +12375,10 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             else url = 'https://' + url;
         }
         document.getElementById('browserUrl').value = url;
+        // 退出阅读模式，恢复 iframe
+        var _rd = document.getElementById('browserReader');
+        if (_rd) _rd.style.display = 'none';
+        document.getElementById('browserFrame').style.display = '';
         // 禁止嵌入的站：直接新标签页打开，不浪费 iframe
         if (_browserIsBlocked(url)) {
             document.getElementById('browserStatus').textContent = '⚠️ 该站禁止嵌入，已用新标签页打开';
@@ -12391,6 +12396,76 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         }, 1500);
     }
 
+    // 📖 阅读模式：代理抓 HTML，提正文渲染，突破 X-Frame-Options 限制
+    async function browserReaderMode() {
+        var url = document.getElementById('browserUrl').value.trim();
+        if (!url) { toast('请先输入网址'); return; }
+        if (!/^https?:\/\//.test(url)) url = 'https://' + url;
+        var frame = document.getElementById('browserFrame');
+        var status = document.getElementById('browserStatus');
+        status.textContent = '📖 阅读模式抓取中...';
+        // 用阅读器 div 替换 iframe 显示
+        var reader = document.getElementById('browserReader');
+        if (!reader) {
+            reader = document.createElement('div');
+            reader.id = 'browserReader';
+            reader.style.cssText = 'flex:1;width:100%;min-height:500px;overflow-y:auto;padding:20px;background:var(--vcard);border:1px solid var(--vborder);border-radius:var(--radius-sm);display:none;';
+            frame.parentNode.insertBefore(reader, frame.nextSibling);
+        }
+        try {
+            var html = null;
+            for (var pi = 0; pi < CORS_PROXY_LIST.length && !html; pi++) {
+                try {
+                    var resp = await fetch(CORS_PROXY_LIST[pi] + encodeURIComponent(url), {headers:{'Accept':'text/html,*/*'}});
+                    if (resp.ok) { var t = await resp.text(); if (t && t.length > 1000) html = t; }
+                } catch(e) {}
+            }
+            if (!html) { status.textContent = '❌ 抓取失败，代理均不可用'; toast('阅读模式抓取失败'); return; }
+            var doc = new DOMParser().parseFromString(html, 'text/html');
+            // 清理
+            doc.querySelectorAll('script,style,noscript,iframe,svg,canvas').forEach(function(el){ el.remove(); });
+            var title = (doc.querySelector('title') || {}).textContent || url;
+            // 找正文：article / main / 最大的 p 容器
+            var body = doc.querySelector('article') || doc.querySelector('main') || doc.querySelector('[role="main"]');
+            if (!body) {
+                // 启发式：找 p 最多的 div
+                var best = null, bestN = 0;
+                doc.querySelectorAll('div').forEach(function(d){
+                    var n = d.querySelectorAll('p').length;
+                    if (n > bestN && d.textContent.length > 500) { bestN = n; best = d; }
+                });
+                body = best || doc.body;
+            }
+            // 相对链接转绝对
+            var base = new URL(url);
+            body.querySelectorAll('a[href],img[src]').forEach(function(el){
+                ['href','src'].forEach(function(attr){
+                    var v = el.getAttribute(attr);
+                    if (v && !/^(https?:|data:|#)/.test(v)) {
+                        try { el.setAttribute(attr, new URL(v, base).href); } catch(e) {}
+                    }
+                });
+            });
+            // 提取视频链接高亮
+            var vids = [];
+            (body.innerHTML.match(/https?:\/\/[^"'\s<>]+\.(mp4|m3u8)[^"'\s<>]*/gi) || []).forEach(function(u){
+                if (vids.indexOf(u) < 0) vids.push(u);
+            });
+            var vidHtml = vids.length ? '<div style="margin:12px 0;padding:10px;background:rgba(200,164,92,0.08);border-radius:8px;"><b>🎬 发现视频 (' + vids.length + ')</b><br>' + vids.map(function(u){
+                return '<a href="' + u + '" target="_blank" style="color:var(--vprimary);font-size:11px;word-break:break-all;">' + u.slice(0,80) + '</a>';
+            }).join('<br>') + '</div>' : '';
+            reader.innerHTML = '<h2 style="margin:0 0 4px;font-size:16px;">' + title.replace(/</g,'&lt;') + '</h2>' +
+                '<div style="font-size:10px;color:var(--vmuted);margin-bottom:12px;">📖 阅读模式 · <a href="' + url + '" target="_blank" style="color:var(--vprimary);">原站</a> · ' + url.slice(0,60) + '</div>' +
+                vidHtml +
+                '<div style="font-size:13px;line-height:1.8;color:var(--vtext);">' + body.innerHTML.slice(0, 50000) + '</div>';
+            frame.style.display = 'none';
+            reader.style.display = 'block';
+            reader.scrollTop = 0;
+            status.textContent = '📖 ' + title.slice(0,50);
+        } catch(e) {
+            status.textContent = '❌ 阅读模式失败';
+        }
+    }
     function browserBack() {
         if (_browserIdx > 0) {
             _browserIdx--;
