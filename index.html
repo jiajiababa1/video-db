@@ -4149,6 +4149,17 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         allDigits.forEach(function(d) { d.value = ''; d.classList.remove('error'); });
         authHintEl.innerHTML = '<span style="color:var(--vmuted);">请输入动态密码（由站主提供）</span>';
         authD1.focus();
+        // 仅管理员显示"信任此设备"勾选
+        try {
+            var _tl = document.querySelector('.auth-trust');
+            if (_tl) _tl.style.display = 'none';
+            var _atk = getLoginToken();
+            if (_atk) {
+                fetch(SUPABASE_URL + '/rest/v1/rpc/check_session', {method:'POST', headers:{'apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY,'Content-Type':'application/json'}, body: JSON.stringify({p_token: _atk})}).then(function(r){ return r.ok ? r.json() : null; }).then(function(_aj){
+                    if (_aj && _aj.length && _aj[0].valid && _aj[0].is_admin && _tl) _tl.style.display = '';
+                }).catch(function(){});
+            }
+        } catch(e) {}
     }
 
     function hideAuthOverlay() {
@@ -4171,7 +4182,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                     var _trust = document.getElementById('authTrust');
                     if (_trust && _trust.checked) {
                         fetch(SUPABASE_URL + '/rest/v1/rpc/trust_device', {method:'POST', headers:_h(),
-                            body: JSON.stringify({p_token: j[0].token, p_device_id: getDeviceId(), p_label: '站主手机'})}).catch(function(){});
+                            body: JSON.stringify({p_gate_token: j[0].token, p_admin_token: getLoginToken(), p_device_id: getDeviceId(), p_label: '站主手机'})}).catch(function(){});
                     }
                 } catch(e) {}
             } else {
