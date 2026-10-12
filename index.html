@@ -224,7 +224,7 @@ body {
 const SB = 'https://fejspvbckgkbmfyoxiub.supabase.co';
 const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14';
 const H = { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' };
-const VCOLS = 'video_id,title,author,thumbnail_url,duration,views,created_at,video_url,has_mp4';
+const VCOLS = 'video_id,title,author,thumbnail_url,duration,views,created_at,video_url,has_mp4,monsnode_video_id';
 
 /* ---------- 工具 ---------- */
 const $ = s => document.querySelector(s);
@@ -424,6 +424,81 @@ function initSearch() {
     $('#sInput').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
 }
 
+/* ---------- 视频源解析 (4 步链) ---------- */
+function extractTid(vid) {
+    if (!vid || vid[0] !== 'v') return null;
+    const t = vid.slice(1);
+    return /^\d{15,25}$/.test(t) ? t : null;
+}
+function classify(u) {
+    if (!u || !u.startsWith('http')) return { t: 'none' };
+    if (u.includes('.mp4') || u.includes('video.twimg.com')) return { t: 'mp4', url: u };
+    return { t: 'other', url: u };
+}
+async function fetchTimeout(url, ms) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    try { const r = await fetch(url, { signal: c.signal }); clearTimeout(t); return r; }
+    catch (e) { clearTimeout(t); throw e; }
+}
+const PROXIES = [
+    'https://api.allorigins.win/raw?url=',
+    'https://api.codetabs.com/v1/proxy?quest=',
+    'https://corsproxy.io/?url='
+];
+async function viaTwjn(mid) {
+    for (const px of PROXIES) {
+        try {
+            const r = await fetchTimeout(px + encodeURIComponent('https://monsnode.com/twjn.php?v=' + mid), 9000);
+            if (!r.ok) continue;
+            const html = await r.text();
+            let m = html.match(/atob\(['"]([^'"]+)['"]\)/);
+            if (m) { try { const d = atob(m[1]); if (d.includes('video.twimg.com')) return d; } catch(e){} }
+            const m2 = html.match(/https?:\/\/[^\s"'\\\\)<>]*video\.twimg\.com[^\s"'\\\\)<>]*/);
+            if (m2) return m2[0].replace(/&amp;/g, '&');
+        } catch(e) {}
+    }
+    return null;
+}
+async function viaTwitter(tid) {
+    for (const base of ['https://api.fxtwitter.com/status/', 'https://api.vxtwitter.com/status/']) {
+        try {
+            const r = await fetchTimeout(base + tid, 9000);
+            if (!r.ok) continue;
+            const d = await r.json();
+            const media = d.tweet && d.tweet.media;
+            if (!media || !media.videos || !media.videos.length) continue;
+            let best = null, br = 0;
+            media.videos.forEach(v => {
+                const m = (v.url || '').match(/(\d+)x(\d+)/);
+                const res = m ? (+m[1]) * (+m[2]) : 0;
+                if (res >= br) { br = res; best = v.url; }
+            });
+            if (best) return best;
+        } catch(e) {}
+    }
+    return null;
+}
+async function resolveSource(v) {
+    // 1. duration / video_url 直链
+    for (const f of [v.duration, v.video_url]) {
+        const c = classify(f || '');
+        if (c.t === 'mp4') return c.url;
+    }
+    // 2. twjn.php
+    if (v.monsnode_video_id) {
+        const u = await viaTwjn(v.monsnode_video_id);
+        if (u) return u;
+    }
+    // 3. Twitter API
+    const tid = extractTid(v.video_id);
+    if (tid) {
+        const u = await viaTwitter(tid);
+        if (u) return u;
+    }
+    return null;
+}
+
 /* ---------- 播放器 ---------- */
 let curVideo = null;
 async function openPlayer(vid) {
@@ -440,11 +515,16 @@ async function openPlayer(vid) {
         $('#pTitle').textContent = v.title || vid;
         $('#pT').textContent = v.title || vid;
         $('#pMeta').textContent = (v.author ? '@' + v.author + ' · ' : '') + (v.views ? '▶ ' + v.views + ' · ' : '') + (v.duration || '');
-        // 解析播放地址
-        const url = v.video_url || '';
-        if (url.includes('.mp4')) {
-            $('#pVideo').src = url;
-            $('#pVideo').play().catch(() => {});
+        // 4 步解析链: 直链 → twjn.php → Twitter API → 标记重爬
+        $('#pTitle').textContent = '⏳ 解析中…';
+        const mp4 = await resolveSource(v);
+        if (mp4) {
+            $('#pTitle').textContent = v.title || vid;
+            const pv = $('#pVideo');
+            pv.setAttribute('playsinline', 'true');
+            pv.setAttribute('referrerpolicy', 'no-referrer');
+            pv.src = mp4;
+            pv.play().catch(() => {});
         } else {
             $('#pTitle').textContent = '⚠ 暂无可播放地址';
         }
