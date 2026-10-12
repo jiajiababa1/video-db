@@ -1750,6 +1750,311 @@ self.onmessage = ({conn, data}) => {
 }
 
 </style>
+<style id="liquid-glass">
+/* ============================================================
+   Liquid Glass 设计系统 (Apple iOS 26 风格)
+   原理: 多层 backdrop 折射 + 镜面高光 + 渐变折射边 + 弹簧动效
+   ============================================================ */
+:root {
+    --lg-blur: blur(28px) saturate(190%) brightness(1.12);
+    --lg-blur-sm: blur(16px) saturate(170%) brightness(1.08);
+    --lg-spring: cubic-bezier(0.32, 0.72, 0, 1);
+    --lg-spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --lg-sheen: linear-gradient(135deg,
+        rgba(255,255,255,0.14) 0%,
+        rgba(255,255,255,0.04) 35%,
+        rgba(255,255,255,0.01) 60%,
+        rgba(255,255,255,0.07) 100%);
+    --lg-specular: inset 0 1px 1px rgba(255,255,255,0.28),
+                   inset 0 -1px 2px rgba(0,0,0,0.25),
+                   inset 1px 0 1px rgba(255,255,255,0.06),
+                   inset -1px 0 1px rgba(255,255,255,0.06);
+    --lg-shadow: 0 12px 40px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.25);
+    --lg-shadow-hover: 0 20px 60px rgba(0,0,0,0.45), 0 4px 16px rgba(200,164,92,0.12);
+    --lg-gold-glow: 0 0 24px rgba(200,164,92,0.25);
+}
+
+/* ---------- 背景流光 (供玻璃折射) ---------- */
+body.dark-mode::after {
+    background:
+        radial-gradient(ellipse 600px 450px at 15% 10%, rgba(200,164,92,0.14), transparent 60%),
+        radial-gradient(ellipse 700px 500px at 85% 25%, rgba(120,90,160,0.10), transparent 60%),
+        radial-gradient(ellipse 800px 600px at 50% 70%, rgba(60,120,160,0.08), transparent 60%),
+        radial-gradient(ellipse 500px 400px at 80% 90%, rgba(200,164,92,0.08), transparent 60%) !important;
+    animation: lg-ambient 24s ease-in-out infinite alternate;
+}
+@keyframes lg-ambient {
+    0% { transform: scale(1) translate(0,0); opacity:1; }
+    50% { transform: scale(1.08) translate(-2%, 1%); opacity:0.85; }
+    100% { transform: scale(1.04) translate(2%, -1%); opacity:1; }
+}
+
+/* ---------- 顶栏: 悬浮玻璃 ---------- */
+body.dark-mode .vid-header {
+    background: linear-gradient(180deg, rgba(20,20,26,0.55), rgba(20,20,26,0.35)) !important;
+    backdrop-filter: var(--lg-blur) !important;
+    -webkit-backdrop-filter: var(--lg-blur) !important;
+    border-bottom: none !important;
+    box-shadow: var(--lg-specular), 0 8px 32px rgba(0,0,0,0.3) !important;
+    margin: 10px 12px 0 !important;
+    border-radius: 22px !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    padding: 12px 18px !important;
+    top: 10px !important;
+}
+body.dark-mode .vid-header::before {
+    content:''; position:absolute; inset:0; border-radius:22px; pointer-events:none;
+    background: var(--lg-sheen);
+}
+/* 顶部折射光线 */
+body.dark-mode .vid-header::after {
+    content:''; position:absolute; top:0; left:8%; right:8%; height:1px; pointer-events:none;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+}
+
+/* ---------- 搜索框: 玻璃胶囊 ---------- */
+body.dark-mode .vid-search input {
+    background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02)) !important;
+    backdrop-filter: var(--lg-blur-sm) !important;
+    -webkit-backdrop-filter: var(--lg-blur-sm) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 999px !important;
+    box-shadow: var(--lg-specular), inset 0 2px 8px rgba(0,0,0,0.2) !important;
+    transition: all 0.4s var(--lg-spring) !important;
+}
+body.dark-mode .vid-search input:focus {
+    border-color: rgba(200,164,92,0.5) !important;
+    box-shadow: var(--lg-specular), var(--lg-gold-glow), inset 0 2px 8px rgba(0,0,0,0.2) !important;
+    transform: scale(1.01);
+}
+/* 搜索建议面板 */
+body.dark-mode .ss-panel {
+    background: linear-gradient(165deg, rgba(28,28,36,0.75), rgba(18,18,24,0.65)) !important;
+    backdrop-filter: var(--lg-blur) !important;
+    -webkit-backdrop-filter: var(--lg-blur) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 20px !important;
+    box-shadow: var(--lg-specular), var(--lg-shadow) !important;
+    overflow: hidden;
+}
+
+/* ---------- 按钮: 液态玻璃药丸 ---------- */
+body.dark-mode .vid-btn, body.dark-mode .btn-glass {
+    background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03)) !important;
+    backdrop-filter: var(--lg-blur-sm) !important;
+    -webkit-backdrop-filter: var(--lg-blur-sm) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    border-radius: 999px !important;
+    box-shadow: var(--lg-specular), 0 4px 16px rgba(0,0,0,0.25) !important;
+    transition: all 0.35s var(--lg-spring) !important;
+    position: relative; overflow: hidden;
+}
+body.dark-mode .vid-btn::before, body.dark-mode .btn-glass::before {
+    content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.12) 48%, transparent 62%);
+    transform: translateX(-100%);
+    transition: transform 0.7s var(--lg-spring);
+}
+body.dark-mode .vid-btn:hover::before, body.dark-mode .btn-glass:hover::before {
+    transform: translateX(100%);
+}
+body.dark-mode .vid-btn:hover, body.dark-mode .btn-glass:hover {
+    transform: translateY(-2px) scale(1.03);
+    border-color: rgba(200,164,92,0.45) !important;
+    box-shadow: var(--lg-specular), var(--lg-shadow-hover) !important;
+}
+body.dark-mode .vid-btn:active, body.dark-mode .btn-glass:active {
+    transform: scale(0.96);
+    transition-duration: 0.1s;
+}
+/* 主按钮: 金色液态玻璃 */
+body.dark-mode .vid-btn.primary, body.dark-mode .btn-primary-glass {
+    background: linear-gradient(135deg, rgba(200,164,92,0.28), rgba(200,164,92,0.12)) !important;
+    border-color: rgba(200,164,92,0.4) !important;
+    box-shadow: var(--lg-specular), var(--lg-gold-glow) !important;
+}
+
+/* ---------- 视频卡片: 液态玻璃 ---------- */
+body.dark-mode .vid-card {
+    background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 50%, rgba(255,255,255,0.04)) !important;
+    backdrop-filter: var(--lg-blur-sm) !important;
+    -webkit-backdrop-filter: var(--lg-blur-sm) !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    border-radius: 20px !important;
+    box-shadow: var(--lg-specular), 0 8px 28px rgba(0,0,0,0.3) !important;
+    transition: transform 0.5s var(--lg-spring), box-shadow 0.5s var(--lg-spring), border-color 0.4s !important;
+    overflow: hidden;
+}
+/* 卡片顶部折射高光 */
+body.dark-mode .vid-card::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:1px; z-index:2; pointer-events:none;
+    background: linear-gradient(90deg, transparent 10%, rgba(255,255,255,0.4) 50%, transparent 90%);
+    opacity:0.7;
+}
+/* 卡片玻璃流光 */
+body.dark-mode .vid-card::after {
+    content:''; position:absolute; inset:0; z-index:1; pointer-events:none; border-radius:inherit;
+    background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.06) 48%, transparent 56%);
+    opacity:0; transition: opacity 0.5s;
+}
+body.dark-mode .vid-card:hover {
+    transform: translateY(-6px) scale(1.015) !important;
+    border-color: rgba(200,164,92,0.35) !important;
+    box-shadow: var(--lg-specular), var(--lg-shadow-hover) !important;
+    background: linear-gradient(160deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.06)) !important;
+}
+body.dark-mode .vid-card:hover::after { opacity:1; }
+body.dark-mode .vid-card:active { transform: scale(0.97) !important; transition-duration:0.12s; }
+/* 缩略图圆角 + 内阴影 */
+body.dark-mode .vid-thumb {
+    border-radius: 14px !important;
+    margin: 8px 8px 0 !important;
+    overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 4px 12px rgba(0,0,0,0.3) !important;
+}
+/* 卡片文字区 */
+body.dark-mode .vid-info { padding: 10px 14px 14px !important; }
+
+/* ---------- 分类标签: 玻璃 chips ---------- */
+body.dark-mode .vid-tab, body.dark-mode .chip, body.dark-mode .tag-chip {
+    background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02)) !important;
+    backdrop-filter: var(--lg-blur-sm) !important;
+    -webkit-backdrop-filter: var(--lg-blur-sm) !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    border-radius: 999px !important;
+    box-shadow: var(--lg-specular) !important;
+    transition: all 0.35s var(--lg-spring-bounce) !important;
+}
+body.dark-mode .vid-tab.active, body.dark-mode .chip.active {
+    background: linear-gradient(135deg, rgba(200,164,92,0.30), rgba(200,164,92,0.12)) !important;
+    border-color: rgba(200,164,92,0.5) !important;
+    box-shadow: var(--lg-specular), var(--lg-gold-glow) !important;
+    transform: scale(1.06);
+}
+
+/* ---------- 弹窗/模态: 深层玻璃 ---------- */
+body.dark-mode .modal, body.dark-mode .vid-modal, body.dark-mode .overlay-panel {
+    background: linear-gradient(165deg, rgba(30,30,40,0.72), rgba(16,16,22,0.68)) !important;
+    backdrop-filter: var(--lg-blur) !important;
+    -webkit-backdrop-filter: var(--lg-blur) !important;
+    border: 1px solid rgba(255,255,255,0.13) !important;
+    border-radius: 26px !important;
+    box-shadow: var(--lg-specular), 0 24px 80px rgba(0,0,0,0.5) !important;
+    animation: lg-modal-in 0.5s var(--lg-spring-bounce);
+}
+@keyframes lg-modal-in {
+    0% { transform: scale(0.9) translateY(16px); opacity:0; }
+    100% { transform: scale(1) translateY(0); opacity:1; }
+}
+
+/* ---------- 播放器: 悬浮玻璃控制条 ---------- */
+body.dark-mode .vid-player-bar, body.dark-mode .player-controls {
+    background: linear-gradient(180deg, rgba(25,25,33,0.55), rgba(15,15,20,0.45)) !important;
+    backdrop-filter: var(--lg-blur) !important;
+    -webkit-backdrop-filter: var(--lg-blur) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 20px !important;
+    box-shadow: var(--lg-specular), var(--lg-shadow) !important;
+    margin: 0 12px 12px !important;
+}
+/* 进度条: 玻璃轨道 + 流光 */
+body.dark-mode input[type=range] {
+    -webkit-appearance:none; appearance:none; height:6px; border-radius:999px;
+    background: linear-gradient(90deg, rgba(200,164,92,0.7), rgba(200,164,92,0.3)),
+                rgba(255,255,255,0.10) !important;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.4), 0 0 12px rgba(200,164,92,0.2) !important;
+    outline:none;
+}
+body.dark-mode input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance:none; width:18px; height:18px; border-radius:50%;
+    background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.9), rgba(200,164,92,0.9) 60%, rgba(160,120,60,1));
+    border:1px solid rgba(255,255,255,0.4);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.4), 0 0 16px rgba(200,164,92,0.4);
+    cursor:pointer; transition: transform 0.25s var(--lg-spring-bounce);
+}
+body.dark-mode input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.25); }
+
+/* ---------- 侧边栏/抽屉 ---------- */
+body.dark-mode .vid-sidebar, body.dark-mode .drawer {
+    background: linear-gradient(180deg, rgba(24,24,32,0.70), rgba(14,14,20,0.62)) !important;
+    backdrop-filter: var(--lg-blur) !important;
+    -webkit-backdrop-filter: var(--lg-blur) !important;
+    border-right: 1px solid rgba(255,255,255,0.10) !important;
+    box-shadow: var(--lg-specular) !important;
+}
+
+/* ---------- 输入框/下拉 ---------- */
+body.dark-mode input[type=text], body.dark-mode input[type=password],
+body.dark-mode textarea, body.dark-mode select {
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 14px !important;
+    backdrop-filter: var(--lg-blur-sm) !important;
+    -webkit-backdrop-filter: var(--lg-blur-sm) !important;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.25) !important;
+    transition: all 0.35s var(--lg-spring) !important;
+}
+body.dark-mode input:focus, body.dark-mode textarea:focus, body.dark-mode select:focus {
+    border-color: rgba(200,164,92,0.5) !important;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.25), var(--lg-gold-glow) !important;
+    outline: none;
+}
+
+/* ---------- 滚动条: 玻璃 ---------- */
+body.dark-mode ::-webkit-scrollbar { width:10px; height:10px; }
+body.dark-mode ::-webkit-scrollbar-track { background:transparent; }
+body.dark-mode ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+    border-radius:999px; border:2px solid transparent; background-clip:padding-box;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.15);
+}
+body.dark-mode ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(200,164,92,0.35), rgba(200,164,92,0.15));
+    background-clip:padding-box;
+}
+
+/* ---------- 加载骨架: 流光玻璃 ---------- */
+body.dark-mode .vid-card.loading::after {
+    background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.08) 50%, transparent 80%) !important;
+    background-size: 200% 100% !important;
+    animation: lg-shimmer 1.8s linear infinite !important;
+    opacity:1 !important;
+}
+@keyframes lg-shimmer {
+    0% { background-position: 200% 0; } 100% { background-position: -200% 0; }
+}
+
+/* ---------- Toast: 悬浮玻璃 ---------- */
+body.dark-mode .vid-toast, body.dark-mode .toast {
+    background: linear-gradient(135deg, rgba(35,35,45,0.80), rgba(20,20,28,0.70)) !important;
+    backdrop-filter: var(--lg-blur) !important;
+    -webkit-backdrop-filter: var(--lg-blur) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    border-radius: 999px !important;
+    box-shadow: var(--lg-specular), var(--lg-shadow) !important;
+    animation: lg-toast-in 0.45s var(--lg-spring-bounce);
+}
+@keyframes lg-toast-in {
+    0% { transform: translateY(20px) scale(0.9); opacity:0; }
+    100% { transform: translateY(0) scale(1); opacity:1; }
+}
+
+/* ---------- 页面切换: 流体 ---------- */
+body.dark-mode .view-video, body.dark-mode .view-game {
+    transition: opacity 0.55s var(--lg-spring), transform 0.55s var(--lg-spring), visibility 0s !important;
+}
+
+/* ---------- 移动端优化 ---------- */
+@media (max-width: 640px) {
+    body.dark-mode .vid-header { margin: 8px 8px 0 !important; border-radius: 18px !important; }
+    body.dark-mode .vid-card { border-radius: 16px !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    body.dark-mode::after { animation: none !important; }
+    * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+</style>
 <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
 
 
