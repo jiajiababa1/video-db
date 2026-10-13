@@ -34,9 +34,11 @@ DROP POLICY IF EXISTS vc_insert_own ON public.video_comments;
 CREATE POLICY vc_insert_own ON public.video_comments
   FOR INSERT WITH CHECK (username = public._req_username());
 
--- 删:仅本人或管理员可删
+-- 删:仅本人可删自己的；站主可删所有人的
+-- (管理权收归站主: 技术员/管理员不再能删他人评论，与前端 isOwner 门禁对齐)
 DROP POLICY IF EXISTS vc_delete_own ON public.video_comments;
-CREATE POLICY vc_delete_own ON public.video_comments
+DROP POLICY IF EXISTS vc_delete_owner ON public.video_comments;
+CREATE POLICY vc_delete_owner ON public.video_comments
   FOR DELETE USING (
-    username = public._req_username() OR public._req_is_admin()
+    username = public._req_username() OR public._req_username() = 'kuo'
   );
