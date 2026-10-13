@@ -11281,7 +11281,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                     h += '<td style="font-size:9px;">'+role+'</td>';
                     h += '<td style="font-size:9px;color:var(--vmuted);">'+date+'</td>';
                     h += '<td>';
-                    if (!u.is_admin) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',true,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,164,92,0.3);color:#c8a45c;border-radius:var(--radius-sm);cursor:pointer;">升管理</button> ';
+                    if (!u.is_admin && _username === SITE_OWNER) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',true,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,164,92,0.3);color:#c8a45c;border-radius:var(--radius-sm);cursor:pointer;">升管理</button> ';
                     if (u.is_admin && _username === SITE_OWNER && u.username !== _username) h += '<button onclick="doSetAdminQuick(\''+esc(u.username)+'\',false,this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,100,100,0.3);color:#c08080;border-radius:var(--radius-sm);cursor:pointer;">降级</button> ';
                     if (_username === SITE_OWNER) h += '<button onclick="delUserAccount(\''+esc(u.username)+'\',this)" style="font-size:9px;padding:2px 4px;background:transparent;border:1px solid rgba(200,80,80,0.3);color:#c08080;border-radius:var(--radius-sm);cursor:pointer;">删除</button>';
                     h += '</td></tr>';
@@ -11505,7 +11505,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     function showAdminAudit(area) {
         area.innerHTML = '<div class="vpi-spinner"></div>';
         Promise.all([
-            fetch(SUPABASE_URL+'/rest/v1/admin_log?select=*&order=created_at.desc&limit=50',{headers:_h()}).then(function(r){return r.json();}),
+            _post(SUPABASE_URL+'/rest/v1/rpc/get_audit_log',{p_token:getLoginToken(),p_limit:50}).then(function(j){return j||[];}),
             fetch(SUPABASE_URL+'/rest/v1/bans?select=*&order=banned_at.desc&limit=20',{headers:_h()}).then(function(r){return r.json();})
         ]).then(function(r){
             var logs = r[0], bans = r[1];
