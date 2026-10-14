@@ -10,7 +10,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
-const MODEL = Deno.env.get("AI_MODEL") || "gemini-2.0-flash";
+const MODEL = Deno.env.get("AI_MODEL") || "gemini-3.8-flash";
 
 const SYSTEM_PROMPT = `你是 VideoDB 视频库的 AI 搜片助手，只服务网站管理员。用简体中文回答，简短直接。
 
