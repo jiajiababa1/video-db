@@ -11561,7 +11561,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         area.innerHTML = '<div class="vpi-spinner"></div>';
         Promise.all([
             _post(SUPABASE_URL+'/rest/v1/rpc/get_audit_log',{p_token:getLoginToken(),p_limit:50}).then(function(j){return j||[];}),
-            fetch(SUPABASE_URL+'/rest/v1/bans?select=*&order=banned_at.desc&limit=20',{headers:_h()}).then(function(r){return r.json();})
+            _post(SUPABASE_URL+'/rest/v1/rpc/admin_recent_bans',{p_token: getLoginToken()}).then(function(r){return r.json();})
         ]).then(function(r){
             var logs = r[0], bans = r[1];
             var h = '<b>最近操作:</b><div style="max-height:150px;overflow-y:auto;margin-bottom:8px;">';
@@ -14599,7 +14599,7 @@ function getLoginToken() {
         return '';
     }
     function fetchBanReason(username) {
-        return _g(W.SUPABASE_URL + '/rest/v1/bans?username=eq.' + encodeURIComponent(username) + '&order=banned_at.desc&limit=1').then(function (d) {
+        return _g(W.SUPABASE_URL + '/rest/v1/rpc/get_ban_reason?p_username=' + encodeURIComponent(username)).then(function (d) {
             return (Array.isArray(d) && d.length) ? d[0] : null;
         });
     }
