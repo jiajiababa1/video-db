@@ -2123,7 +2123,6 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 <button class="ms-btn" onclick="adminDo('search_user')">🔍 搜用户</button>
                 <button class="ms-btn" onclick="adminDo('reset_pwd')">🔑 重置密码</button>
                 <button class="ms-btn" onclick="adminDo('comments')">💬 评论管理</button>
-                <button class="ms-btn" onclick="adminDo('ai_search')" style="background:rgba(150,100,200,0.1);color:#a070c0;">🤖 AI 搜片</button>
             </div>
             <div style="font-size:9px;color:var(--vmuted);margin-bottom:8px;border-bottom:1px solid var(--vborder);padding-bottom:4px;">🎬 视频管理</div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:8px;">
@@ -2326,6 +2325,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <button class="sidebar-item" onclick="clearHistory()" style="color:#c08080;"><span class="ico">🧹</span>清空观看历史</button>
             <button class="sidebar-item" onclick="clearAllPersonal()" style="color:#c08080;"><span class="ico">🗑</span>清空全部数据</button>
             <button class="sidebar-item" onclick="openSyncDialog()"><span class="ico">☁️</span>云同步 <span class="badge" id="cloudSyncStatus">未登录</span></button>
+            <button class="sidebar-item" id="sideAiSearch" onclick="openAiSearchSidebar()" style="display:none;"><span class="ico">🤖</span>AI 搜片</button>
         </div>
         <div class="sidebar-divider"></div>
         <div class="sidebar-section" id="sideFriends">
@@ -11224,11 +11224,25 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         });
     }
 
+    function openAiSearchSidebar() {
+        if (!_isAdmin) { showLoginDialog(); return; }
+        if (typeof toggleSidebar === 'function') toggleSidebar();
+        document.getElementById('adminPanelOverlay').classList.add('on');
+        showAdminAiSearch(document.getElementById('adminContent'));
+    }
     // 🤖 AI 搜片助手（仅管理员，走 Supabase Edge Function ai-search）
     var _aiChatHist = [];
+    try { _aiChatHist = JSON.parse(localStorage.getItem('vdb_ai_chat_hist') || '[]') || []; } catch (e) { _aiChatHist = []; }
+    function saveAiChatHist() { try { localStorage.setItem('vdb_ai_chat_hist', JSON.stringify(_aiChatHist.slice(-20))); } catch (e) {} }
+    function clearAiChatHist() {
+        _aiChatHist = []; saveAiChatHist();
+        var box = document.getElementById('aiChatBox');
+        if (box) box.innerHTML = '<div style="font-size:11px;color:var(--vmuted);">试试：找周星驰的喜剧片 / 最近7天播放量最高的 / 找点有直链的搞笑视频</div>';
+    }
     function showAdminAiSearch(area) {
         area.innerHTML =
-            '<p style="color:var(--vtext);margin-bottom:6px;">🤖 AI 搜片助手 <span style="font-size:9px;color:var(--vmuted);">(仅管理员)</span></p>' +
+            '<p style="color:var(--vtext);margin-bottom:6px;">🤖 AI 搜片助手 <span style="font-size:9px;color:var(--vmuted);">(仅管理员)</span>' +
+            '<button onclick="clearAiChatHist()" style="float:right;font-size:10px;padding:2px 8px;border:1px solid var(--vborder);background:transparent;color:var(--vmuted);border-radius:4px;">清空</button></p>' +
             '<div id="aiChatBox" style="max-height:300px;overflow-y:auto;border:1px solid var(--vborder);border-radius:var(--radius-sm);padding:8px;margin-bottom:8px;background:rgba(0,0,0,0.15);">' +
             '<div style="font-size:11px;color:var(--vmuted);">试试：找周星驰的喜剧片 / 最近7天播放量最高的 / 找点有直链的搞笑视频</div></div>' +
             '<div style="display:flex;gap:4px;">' +
@@ -11294,6 +11308,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 _aiChatHist.push({ role: 'user', html: esc(text), plain: text });
                 _aiChatHist.push({ role: 'assistant', html: html, plain: j.reply || '' });
                 if (_aiChatHist.length > 20) _aiChatHist = _aiChatHist.slice(-20);
+                saveAiChatHist();
                 aiChatAppend('assistant', html, true);
             } else {
                 var err = '❌ ' + esc(j.message || 'AI 服务异常');
@@ -13040,6 +13055,8 @@ function getLoginToken() {
         }
         var adminBtn = document.getElementById('sidebarAdmin');
         if (adminBtn) adminBtn.style.display = _isAdmin ? '' : 'none';
+        var aiSearchBtn = document.getElementById('sideAiSearch');
+        if (aiSearchBtn) aiSearchBtn.style.display = _isAdmin ? '' : 'none';
         var loginBtn = document.getElementById('sideLogin');
         if (loginBtn) loginBtn.style.display = _loggedIn ? 'none' : '';
         var logoutBtn = document.getElementById('sideLogout');
