@@ -69,29 +69,23 @@ async function searchVideos(supabase: any, args: any) {
 
 async function callGemini(contents: any[]) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-  const payload = JSON.stringify({
-    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    tools: [{ function_declarations: [FUNCTION_DECL] }],
-    contents,
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      tools: [{ function_declarations: [FUNCTION_DECL] }],
+      contents,
+    }),
   });
-  // 免费版 503/429 是 transient 过载，自动重试 3 次（2s/4s/8s）
-  let lastErr = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt));
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: payload,
-    });
-    if (resp.ok) return await resp.json();
+  if (!resp.ok) {
     const t = await resp.text();
-    lastErr = `Gemini API ${resp.status}: ${t.slice(0, 200)}`;
-    if (resp.status !== 503 && resp.status !== 429) break; // 非过载错误不重试
+    if (resp.status === 503 || resp.status === 429 || /high demand|UNAVAILABLE/i.test(t)) {
+      throw new Error("Google 免费版当前过载，请过几分钟再试一次");
+    }
+    throw new Error(`Gemini API ${resp.status}: ${t.slice(0, 300)}`);
   }
-  if (/503|429|high demand|UNAVAILABLE/i.test(lastErr)) {
-    throw new Error("Google 免费版当前过载，已自动重试 3 次，请过几分钟再试");
-  }
-  throw new Error(lastErr);
+  return await resp.json();
 }
 
 function toGeminiContents(messages: any[]) {
