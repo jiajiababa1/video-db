@@ -11295,7 +11295,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY },
                 body: JSON.stringify({
                     p_token: (typeof getLoginToken === 'function' ? getLoginToken() : ''),
-                    messages: histMsgs.slice(-21)
+                    messages: histMsgs.slice(-7)
                 })
             });
             var j = await r.json();

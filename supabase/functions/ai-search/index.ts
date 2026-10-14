@@ -12,16 +12,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
 const MODEL = Deno.env.get("AI_MODEL") || "gemini-3.8-flash";
 
-const SYSTEM_PROMPT = `你是 VideoDB 视频库的 AI 搜片助手，只服务网站管理员。用简体中文回答，简短直接。
-
-你有一个 search_videos 工具可以搜索视频库。用户会用自然语言描述想找的视频，你要理解意图并调用工具：
-- "找周星驰的电影" → query="周星驰"
-- "最近一周播放量最高的" → sort="views", days=7
-- "找点搞笑的" → query="搞笑 喜剧"
-- "有直链的" → has_mp4=true
-
-调用工具后，根据返回结果给管理员一个简明摘要（标题、作者、播放量），不要编造不存在的视频。
-如果搜不到，直说搜不到，建议换关键词。`;
+const SYSTEM_PROMPT = `你是视频库搜片助手。用简体中文，简短回答。
+你有 search_videos 工具。理解用户意图后调用一次工具，然后用返回结果给 1-2 句摘要。不要编造视频，搜不到就直说。意图示例：
+"找周星驰的电影"→query="周星驰"；"最近一周播放量最高"→sort="views",days=7；"找搞笑的"→query="搞笑 喜剧"；"有直链的"→has_mp4=true`;
 
 const FUNCTION_DECL = {
   name: "search_videos",
@@ -69,23 +62,30 @@ async function searchVideos(supabase: any, args: any) {
 
 async function callGemini(contents: any[]) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      tools: [{ function_declarations: [FUNCTION_DECL] }],
-      contents,
-    }),
-  });
-  if (!resp.ok) {
-    const t = await resp.text();
-    if (resp.status === 503 || resp.status === 429 || /high demand|UNAVAILABLE/i.test(t)) {
-      throw new Error("Google 免费版当前过载，请过几分钟再试一次");
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25000); // 25秒超时，失败就直说
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        tools: [{ function_declarations: [FUNCTION_DECL] }],
+        contents,
+      }),
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      if (resp.status === 503 || resp.status === 429 || /high demand|UNAVAILABLE/i.test(t)) {
+        throw new Error("Google 免费版当前过载，请过几分钟再试一次");
+      }
+      throw new Error(`Gemini API ${resp.status}: ${t.slice(0, 300)}`);
     }
-    throw new Error(`Gemini API ${resp.status}: ${t.slice(0, 300)}`);
+    return await resp.json();
+  } finally {
+    clearTimeout(timer);
   }
-  return await resp.json();
 }
 
 function toGeminiContents(messages: any[]) {
@@ -142,17 +142,17 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ ok: false, message: "仅管理员可用" }), { status: 403, headers: cors });
     }
 
-    const messages = userMessages.slice(-20).map((m: any) => ({
+    const messages = userMessages.slice(-6).map((m: any) => ({
       role: m.role === "assistant" ? "assistant" : "user",
-      content: String(m.content || "").slice(0, 2000),
+      content: String(m.content || "").slice(0, 500),
     }));
 
     let contents = toGeminiContents(messages);
     let videos: any[] = [];
     let replyText = "";
 
-    // 最多 3 轮工具调用
-    for (let round = 0; round < 3; round++) {
+    // 只做一轮工具调用：理解意图→查库→总结，一气呵成
+    for (let round = 0; round < 1; round++) {
       const gResp = await callGemini(contents);
       const cand = (gResp.candidates || [])[0];
       const parts = (cand && cand.content && cand.content.parts) || [];
