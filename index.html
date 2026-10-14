@@ -11312,7 +11312,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 aiChatAppend('assistant', html, true);
             } else {
                 var err = '❌ ' + esc(j.message || 'AI 服务异常');
-                if (/GEMINI_API_KEY/.test(j.message || '')) err += '<br><span style="font-size:10px;color:var(--vmuted);">去 Supabase → Edge Functions → ai-search → Secrets 添加 GEMINI_API_KEY（aistudio.google.com 免费获取）</span>';
+                if (/GROQ_API_KEY/.test(j.message || '')) err += '<br><span style="font-size:10px;color:var(--vmuted);">去 Supabase → Project Settings → Functions → Secrets 添加 GROQ_API_KEY（console.groq.com 免费获取）</span>';
                 aiChatAppend('assistant', err, true);
             }
         } catch (e) {

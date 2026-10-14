@@ -1,34 +1,37 @@
 // ============================================================
-// AI 搜片助手 — Supabase Edge Function（Google Gemini 免费版）
-// 部署: Supabase Dashboard → Edge Functions → New Function → 粘贴此文件 → Deploy
-// 密钥: Edge Functions → Secrets → 添加 GEMINI_API_KEY
-//       (去 https://aistudio.google.com 免费获取，不用绑卡)
-// 仅管理员可用：用 x-login-token 验 sessions + user_accounts.is_admin
+// AI 搜片助手 — Supabase Edge Function（Groq 免费版）
+// 部署: Supabase Dashboard → Edge Functions → 粘贴此文件 → Deploy
+// 密钥: Secrets → 添加 GROQ_API_KEY
+//       (去 https://console.groq.com 免费获取，不用绑卡)
+// 仅管理员可用：验 sessions token + user_accounts.is_admin
 // ============================================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
-const MODEL = Deno.env.get("AI_MODEL") || "gemini-3.8-flash";
+const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY") || "";
+const MODEL = Deno.env.get("AI_MODEL") || "llama-3.3-70b-versatile";
 
 const SYSTEM_PROMPT = `你是视频库搜片助手。用简体中文，简短回答。
 你有 search_videos 工具。理解用户意图后调用一次工具，然后用返回结果给 1-2 句摘要。不要编造视频，搜不到就直说。意图示例：
 "找周星驰的电影"→query="周星驰"；"最近一周播放量最高"→sort="views",days=7；"找搞笑的"→query="搞笑 喜剧"；"有直链的"→has_mp4=true`;
 
-const FUNCTION_DECL = {
-  name: "search_videos",
-  description: "在视频库中搜索视频，返回匹配的视频列表",
-  parameters: {
-    type: "object",
-    properties: {
-      query: { type: "string", description: "搜索关键词（标题/作者/标签），多个词用空格分隔" },
-      sort: { type: "string", enum: ["latest", "views"], description: "排序：latest=最新，views=播放量" },
-      days: { type: "number", description: "只看最近 N 天的视频，不填则不限" },
-      has_mp4: { type: "boolean", description: "只要有 MP4 直链可播放的" },
-      limit: { type: "number", description: "返回条数，默认 10，最多 20" },
+const TOOL_DEF = {
+  type: "function",
+  function: {
+    name: "search_videos",
+    description: "在视频库中搜索视频，返回匹配的视频列表",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "搜索关键词（标题/作者/标签），多个词用空格分隔" },
+        sort: { type: "string", enum: ["latest", "views"], description: "排序：latest=最新，views=播放量" },
+        days: { type: "number", description: "只看最近 N 天的视频，不填则不限" },
+        has_mp4: { type: "boolean", description: "只要有 MP4 直链可播放的" },
+        limit: { type: "number", description: "返回条数，默认 10，最多 20" },
+      },
+      required: ["query"],
     },
-    required: ["query"],
   },
 };
 
@@ -60,40 +63,37 @@ async function searchVideos(supabase: any, args: any) {
   return { videos: data || [] };
 }
 
-async function callGemini(contents: any[]) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+async function callGroq(messages: any[]) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 25000); // 25秒超时，失败就直说
+  const timer = setTimeout(() => ctrl.abort(), 25000);
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "authorization": "Bearer " + GROQ_API_KEY,
+      },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        tools: [{ function_declarations: [FUNCTION_DECL] }],
-        contents,
+        model: MODEL,
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+        tools: [TOOL_DEF],
+        tool_choice: "auto",
+        temperature: 0.3,
+        max_tokens: 800,
       }),
       signal: ctrl.signal,
     });
     if (!resp.ok) {
       const t = await resp.text();
-      if (resp.status === 503 || resp.status === 429 || /high demand|UNAVAILABLE/i.test(t)) {
-        throw new Error("Google 免费版当前过载，请过几分钟再试一次");
+      if (resp.status === 429 || /rate_limit|capacity|overloaded/i.test(t)) {
+        throw new Error("Groq 当前限流/过载，请稍后再试一次");
       }
-      throw new Error(`Gemini API ${resp.status}: ${t.slice(0, 300)}`);
+      throw new Error(`Groq API ${resp.status}: ${t.slice(0, 300)}`);
     }
     return await resp.json();
   } finally {
     clearTimeout(timer);
   }
-}
-
-function toGeminiContents(messages: any[]) {
-  // [{role:'user'|'assistant', content:'...'}] → Gemini contents
-  return messages.map((m: any) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: String(m.content || "") }],
-  }));
 }
 
 serve(async (req: Request) => {
@@ -112,8 +112,8 @@ serve(async (req: Request) => {
   };
 
   try {
-    if (!GEMINI_API_KEY) {
-      return new Response(JSON.stringify({ ok: false, message: "no_key:服务端未配置 GEMINI_API_KEY" }), { status: 500, headers: cors });
+    if (!GROQ_API_KEY) {
+      return new Response(JSON.stringify({ ok: false, message: "no_key:服务端未配置 GROQ_API_KEY" }), { status: 500, headers: cors });
     }
 
     const body = await req.json();
@@ -142,46 +142,42 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ ok: false, message: "仅管理员可用" }), { status: 403, headers: cors });
     }
 
+    // 只取最近 3 轮，保持快
     const messages = userMessages.slice(-6).map((m: any) => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: String(m.content || "").slice(0, 500),
     }));
 
-    let contents = toGeminiContents(messages);
     let videos: any[] = [];
     let replyText = "";
 
-    // 只做一轮工具调用：理解意图→查库→总结，一气呵成
-    for (let round = 0; round < 1; round++) {
-      const gResp = await callGemini(contents);
-      const cand = (gResp.candidates || [])[0];
-      const parts = (cand && cand.content && cand.content.parts) || [];
+    // 第一轮：理解意图，可能带工具调用
+    const gResp = await callGroq(messages);
+    const msg = (gResp.choices || [])[0]?.message || {};
+    const toolCalls = msg.tool_calls || [];
+    if (msg.content) replyText += msg.content;
 
-      const fnCalls = parts.filter((p: any) => p.functionCall);
-      // 收集纯文本
-      for (const p of parts) {
-        if (p.text) replyText += p.text;
-      }
-
-      if (!fnCalls.length) break;
-
-      // 把模型这轮输出（含 functionCall）追加进 contents
-      contents.push({ role: "model", parts });
-
-      const fnRespParts = [];
-      for (const p of fnCalls) {
-        const fc = p.functionCall;
+    // 第二轮：如果调了工具，执行并把结果喂回去拿总结
+    if (toolCalls.length) {
+      const followMsgs = [...messages, { role: "assistant", content: msg.content || "", tool_calls: toolCalls }];
+      for (const tc of toolCalls.slice(0, 2)) {
         let result: any = { error: "未知工具" };
-        if (fc.name === "search_videos") {
-          result = await searchVideos(supabase, fc.args || {});
+        if (tc.function?.name === "search_videos") {
+          try {
+            const args = JSON.parse(tc.function.arguments || "{}");
+            result = await searchVideos(supabase, args);
+          } catch (e) { result = { error: "参数解析失败" }; }
           if (result.videos) videos = videos.concat(result.videos);
         }
-        fnRespParts.push({
-          functionResponse: { name: fc.name, response: { result: JSON.stringify(result).slice(0, 8000) } },
+        followMsgs.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(result).slice(0, 6000),
         });
       }
-      contents.push({ role: "user", parts: fnRespParts });
-      replyText = ""; // 有工具调用时，最终回复以最后一轮文本为准
+      const gResp2 = await callGroq(followMsgs);
+      const msg2 = (gResp2.choices || [])[0]?.message || {};
+      if (msg2.content) replyText = msg2.content;
     }
 
     const seen = new Set();
