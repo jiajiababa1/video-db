@@ -10,7 +10,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY") || "";
-const MODEL = Deno.env.get("AI_MODEL") || "llama-3.3-70b-versatile";
+const MODEL = Deno.env.get("AI_MODEL") || "openai/gpt-oss-120b";
 
 const SYSTEM_PROMPT = `你是视频库搜片助手。用简体中文，简短回答。
 你有 search_videos 工具。理解用户意图后调用一次工具，然后用返回结果给 1-2 句摘要。不要编造视频，搜不到就直说。意图示例：
