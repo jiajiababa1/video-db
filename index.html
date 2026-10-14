@@ -2123,6 +2123,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 <button class="ms-btn" onclick="adminDo('search_user')">🔍 搜用户</button>
                 <button class="ms-btn" onclick="adminDo('reset_pwd')">🔑 重置密码</button>
                 <button class="ms-btn" onclick="adminDo('comments')">💬 评论管理</button>
+                <button class="ms-btn" onclick="adminDo('ai_search')" style="background:rgba(150,100,200,0.1);color:#a070c0;">🤖 AI 搜片</button>
             </div>
             <div style="font-size:9px;color:var(--vmuted);margin-bottom:8px;border-bottom:1px solid var(--vborder);padding-bottom:4px;">🎬 视频管理</div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:8px;">
@@ -11094,6 +11095,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             case 'diag': checkDBStatus(); break;
             case 'announce': showAdminAnnounce(area); break;
             case 'comments': showAdminComments(area); break;
+            case 'ai_search': showAdminAiSearch(area); break;
             case 'users': showAdminUsers(area); break;
             case 'stats': showAdminStats(area); break;
             case 'config': showAdminConfig(area); break;
@@ -11220,6 +11222,90 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             h += '</div>';
             area.innerHTML = h;
         });
+    }
+
+    // 🤖 AI 搜片助手（仅管理员，走 Supabase Edge Function ai-search）
+    var _aiChatHist = [];
+    function showAdminAiSearch(area) {
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">🤖 AI 搜片助手 <span style="font-size:9px;color:var(--vmuted);">(仅管理员)</span></p>' +
+            '<div id="aiChatBox" style="max-height:300px;overflow-y:auto;border:1px solid var(--vborder);border-radius:var(--radius-sm);padding:8px;margin-bottom:8px;background:rgba(0,0,0,0.15);">' +
+            '<div style="font-size:11px;color:var(--vmuted);">试试：找周星驰的喜剧片 / 最近7天播放量最高的 / 找点有直链的搞笑视频</div></div>' +
+            '<div style="display:flex;gap:4px;">' +
+            '<input id="aiChatInput" placeholder="描述你想找的视频…" style="flex:1;padding:8px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:var(--radius-sm);font-size:12px;" onkeydown="if(event.key===\'Enter\')aiChatSend()">' +
+            '<button class="cheat-btn accent" id="aiChatBtn" onclick="aiChatSend()">发送</button></div>';
+        // 恢复历史
+        var box = document.getElementById('aiChatBox');
+        for (var i = 0; i < _aiChatHist.length; i++) aiChatAppend(_aiChatHist[i].role, _aiChatHist[i].html, true);
+    }
+    function aiChatAppend(role, html, noSave) {
+        var box = document.getElementById('aiChatBox');
+        if (!box) return;
+        var d = document.createElement('div');
+        d.style.cssText = 'margin:6px 0;text-align:' + (role === 'user' ? 'right' : 'left') + ';';
+        d.innerHTML = '<div style="display:inline-block;max-width:88%;padding:6px 10px;border-radius:8px;font-size:12px;word-break:break-all;text-align:left;' +
+            (role === 'user' ? 'background:rgba(200,164,92,0.16);color:#e4e0d8;' : 'background:rgba(255,255,255,0.06);color:#cfc9bf;') + '">' + html + '</div>';
+        box.appendChild(d);
+        box.scrollTop = box.scrollHeight;
+        if (!noSave) _aiChatHist.push({ role: role, html: html });
+    }
+    function aiChatVideoCard(v) {
+        var thumb = v.thumbnail_url ? '<img src="' + esc(v.thumbnail_url) + '" style="width:56px;height:40px;object-fit:cover;border-radius:4px;" loading="lazy">' : '';
+        return '<div onclick="closeAdminPanel();location.hash=\'#/video/' + esc(v.video_id) + '\'" style="display:flex;gap:8px;align-items:center;padding:6px;border:1px solid var(--vborder);border-radius:6px;margin-top:6px;cursor:pointer;background:rgba(255,255,255,0.02);">' +
+            thumb +
+            '<div style="flex:1;min-width:0;"><div style="font-size:11px;color:var(--vtext);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(v.title || v.video_id) + '</div>' +
+            '<div style="font-size:9px;color:var(--vmuted);">@' + esc(v.author || '') + ' · 👁' + (v.views || 0) + (v.has_mp4 ? ' · ✅可播' : '') + '</div></div>' +
+            '<span style="font-size:14px;">▶</span></div>';
+    }
+    async function aiChatSend() {
+        var inp = document.getElementById('aiChatInput');
+        var btn = document.getElementById('aiChatBtn');
+        var text = (inp.value || '').trim();
+        if (!text || btn.disabled) return;
+        inp.value = '';
+        btn.disabled = true; btn.textContent = '…';
+        // 先渲染，历史等成功后再入（避免失败污染上下文）
+        aiChatAppend('user', esc(text), true);
+        aiChatAppend('assistant', '<span style="color:var(--vmuted);">🤖 思考中…</span>', true);
+        var box = document.getElementById('aiChatBox');
+        try {
+            var fnUrl = (typeof SUPABASE_URL !== 'undefined' ? SUPABASE_URL : '') + '/functions/v1/ai-search';
+            // 历史只取纯文本（plain），最多 10 轮
+            var histMsgs = [];
+            for (var hi = 0; hi < _aiChatHist.length; hi++) {
+                histMsgs.push({ role: _aiChatHist[hi].role, content: _aiChatHist[hi].plain });
+            }
+            histMsgs.push({ role: 'user', content: text });
+            var r = await fetch(fnUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY },
+                body: JSON.stringify({
+                    p_token: (typeof getLoginToken === 'function' ? getLoginToken() : ''),
+                    messages: histMsgs.slice(-21)
+                })
+            });
+            var j = await r.json();
+            if (box && box.lastChild) box.lastChild.remove(); // 移除"思考中"
+            if (j.ok) {
+                var html = esc(j.reply || '（无回复）').replace(/\n/g, '<br>');
+                if (j.videos && j.videos.length) {
+                    for (var i = 0; i < j.videos.length; i++) html += aiChatVideoCard(j.videos[i]);
+                }
+                _aiChatHist.push({ role: 'user', html: esc(text), plain: text });
+                _aiChatHist.push({ role: 'assistant', html: html, plain: j.reply || '' });
+                if (_aiChatHist.length > 20) _aiChatHist = _aiChatHist.slice(-20);
+                aiChatAppend('assistant', html, true);
+            } else {
+                var err = '❌ ' + esc(j.message || 'AI 服务异常');
+                if (/GEMINI_API_KEY/.test(j.message || '')) err += '<br><span style="font-size:10px;color:var(--vmuted);">去 Supabase → Edge Functions → ai-search → Secrets 添加 GEMINI_API_KEY（aistudio.google.com 免费获取）</span>';
+                aiChatAppend('assistant', err, true);
+            }
+        } catch (e) {
+            if (box && box.lastChild) box.lastChild.remove();
+            aiChatAppend('assistant', '❌ 请求失败：Edge Function 可能未部署<br><span style="font-size:10px;color:var(--vmuted);">Supabase → Edge Functions → 新建 ai-search，粘贴 supabase/functions/ai-search/index.ts</span>', true);
+        }
+        btn.disabled = false; btn.textContent = '发送';
+        inp.focus();
     }
 
     // 💬 评论管理：全站评论列表 + 删除（删除走 RLS，仅站主可删他人）
