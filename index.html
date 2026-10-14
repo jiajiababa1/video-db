@@ -2321,6 +2321,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <button class="sidebar-item" data-section="favs" onclick="selectSidebar('favs','⭐ 我的收藏')"><span class="ico">⭐</span>我的收藏 <span class="badge" id="favsCount">0</span></button>
             <button class="sidebar-item" onclick="showFollowsPanel()"><span class="ico">⭐</span>我的关注 <span class="badge" id="followsCount">0</span></button>
             <button class="sidebar-item" data-section="watchlater" onclick="selectSidebar('watchlater','📌 稍后观看')"><span class="ico">📌</span>稍后观看 <span class="badge" id="wlCount">0</span></button>
+            <button class="sidebar-item" data-section="playlists" onclick="openPlaylistManager()"><span class="ico">📝</span>我的播单 <span class="badge" id="plCount">0</span></button>
             <button class="sidebar-item" data-section="history" onclick="selectSidebar('history','🕐 观看历史')"><span class="ico">🕐</span>观看历史 <span class="badge" id="histCount">0</span></button>
             <button class="sidebar-item" onclick="clearHistory()" style="color:#c08080;"><span class="ico">🧹</span>清空观看历史</button>
             <button class="sidebar-item" onclick="clearAllPersonal()" style="color:#c08080;"><span class="ico">🗑</span>清空全部数据</button>
@@ -2560,6 +2561,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                         <button class="vpi-btn" onclick="shareVideo()" title="分享视频">🔗 分享</button>
                         <button class="vpi-btn" onclick="togglePiP(this)" title="画中画">📺 PiP</button>
                         <button class="vpi-btn vpi-fav" onclick="toggleInlineFav()" title="收藏">☆</button>
+                        <button class="vpi-btn" onclick="showAddToPlaylist(currentInlineVideo&&currentInlineVideo.video_id)" title="加入播单">➕</button>
                         <button class="vpi-btn vpi-wl" onclick="toggleInlineWl()" title="稍后观看">📌</button>
                         <button class="vpi-btn vpi-close" onclick="closeInlinePlayer()">✕ 收起</button>
                     </div>
@@ -4317,6 +4319,167 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         // 如果当前在收藏页，刷新
         if (activeSection === 'favs') loadVids(true);
     }
+    // ============================================================
+    // 播单系统 (localStorage, 结构: [{id, name, videoIds[], created_at}])
+    // ============================================================
+    var _activePlaylistId = null;
+    function getPlaylists() {
+        try { return JSON.parse(localStorage.getItem('vdb_playlists') || '[]'); } catch(e) { return []; }
+    }
+    function savePlaylists(pls) {
+        localStorage.setItem('vdb_playlists', JSON.stringify(pls));
+        updatePlaylistBadge();
+    }
+    function updatePlaylistBadge() {
+        var el = document.getElementById('plCount');
+        if (el) el.textContent = getPlaylists().length || 0;
+    }
+    function getPlaylist(pid) {
+        var pls = getPlaylists();
+        for (var i = 0; i < pls.length; i++) if (pls[i].id === pid) return pls[i];
+        return null;
+    }
+    function createPlaylist(name) {
+        name = (name || '').trim().slice(0, 30);
+        if (!name) { toast('请输入播单名称'); return null; }
+        var pls = getPlaylists();
+        var pl = {id: 'pl_' + Date.now().toString(36), name: name, videoIds: [], created_at: new Date().toISOString()};
+        pls.push(pl); savePlaylists(pls);
+        toast('已创建播单 📝');
+        return pl;
+    }
+    function deletePlaylist(pid, btn) {
+        if (!confirm('删除这个播单?（视频本身不受影响）')) return;
+        var pls = getPlaylists().filter(function(p){ return p.id !== pid; });
+        savePlaylists(pls);
+        if (_activePlaylistId === pid) { _activePlaylistId = null; openPlaylistManager(); }
+        else openPlaylistManager();
+        toast('已删除');
+    }
+    function renamePlaylist(pid) {
+        var pl = getPlaylist(pid);
+        if (!pl) return;
+        var name = prompt('重命名播单', pl.name);
+        if (name === null) return;
+        name = name.trim().slice(0, 30);
+        if (!name) { toast('名称不能为空'); return; }
+        var pls = getPlaylists();
+        for (var i = 0; i < pls.length; i++) if (pls[i].id === pid) pls[i].name = name;
+        savePlaylists(pls); openPlaylistManager();
+    }
+    function addToPlaylist(pid, videoId) {
+        var pls = getPlaylists();
+        for (var i = 0; i < pls.length; i++) {
+            if (pls[i].id === pid) {
+                if (pls[i].videoIds.indexOf(videoId) < 0) {
+                    pls[i].videoIds.push(videoId);
+                    savePlaylists(pls);
+                    toast('已加入「' + pls[i].name + '」');
+                } else toast('已在该播单中');
+                return;
+            }
+        }
+    }
+    function removeFromPlaylist(pid, videoId) {
+        var pls = getPlaylists();
+        for (var i = 0; i < pls.length; i++) {
+            if (pls[i].id === pid) {
+                pls[i].videoIds = pls[i].videoIds.filter(function(v){ return v !== videoId; });
+                savePlaylists(pls);
+                if (activeSection === 'playlist_detail' && _activePlaylistId === pid) loadVids(true);
+                toast('已移出播单');
+                return;
+            }
+        }
+    }
+    // 播单管理器主页
+    function openPlaylistManager() {
+        _activePlaylistId = null;
+        activeSection = 'playlists';
+        var tabs = document.querySelectorAll('#vidTabs .vid-tab');
+        for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+        closeSidebar(); window.scrollTo({top: 0, behavior: 'instant'});
+        updateHash();
+        var grid = document.getElementById('vidGrid');
+        if (!grid) return;
+        var pls = getPlaylists();
+        var h = '<div style="grid-column:1/-1;padding:8px 4px;">' +
+            '<div style="display:flex;gap:6px;margin-bottom:12px;">' +
+            '<input id="plNameInput" placeholder="新播单名称…" maxlength="30" style="flex:1;padding:8px 10px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:var(--radius-sm);font-size:12px;" onkeydown="if(event.key===\'Enter\')plCreate()">' +
+            '<button class="cheat-btn accent" onclick="plCreate()">＋ 新建</button></div>';
+        if (!pls.length) {
+            h += '<div class="empty-state" style="padding:40px 16px;text-align:center;color:var(--vmuted);font-size:12px;">还没有播单<br>给喜欢的视频分分类吧 📝</div>';
+        } else {
+            for (var j = 0; j < pls.length; j++) {
+                var p = pls[j];
+                h += '<div style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--vborder);border-radius:var(--radius-sm);margin-bottom:8px;background:var(--vcard);">' +
+                    '<span style="font-size:20px;">📝</span>' +
+                    '<div style="flex:1;min-width:0;cursor:pointer;" onclick="openPlaylist(\'' + p.id + '\')">' +
+                    '<div style="font-size:13px;color:var(--vtext);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(p.name) + '</div>' +
+                    '<div style="font-size:10px;color:var(--vmuted);">' + p.videoIds.length + ' 个视频</div></div>' +
+                    '<button class="cheat-btn" style="font-size:10px;padding:4px 8px;" onclick="plPlayAll(\'' + p.id + '\')">▶ 播放全部</button>' +
+                    '<button class="cheat-btn" style="font-size:10px;padding:4px 8px;" onclick="renamePlaylist(\'' + p.id + '\')">改名</button>' +
+                    '<button class="cheat-btn" style="font-size:10px;padding:4px 8px;color:#c08080;" onclick="deletePlaylist(\'' + p.id + '\',this)">删除</button>' +
+                    '</div>';
+            }
+        }
+        h += '</div>';
+        grid.innerHTML = h;
+        var vf = document.getElementById('vidFooter'); if (vf) vf.style.display = 'none';
+    }
+    function plCreate() {
+        var inp = document.getElementById('plNameInput');
+        var pl = createPlaylist(inp ? inp.value : '');
+        if (pl) openPlaylistManager();
+    }
+    // 进入播单详情（复用视频网格）
+    function openPlaylist(pid) {
+        var pl = getPlaylist(pid);
+        if (!pl) { toast('播单不存在'); return; }
+        _activePlaylistId = pid;
+        activeSection = 'playlist_detail';
+        closeSidebar(); window.scrollTo({top: 0, behavior: 'instant'});
+        updateHash();
+        loadVids(true);
+        // 标题横幅（等网格渲染后插入）
+        setTimeout(function(){
+            var grid = document.getElementById('vidGrid');
+            if (!grid || document.getElementById('plTitleBar')) return;
+            var bar = document.createElement('div');
+            bar.id = 'plTitleBar';
+            bar.style.cssText = 'grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:8px 4px;';
+            bar.innerHTML = '<button class="cheat-btn" onclick="openPlaylistManager()">‹ 返回播单</button>' +
+                '<b style="font-size:14px;">📝 ' + esc(pl.name) + '</b>' +
+                '<span style="font-size:10px;color:var(--vmuted);">' + pl.videoIds.length + ' 个视频</span>';
+            grid.insertBefore(bar, grid.firstChild);
+        }, 300);
+    }
+    function plPlayAll(pid) {
+        var pl = getPlaylist(pid);
+        if (!pl || !pl.videoIds.length) { toast('播单是空的'); return; }
+        openPlaylist(pid);
+    }
+    // 加入播单弹窗
+    function showAddToPlaylist(videoId, btn) {
+        if (btn) event.stopPropagation();
+        var pls = getPlaylists();
+        var h = '<div style="padding:4px;"><p style="font-size:13px;margin-bottom:8px;">加入到播单</p>';
+        if (!pls.length) h += '<div style="font-size:11px;color:var(--vmuted);margin-bottom:8px;">还没有播单，先建一个：</div>';
+        for (var i = 0; i < pls.length; i++) {
+            var inPl = pls[i].videoIds.indexOf(videoId) >= 0;
+            h += '<button class="cheat-btn" style="display:block;width:100%;text-align:left;margin-bottom:4px;" onclick="addToPlaylist(\'' + pls[i].id + '\',\'' + videoId + '\');closeModal();">' +
+                (inPl ? '✓ ' : '＋ ') + esc(pls[i].name) + ' <span style="color:var(--vmuted);">(' + pls[i].videoIds.length + ')</span></button>';
+        }
+        h += '<div style="display:flex;gap:4px;margin-top:8px;"><input id="plQuickName" placeholder="新播单名称…" maxlength="30" style="flex:1;padding:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:var(--radius-sm);font-size:11px;">' +
+            '<button class="cheat-btn accent" onclick="plQuickCreate(\'' + videoId + '\')">新建并加入</button></div></div>';
+        showModal(h);
+    }
+    function plQuickCreate(videoId) {
+        var inp = document.getElementById('plQuickName');
+        var pl = createPlaylist(inp ? inp.value : '');
+        if (pl) { addToPlaylist(pl.id, videoId); closeModal(); }
+    }
+
     function updateFavsBadge() {
         var count = getFavorites().length;
         var badge = document.getElementById('favsCount');
@@ -6166,8 +6329,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     // 非文本筛选条件 (分区/作者/可播/已下架) —— 搜索与普通列表共用
     function ssBaseFilters() {
         var p = '';
-        if (activeSection === 'favs' || activeSection === 'history' || activeSection === 'watchlater') {
-            var ids = activeSection === 'favs' ? getFavorites() : (activeSection === 'history' ? getHistory() : getWatchLater());
+        if (activeSection === 'favs' || activeSection === 'history' || activeSection === 'watchlater' || activeSection === 'playlist_detail') {
+            var ids = activeSection === 'favs' ? getFavorites() : activeSection === 'history' ? getHistory() : activeSection === 'watchlater' ? getWatchLater() : activeSection === 'playlist_detail' ? ((_activePlaylistId && getPlaylist(_activePlaylistId)) ? getPlaylist(_activePlaylistId).videoIds : []) : [];
             if (!ids.length) return null;
             var iset = ids.map(function (id) { return '%22' + encodeURIComponent(id) + '%22'; }).join(',');
             p += '&video_id=in.(' + iset + ')';
@@ -8429,7 +8592,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         var _aiBadge = _aiRec ? '<span class="ai-badge" title="Twelve Labs 已识别' + (_aiRec.ts ? ' · ' + fmtAgo(_aiRec.ts) : '') + '">🤖AI</span>' : '';
 
         c.innerHTML =
-            '<div class="vid-thumb">' + imgHtml + dur + favBtnHtml + wlBtnHtml +
+            '<div class="vid-thumb">' + imgHtml + dur + favBtnHtml + wlBtnHtml + plBtnHtml +
             '<div class="vid-play-overlay"><div class="play-icon"></div></div>' +
             '<div class="vid-noimg" style="' + noImgDisplay + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>NO COVER</div></div>' +
             '<div class="vid-body"><div class="vid-title">' + _titleHtml + '</div>' + _aiTagsHtml + _aiSumHtml +
@@ -12988,6 +13151,7 @@ function getLoginToken() {
     updateFavsBadge();
     updateFollowsBadge();
     updateHistBadge();
+    updatePlaylistBadge();
     updateWlBadge();
     updateCloudStatusUI();
     applyPrefsUI();
