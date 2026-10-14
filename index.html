@@ -11223,7 +11223,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     async function deleteAnnounce(id, btn) {
         if (!confirm('删除此公告?')) return;
         btn.textContent = '...';
-        var ok = await _delete(SUPABASE_URL + '/rest/v1/announcements?id=eq.' + id);
+        var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_announce_delete', {p_token: getLoginToken(), p_id: id});
+        var ok = j && j[0] && j[0].ok;
         if (ok) { btn.parentElement.remove(); loadAnnouncements(); }
         else { btn.textContent = '失败'; }
     }
@@ -11235,33 +11236,20 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         var r = document.getElementById('annResult');
         if (!t||!c) { r.textContent = '请填写标题和内容'; return; }
         try {
-            // 如果选了"仅显示此",先把旧公告设为inactive
-            if (only) {
-                await fetch(SUPABASE_URL + '/rest/v1/announcements?is_active=is.true', {
-                    method: 'PATCH', headers: _H(),
-                    body: JSON.stringify({is_active: false})
-                }).catch(function(){});
-            }
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/announcements', {
-                method: 'POST', headers: _H(),
-                body: JSON.stringify({title: t, content: c, created_by: _username, is_active: true})
-            });
-            if (resp.ok) {
+            var j2 = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_announce_publish', {p_token: getLoginToken(), p_title: t, p_content: c, p_only: only});
+            if (j2 && j2[0] && j2[0].ok) {
                 r.textContent = '✅ 公告已发布'; r.style.color = 'var(--green)';
                 loadAnnouncements();
-            } else if (resp.status === 401 || resp.status === 403) {
-                r.textContent = '❌ 权限不足 — 请在管理面板点「🔑 设置管理员密钥」';
-                r.style.color = '#c08080';
             } else {
-                r.textContent = '❌ HTTP ' + resp.status; r.style.color = '#c08080';
+                r.textContent = '❌ ' + (j2 && j2[0] && j2[0].message || '发布失败'); r.style.color = '#c08080';
             }
         } catch(e) { r.textContent = '❌ 网络错误: ' + (e.message || ''); r.style.color = '#c08080'; }
     }
 
     async function clearAnnounces() {
         if (!confirm('清除所有公告?')) return;
-        await fetch(SUPABASE_URL + '/rest/v1/announcements?id=gt.0', {method: 'DELETE', headers:_h()});
-        document.getElementById('annResult').textContent = '✅ 已清除';
+        var j3 = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_announce_clear', {p_token: getLoginToken()});
+        document.getElementById('annResult').textContent = (j3 && j3[0] && j3[0].ok) ? '✅ 已清除' : '❌ ' + (j3 && j3[0] && j3[0].message || '失败');
     }
 
     function showAdminUsers(area) {
@@ -11491,10 +11479,14 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     async function sendBroadcast() {
         var msg = document.getElementById('broadcastMsg').value.trim();
         if (!msg) return;
-        await _adminPost(SUPABASE_URL+'/rest/v1/announcements',{title:'📢 系统通知',content:msg,created_by:_username,is_active:true});
-        showNotification('📢 管理员通知: ' + msg);
-        document.getElementById('bcResult').textContent = '✅ 公告已发布 + 弹窗通知已弹出';
-        if (window.rtPublish) rtPublish();
+        var jb = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_announce_publish', {p_token: getLoginToken(), p_title: '📢 系统通知', p_content: msg, p_only: false});
+        if (jb && jb[0] && jb[0].ok) {
+            showNotification('📢 管理员通知: ' + msg);
+            document.getElementById('bcResult').textContent = '✅ 公告已发布 + 弹窗通知已弹出';
+            if (window.rtPublish) rtPublish();
+        } else {
+            document.getElementById('bcResult').textContent = '❌ ' + (jb && jb[0] && jb[0].message || '发布失败');
+        }
     }
     function sendLocalNotification() {
         var msg = document.getElementById('broadcastMsg').value.trim();
@@ -12249,25 +12241,16 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         if (_username !== SITE_OWNER) { r.textContent = '只有站主可以创建/编辑页面'; r.style.color = '#c08080'; return; }
         r.textContent = '保存中...'; r.style.color = 'var(--vmuted)';
         var safeHTML = sanitizeHTML(content);
-        var record = {slug: slug, title: title, content: safeHTML, created_by: _username, updated_at: new Date().toISOString()};
-        // Upsert: try insert first, if conflict, update
-        _post(SUPABASE_URL + '/rest/v1/site_pages', record).then(function(result){
-            if (result !== null) {
+        // 走服务端 RPC（站主鉴权在服务端做，upsert 逻辑也在服务端）
+        _post(SUPABASE_URL + '/rest/v1/rpc/admin_sitepage_save', {p_token: getLoginToken(), p_slug: slug, p_title: title, p_content: safeHTML}).then(function(j4){
+            if (j4 && j4[0] && j4[0].ok) {
                 var fullLink = location.origin + location.pathname + '#/page/' + slug;
                 r.innerHTML = '页面已保存!<br>完整链接: <b style=\"color:var(--vprimary);user-select:all;\">' + fullLink + '</b><br><a href=\"'+fullLink+'\" target=\"_blank\" style=\"color:var(--vprimary);\">在新标签打开</a>';
             } else {
-                // Try update (slug already exists)
-                _patch(SUPABASE_URL + '/rest/v1/site_pages?slug=eq.' + escUrl(slug), {title: title, content: safeHTML, updated_at: new Date().toISOString()}).then(function(ok){
-                    if (ok) {
-                        var fullLink2 = location.origin + location.pathname + '#/page/' + slug;
-                        r.innerHTML = '页面已更新!<br>完整链接: <b style=\"color:var(--vprimary);user-select:all;\">' + fullLink2 + '</b>';
-                    } else {
-                        r.textContent = '保存失败 — 需执行 02_security.sql'; r.style.color = '#c08080';
-                    }
-                });
+                r.textContent = '❌ ' + (j4 && j4[0] && j4[0].message || '保存失败'); r.style.color = '#c08080';
             }
         }).catch(function(){
-            r.textContent = '保存失败 — 检查site_pages表是否存在'; r.style.color = '#c08080';
+            r.textContent = '保存失败 — 检查网络'; r.style.color = '#c08080';
         });
     }
 
@@ -12291,9 +12274,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         if (_username !== SITE_OWNER) { toast('只有站主可以删除页面'); return; }
         if (!confirm('确定删除页面 /'+slug+' ？')) return;
         if (btn) btn.textContent = '...';
-        _delete(SUPABASE_URL + '/rest/v1/site_pages?slug=eq.' + escUrl(slug)).then(function(ok){
-            if (ok) { toast('已删除 /'+slug); adminDo('pages'); }
-            else { if (btn) btn.textContent = '失败'; toast('删除失败'); }
+        _post(SUPABASE_URL + '/rest/v1/rpc/admin_sitepage_delete', {p_token: getLoginToken(), p_slug: slug}).then(function(j5){
+            if (j5 && j5[0] && j5[0].ok) { toast('已删除 /'+slug); adminDo('pages'); }
+            else { if (btn) btn.textContent = '失败'; toast('删除失败: ' + (j5 && j5[0] && j5[0].message || '')); }
         });
     }
 
