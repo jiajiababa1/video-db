@@ -2122,6 +2122,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 <button class="ms-btn" onclick="adminDo('config')">⚙️ 系统设置</button>
                 <button class="ms-btn" onclick="adminDo('search_user')">🔍 搜用户</button>
                 <button class="ms-btn" onclick="adminDo('reset_pwd')">🔑 重置密码</button>
+                <button class="ms-btn" onclick="adminDo('comments')">💬 评论管理</button>
             </div>
             <div style="font-size:9px;color:var(--vmuted);margin-bottom:8px;border-bottom:1px solid var(--vborder);padding-bottom:4px;">🎬 视频管理</div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:8px;">
@@ -11092,6 +11093,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         switch(action) {
             case 'diag': checkDBStatus(); break;
             case 'announce': showAdminAnnounce(area); break;
+            case 'comments': showAdminComments(area); break;
             case 'users': showAdminUsers(area); break;
             case 'stats': showAdminStats(area); break;
             case 'config': showAdminConfig(area); break;
@@ -11218,6 +11220,58 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             h += '</div>';
             area.innerHTML = h;
         });
+    }
+
+    // 💬 评论管理：全站评论列表 + 删除（删除走 RLS，仅站主可删他人）
+    var _cmPage = 0, _cmSize = 30, _cmKeyword = '';
+    function showAdminComments(area) {
+        _cmPage = 0; _cmKeyword = '';
+        area.innerHTML =
+            '<p style="color:var(--vtext);margin-bottom:6px;">💬 评论管理 <span style="font-size:9px;color:var(--vmuted);">(仅站主可删除)</span></p>' +
+            '<div style="display:flex;gap:4px;margin-bottom:8px;">' +
+            '<input id="cmKeyword" placeholder="按用户名搜索" style="flex:1;padding:6px;border:1px solid var(--vborder);background:var(--vcard);color:var(--vtext);border-radius:var(--radius-sm);font-size:11px;" onkeydown="if(event.key===\'Enter\')cmSearch()">' +
+            '<button class="cheat-btn accent" onclick="cmSearch()">搜索</button>' +
+            '</div><div id="cmList"><div class="vpi-spinner"></div></div>' +
+            '<div id="cmMore" style="text-align:center;margin-top:8px;"></div>';
+        cmLoad();
+    }
+    function cmSearch() {
+        _cmKeyword = (document.getElementById('cmKeyword').value || '').trim();
+        _cmPage = 0;
+        document.getElementById('cmList').innerHTML = '<div class="vpi-spinner"></div>';
+        document.getElementById('cmMore').innerHTML = '';
+        cmLoad();
+    }
+    async function cmLoad() {
+        var q = '/rest/v1/video_comments?select=id,video_id,username,content,created_at&order=created_at.desc&limit=' + _cmSize + '&offset=' + (_cmPage * _cmSize);
+        if (_cmKeyword) q += '&username=eq.' + escUrl(_cmKeyword);
+        var rows = await _get(SUPABASE_URL + q);
+        var box = document.getElementById('cmList');
+        if (!box) return;
+        if (rows === null) { box.innerHTML = '<div style="color:var(--vmuted);font-size:11px;">评论表不存在或网络错误</div>'; return; }
+        if (!_cmPage && !rows.length) { box.innerHTML = '<div style="color:var(--vmuted);font-size:11px;">暂无评论</div>'; return; }
+        var h = _cmPage ? box.innerHTML : '';
+        for (var i = 0; i < rows.length; i++) {
+            var c = rows[i];
+            h += '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                '<span><b style="color:var(--vprimary);">' + esc(c.username) + '</b> ' +
+                '<span style="color:var(--vmuted);font-size:9px;">' + esc(String(c.video_id).slice(0,24)) + ' · ' + new Date(c.created_at).toLocaleString('zh-CN') + '</span></span>' +
+                '<button class="cheat-btn" style="font-size:9px;padding:2px 8px;color:#c08080;" onclick="cmDelete(' + c.id + ',this)">删除</button>' +
+                '</div><div style="color:var(--vtext);margin-top:2px;word-break:break-all;">' + esc(c.content) + '</div></div>';
+        }
+        box.innerHTML = h;
+        var more = document.getElementById('cmMore');
+        if (more) more.innerHTML = rows.length === _cmSize
+            ? '<button class="cheat-btn" onclick="_cmPage++;cmLoad()">加载更多</button>'
+            : '<span style="font-size:9px;color:var(--vmuted);">没有更多了</span>';
+    }
+    async function cmDelete(id, btn) {
+        if (!confirm('删除这条评论?')) return;
+        btn.textContent = '...';
+        var ok = await _delete(SUPABASE_URL + '/rest/v1/video_comments?id=eq.' + id);
+        if (ok) { btn.closest('div').parentElement.remove(); toast('已删除'); }
+        else { btn.textContent = '删除'; toast('删除失败（仅站主可删）'); }
     }
 
     async function deleteAnnounce(id, btn) {
