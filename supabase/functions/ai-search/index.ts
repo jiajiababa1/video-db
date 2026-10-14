@@ -10,7 +10,26 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY") || "";
-const MODEL = Deno.env.get("AI_MODEL") || "openai/gpt-oss-120b";
+// 优先用的模型（按顺序），实际可用性看 key 的权限，函数会先查 /models 自动挑
+const MODEL_PREFS = (Deno.env.get("AI_MODEL") || "openai/gpt-oss-20b,openai/gpt-oss-120b,qwen/qwen3.8-27b").split(",").map(s => s.trim()).filter(Boolean);
+
+async function pickModel(): Promise<string> {
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/models", {
+      headers: { "authorization": "Bearer " + GROQ_API_KEY },
+    });
+    if (!r.ok) return MODEL_PREFS[0];
+    const j = await r.json();
+    const ids: string[] = (j.data || []).map((m: any) => m.id).filter((id: string) =>
+      !/whisper|tts|guard|compound/i.test(id));
+    for (const pref of MODEL_PREFS) {
+      if (ids.includes(pref)) return pref;
+    }
+    // 兜底：随便找个能对话的
+    if (ids.length) return ids[0];
+  } catch (e) { /* 忽略，用默认 */ }
+  return MODEL_PREFS[0];
+}
 
 const SYSTEM_PROMPT = `你是视频库搜片助手。用简体中文，简短回答。
 你有 search_videos 工具。理解用户意图后调用一次工具，然后用返回结果给 1-2 句摘要。不要编造视频，搜不到就直说。意图示例：
@@ -63,7 +82,7 @@ async function searchVideos(supabase: any, args: any) {
   return { videos: data || [] };
 }
 
-async function callGroq(messages: any[]) {
+async function callGroq(messages: any[], model: string) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 25000);
   try {
@@ -74,7 +93,7 @@ async function callGroq(messages: any[]) {
         "authorization": "Bearer " + GROQ_API_KEY,
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
         tools: [TOOL_DEF],
         tool_choice: "auto",
@@ -87,6 +106,9 @@ async function callGroq(messages: any[]) {
       const t = await resp.text();
       if (resp.status === 429 || /rate_limit|capacity|overloaded/i.test(t)) {
         throw new Error("Groq 当前限流/过载，请稍后再试一次");
+      }
+      if (resp.status === 404 || /model_not_found|does not exist/i.test(t)) {
+        throw new Error(`模型 ${model} 在你的 Groq 账号上不可用，去 console.groq.com 确认可用模型，或设 AI_MODEL 环境变量指定`);
       }
       throw new Error(`Groq API ${resp.status}: ${t.slice(0, 300)}`);
     }
@@ -151,8 +173,11 @@ serve(async (req: Request) => {
     let videos: any[] = [];
     let replyText = "";
 
+    // 先查这个 key 能用哪些模型，自动挑一个
+    const model = await pickModel();
+
     // 第一轮：理解意图，可能带工具调用
-    const gResp = await callGroq(messages);
+    const gResp = await callGroq(messages, model);
     const msg = (gResp.choices || [])[0]?.message || {};
     const toolCalls = msg.tool_calls || [];
     if (msg.content) replyText += msg.content;
@@ -175,7 +200,7 @@ serve(async (req: Request) => {
           content: JSON.stringify(result).slice(0, 6000),
         });
       }
-      const gResp2 = await callGroq(followMsgs);
+      const gResp2 = await callGroq(followMsgs, model);
       const msg2 = (gResp2.choices || [])[0]?.message || {};
       if (msg2.content) replyText = msg2.content;
     }
