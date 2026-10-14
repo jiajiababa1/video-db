@@ -11258,6 +11258,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 '<span><b style="color:var(--vprimary);">' + esc(c.username) + '</b> ' +
                 '<span style="color:var(--vmuted);font-size:9px;">' + esc(String(c.video_id).slice(0,24)) + ' · ' + new Date(c.created_at).toLocaleString('zh-CN') + '</span></span>' +
                 '<button class="cheat-btn" style="font-size:9px;padding:2px 8px;color:#c08080;" onclick="cmDelete(' + c.id + ',this)">删除</button>' +
+                '<button class="cheat-btn" style="font-size:9px;padding:2px 8px;color:#c08080;" onclick="cmDeleteUser(\'' + esc(c.username) + '\',this)" title="删除该用户全部评论">清此人</button>' +
                 '</div><div style="color:var(--vtext);margin-top:2px;word-break:break-all;">' + esc(c.content) + '</div></div>';
         }
         box.innerHTML = h;
@@ -11265,6 +11266,14 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         if (more) more.innerHTML = rows.length === _cmSize
             ? '<button class="cheat-btn" onclick="_cmPage++;cmLoad()">加载更多</button>'
             : '<span style="font-size:9px;color:var(--vmuted);">没有更多了</span>';
+    }
+    async function cmDeleteUser(username, btn) {
+        var n = prompt('删除用户「' + username + '」的全部评论?\n输入 DELETE 确认', '');
+        if (n !== 'DELETE') return;
+        btn.textContent = '...';
+        var ok = await _delete(SUPABASE_URL + '/rest/v1/video_comments?username=eq.' + escUrl(username));
+        if (ok) { toast('已清空该用户评论'); _cmPage = 0; document.getElementById('cmList').innerHTML = '<div class="vpi-spinner"></div>'; cmLoad(); }
+        else { btn.textContent = '清此人'; toast('失败（仅站主可操作）'); }
     }
     async function cmDelete(id, btn) {
         if (!confirm('删除这条评论?')) return;
