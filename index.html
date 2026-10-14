@@ -11269,7 +11269,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         aiChatAppend('assistant', '<span style="color:var(--vmuted);">🤖 思考中…</span>', true);
         var box = document.getElementById('aiChatBox');
         try {
-            var fnUrl = (typeof SUPABASE_URL !== 'undefined' ? SUPABASE_URL : '') + '/functions/v1/ai-search';
+            var fnUrl = (typeof SUPABASE_URL !== 'undefined' ? SUPABASE_URL : '') + '/functions/v1/bright-service'; // 注意：Supabase 里函数的 slug 是 bright-service
             // 历史只取纯文本（plain），最多 10 轮
             var histMsgs = [];
             for (var hi = 0; hi < _aiChatHist.length; hi++) {
