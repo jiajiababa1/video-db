@@ -952,10 +952,53 @@ def sb_chinese_authors(want=8):
     return authors
 
 
+def _author_key(name):
+    """作者名归一化 (去 @/前后空格/小写), 用于精确匹配。"""
+    return (name or "").strip().lstrip("@").lower()
+
+
+def sb_videos_by_author(author, limit=8):
+    """查库里该作者已有的 video_id (做详情页雪球种子)。
+    用 ilike 做大小写不敏感精确匹配 (不加通配符)。"""
+    want = (author or "").strip().lstrip("@")
+    if not want:
+        return []
+    # PostgREST 里 * 是 ilike 通配符, 作者名里若有直接去掉 (宁可少召回不错杀)
+    rows = _sb_get_json(
+        "/rest/v1/videos?select=video_id&author=ilike." + quote_plus(want.replace("*", ""))
+        + "&order=id.desc&limit=" + str(max(1, limit))) or []
+    out = []
+    for r in rows:
+        vid = (r.get("video_id") or "").strip()
+        if len(vid) > 1 and vid[0] == "v" and vid[1:].isdigit() and vid not in out:
+            out.append(vid)
+    return out
+
+
+# 详情雪球每轮最多抓几个详情页 (受 deadline 约束, 每个约 1~2 秒)
+AUTHOR_SNOWBALL_PAGES = _env_int("AUTHOR_SNOWBALL_PAGES", 12)
+
+
 def crawl_author(fetcher, author, deadline, seen):
-    """搜一个作者 (最多 DEEP_AUTHOR_PAGES 页), 返回新卡片 (section=author)。"""
+    """按作者抓作品 (两阶段, 返回新卡片, section=author)。
+
+    背景 (2026-10-21 实测): 源站 search.php 是按标题/推文召回, 不是按作者
+    召回 —— 搜 "91sp91" 一页 80 卡全是别人的视频 (作者字段五花八门),
+    旧版把整页照单全收, 真作者的作品反而 1 条都捞不到 (只碰巧命中标题
+    里带作者名的 1~2 条), 还把别人的视频污染进库。
+    修法:
+      A. 搜索页只保留作者精确匹配 (大小写不敏感) 的卡片;
+      B. 库里该作者已有视频 → 逐个抓 /v 详情页底部的同作者相关视频
+         (实测 27 张里 ~20 张是同作者), 新发现的同作者视频再做一轮种子
+         (雪球, 上限 AUTHOR_SNOWBALL_PAGES 页)。标题不含作者名的作品
+         在这里跑不掉。
+    """
     vids = []
-    url = BASE_URL + "/search.php?search=" + quote_plus(author) + "&u=ja"
+    want = _author_key(author)
+    if not want:
+        return vids
+    # ---- 阶段 A: 搜索页精确匹配 ----
+    url = BASE_URL + "/search.php?search=" + quote_plus(author.strip()) + "&u=ja"
     p = 0
     while url and p < DEEP_AUTHOR_PAGES and time.time() < deadline:
         h = fetcher.fetch(url, referer=BASE_URL + "/")
@@ -964,14 +1007,58 @@ def crawl_author(fetcher, author, deadline, seen):
         cards = parse_cards(h, url, "author")
         if not cards:
             break
-        new = [c for c in cards if c["video_id"] not in seen]
+        mine = [c for c in cards if _author_key(c.get("author")) == want]
+        new = [c for c in mine if c["video_id"] not in seen]
         for c in new:
             seen.add(c["video_id"])
         vids.extend(new)
         p += 1
-        log(f"  [作者深挖] @{author} 第{p}页 → {len(cards)} 卡片, +{len(new)} 新")
+        log(f"  [作者深挖] @{author} 搜索第{p}页 → {len(cards)} 卡片, 作者匹配 {len(mine)}, +{len(new)} 新")
         url = _next_url(url, find_more(h))
         time.sleep(0.35)
+    # ---- 阶段 B: 详情页同作者雪球 ----
+    if time.time() >= deadline:
+        return vids
+    seeds = [v["video_id"] for v in vids if str(v.get("video_id") or "")[1:].isdigit()]
+    try:
+        seeds += sb_videos_by_author(author, limit=8)
+    except Exception as e:
+        log(f"  [作者深挖] @{author} 查库种子异常: {e}", "WARN")
+    # 去重保序
+    uniq, queue = [], []
+    for s in seeds:
+        if s not in seen and s not in uniq:
+            uniq.append(s)
+    queue = uniq[:]
+    pages = 0
+    while queue and pages < AUTHOR_SNOWBALL_PAGES and time.time() < deadline:
+        sid = queue.pop(0)[1:]
+        pages += 1
+        try:
+            h = fetcher.fetch(BASE_URL + "/v" + sid, referer=BASE_URL + "/")
+        except Exception:
+            h = None
+        if not h:
+            continue
+        cards = parse_cards(h, BASE_URL + "/v" + sid, "author")
+        got = 0
+        for c in cards:
+            if _author_key(c.get("author")) != want:
+                continue
+            vid = c.get("video_id")
+            if not vid or vid in seen:
+                continue
+            seen.add(vid)
+            vids.append(c)
+            got += 1
+            # 新发现的同作者视频加入第二轮种子 (一轮即止: 只从首批种子扩展)
+            if pages <= 6 and len(queue) < AUTHOR_SNOWBALL_PAGES and str(vid)[1:].isdigit():
+                queue.append(vid)
+        if got:
+            log(f"  [作者深挖] @{author} 详情 /v{sid} → +{got} 同作者新视频")
+        time.sleep(0.35)
+    if pages:
+        log(f"  [作者深挖] @{author} 雪球 {pages} 个详情页, 累计 +{len(vids)} 新")
     return vids
 
 
