@@ -128,20 +128,23 @@ UA_POOL = [
 ]
 
 # 搜索词库: 用于翻出归档页看不到的历史内容 (归档只留最新 ~1600 条)
+# 2026-10-20 站主要求: 降权 AV/日文词, 主攻中文标题 (内射/精神小妹/潜规则等)。
+# 每轮 full 按小时轮换起点全量跑, 列表中中文占比 ≈ 长期入库中文占比。
 DEFAULT_SEARCH_TERMS = [
-    # 英文/通用
-    "nsfw", "sex", "porn", "nude", "naked", "hentai", "amateur", "jav",
-    "japanese", "asian", "leak", "lingerie", "bikini", "gym", "yoga",
-    "shower", "voyeur", "upskirt", "cosplay", "idol", "milf", "tease",
-    "spy", "toilet", "sex", "hot", "girl", "tiktok", "onlyfans", "av",
-    # 日文
-    "素人", "パンチラ", "盗撮", "おっぱい", "巨乳", "美乳", "エロ", "セクシー",
-    "水着", "競泳", "着エロ", "JD", "JK", "女子大生", "OL", "人妻", "熟女",
-    "ギャル", "コスプレ", "アイドル", "グラビア", "放尿", "フェラ", "オナニー",
-    "パイズリ", "中出し", "潮吹き", "乳首", "お尻", "パンスト", "ストッキング",
-    "ニーハイ", "制服", "ブルマ", "スク水", "体育", "部活", "マッサージ",
-    "整体", "温泉", "混浴", "露出", "野外", "電車", "痴漢", "風呂", "シャワー",
-    "筋トレ", "ジム", "脚", "下着",
+    # 中文 (主力: 内射/剧情/网红/制服类, 推文原文多为中文)
+    "内射", "中出", "颜射", "口爆", "深喉", "乳交", "后入", "潮吹",
+    "高潮", "自慰", "口交", "足交", "精神小妹", "潜规则", "探花",
+    "外围", "网红", "留学生", "反差", "绿帽", "换妻", "偷情", "出轨",
+    "援交", "包养", "空姐", "护士", "学生妹", "学妹", "少妇", "熟女",
+    "人妻", "按摩", "酒店", "同学", "邻居", "秘书", "模特", "主播",
+    # 中文通用兜底 (高召回: 这类词出现在大量中文推文里, 标题叫"自拍"之类的也能捞到)
+    "自拍", "原创", "情侣", "夫妻", "真实",
+    # 英文/通用 (通用词, 中英文推文都命中)
+    "amateur", "leak", "onlyfans", "tiktok", "asian", "lingerie",
+    "bikini", "cosplay", "milf", "tease", "spy", "voyeur",
+    # 日文 (少量保留, 降权)
+    "素人", "盗撮", "巨乳", "中出し", "フェラ", "オナニー",
+    "コスプレ", "JK",
     # 中文指定 (站主要求)
     "魏先生", "weilaoban888",
 ]
@@ -912,6 +915,43 @@ def sb_seed_mids(want=60):
     return seeds
 
 
+# ---------------------------------------------------------------- 中文作者优先深挖 (v14, 2026-10-20)
+# 背景: 关键词搜索只能捞到"标题含词"的视频, 标题叫"自拍"/无标题的中文视频
+# 永远捞不到。换思路: 库里已有中文标题视频 → 顺着这些中文作者挖他们的全部
+# 作品 (作者搜按作者名召回, 与标题无关, 标题叫什么都跑不掉)。
+CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+try:
+    CN_AUTHOR_RATIO = float(os.environ.get("CN_AUTHOR_RATIO", "0.7") or 0.7)
+except ValueError:
+    CN_AUTHOR_RATIO = 0.7
+CN_TITLE_SCAN = _env_int("CN_TITLE_SCAN", 2000)  # 每轮扫描多少行找中文作者
+
+
+def sb_chinese_authors(want=8):
+    """扫一段 (author,title), 把标题/作者名含中文的作者去重返回 (2 小时轮换 offset)。
+    PostgREST 单次最多 1000 行, 分页拉 CN_TITLE_SCAN 行, Python 侧过滤 CJK。"""
+    authors = []
+    bucket = int(time.time() // 7200)
+    base_off = (bucket * 1000) % 60000
+    for page in range((CN_TITLE_SCAN + 999) // 1000):
+        off = base_off + page * 1000
+        rows = _sb_get_json(
+            "/rest/v1/videos?select=author,title"
+            + "&author=not.is.null&author=neq.&author=neq.anon-user"
+            + "&order=id.desc&limit=1000&offset=" + str(off)) or []
+        if not rows:
+            break
+        for r in rows:
+            a = (r.get("author") or "").strip().lstrip("@")
+            if not a or a.lower() == "anon-user" or a in authors:
+                continue
+            if CJK_RE.search((r.get("title") or "") + a):
+                authors.append(a)
+                if len(authors) >= want:
+                    return authors
+    return authors
+
+
 def crawl_author(fetcher, author, deadline, seen):
     """搜一个作者 (最多 DEEP_AUTHOR_PAGES 页), 返回新卡片 (section=author)。"""
     vids = []
@@ -990,9 +1030,21 @@ def deep_crawl(fetcher, seen, budget, tag="深挖"):
     bucket = int(t0 // 7200)
     out = []
     if bucket % 2 == 0:
-        log(f"[{tag}] 本轮模式 A: 作者深挖 ({DEEP_AUTHORS} 个作者)")
-        rows = sb_author_slice()
+        log(f"[{tag}] 本轮模式 A: 作者深挖 ({DEEP_AUTHORS} 个作者, 中文优先)")
         authors = []
+        # 中文作者优先: 按 CN_AUTHOR_RATIO 预留名额 (标题/作者名含中文的作者)
+        cn_want = max(1, int(DEEP_AUTHORS * CN_AUTHOR_RATIO + 0.5)) if CN_AUTHOR_RATIO > 0 else 0
+        if cn_want > 0:
+            try:
+                cn_authors = sb_chinese_authors(cn_want)
+            except Exception as e:
+                cn_authors = []
+                log(f"  [作者深挖] 中文作者扫描异常: {e}", "WARN")
+            if cn_authors:
+                log("  [作者深挖] 中文作者优先 " + str(len(cn_authors)) + " 个: "
+                    + ",".join("@" + a for a in cn_authors))
+                authors.extend(cn_authors)
+        rows = sb_author_slice()
         for r in rows:
             a = (r.get("author") or "").strip().lstrip("@")
             if a and a.lower() != "anon-user" and a not in authors:
