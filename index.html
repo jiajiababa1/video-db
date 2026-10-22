@@ -7649,6 +7649,58 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         }
     }
 
+    // ---------- 真实字节进度 (作业日志字节数) ----------
+    // 原理: 作业每干活就往日志里写, 已产生的日志字节数是最接近真实工作量的可观测值。
+    // 百分比 = 本次主作业已产生的日志字节 / 上一次完整运行主作业的日志总字节 (同工作流)。
+    // 拿不到日志时返回 null: 调用方只显示状态文字, 绝不按时间/步骤编造百分比。
+    var _ghPrevLogBytes = {};
+    function _ghMainJob(jobs) {
+        var list = (jobs || []).filter(function (j) { return (j.name || '').indexOf('notify') < 0; });
+        for (var i = 0; i < list.length; i++) if (list[i].status === 'in_progress') return list[i];
+        for (var k = 0; k < list.length; k++) if (list[k].status !== 'skipped') return list[k];
+        return list[0] || null;
+    }
+    async function _ghJobLogBytes(jobId) {
+        try {
+            var r = await fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/actions/jobs/' + jobId + '/logs', { headers: ghHeaders() });
+            if (!r.ok) return null;
+            var b = await r.blob();
+            return b.size;
+        } catch (e) { return null; }
+    }
+    async function _ghPrevTotalBytes(workflow, excludeRunId) {
+        if (_ghPrevLogBytes[workflow]) return _ghPrevLogBytes[workflow];
+        try {
+            var lr = await fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/actions/workflows/' + workflow + '/runs?per_page=5&status=completed', { headers: ghHeaders() });
+            if (!lr.ok) return null;
+            var jj = await lr.json();
+            var prev = null;
+            (jj.workflow_runs || []).forEach(function (x) { if (!prev && x.id !== excludeRunId) prev = x; });
+            if (!prev) return null;
+            var jr = await fetch(prev.jobs_url, { headers: ghHeaders() });
+            if (!jr.ok) return null;
+            var main = _ghMainJob(((await jr.json()).jobs || []).filter(function (j) { return j.status === 'completed'; }));
+            if (!main) return null;
+            var bytes = await _ghJobLogBytes(main.id);
+            if (bytes) _ghPrevLogBytes[workflow] = bytes;
+            return bytes;
+        } catch (e) { return null; }
+    }
+    async function _ghRunByteProgress(workflow, run) {
+        try {
+            var jr = await fetch(run.jobs_url, { headers: ghHeaders() });
+            if (!jr.ok) return { pct: null, now: null, total: null };
+            var main = _ghMainJob((await jr.json()).jobs || []);
+            if (!main) return { pct: null, now: null, total: null };
+            if (main.status === 'completed') return { pct: 100, now: null, total: null };
+            var now = await _ghJobLogBytes(main.id);
+            var total = await _ghPrevTotalBytes(workflow, run.id);
+            if (now == null || !total) return { pct: null, now: now, total: total };
+            return { pct: Math.min(97, Math.round(now / total * 100)), now: now, total: total };
+        } catch (e) { return { pct: null, now: null, total: null }; }
+    }
+    function _fmtKB(n) { return n == null ? '?' : (n < 1024 ? n + 'B' : (n < 1048576 ? (n / 1024).toFixed(1) + 'KB' : (n / 1048576).toFixed(2) + 'MB')); }
+
     function startGhPolling() {
         if (ghTimer !== null || !document.body.classList.contains('dark-mode')) return;
         ghPollTick();
@@ -7677,29 +7729,18 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 stopGhPolling(); updateGhInfo(''); return;
             }
 
-            // 拉取 jobs -> 步骤进度 -> 百分比
-            var pct = status === 'completed' ? 100 : 5;
-            var liveSteps = 0, doneSteps = 0, jobActive = 0, jobDone = 0;
-            try {
-                var jr = await fetch(run.jobs_url, { headers: h });
-                if (jr.ok) {
-                    var jj = await jr.json();
-                    (jj.jobs || []).forEach(function (j) {
-                        if (j.status === 'completed') { jobDone++; j.steps.forEach(function () { doneSteps++; liveSteps++; }); }
-                        else { jobActive++; j.steps.forEach(function (s) { liveSteps++; if (s.status !== 'in_progress') doneSteps++; }); }
-                    });
-                    var totalJobs = jobActive + jobDone;
-                    if (liveSteps) pct = Math.round(doneSteps / liveSteps * 100);
-                    else if (totalJobs) pct = Math.round(jobDone / totalJobs * 100);
-                }
-            } catch (e) {}
+            // 进度按真实字节: 本次作业日志字节 / 上次完整运行日志总字节。
+            // 旧版按步骤数算 (未开始的步骤也被算作完成) + 起始假 5%, 数字与真实工作量无关, 已废弃。
+            var bp = status === 'completed' ? { pct: 100, now: null, total: null } : await _ghRunByteProgress(ghPollWorkflow || GH_WORKFLOW, run);
+            var pctTxt = bp.pct == null ? ' (进度统计中)' : ('  ' + bp.pct + '%');
+            var byteTxt = (bp.now != null && bp.total) ? (' · 日志 ' + _fmtKB(bp.now) + '/' + _fmtKB(bp.total)) : '';
 
             var taskName = (ghPollKind === 'text') ? '云端补文案' : '云端';
             var label = status === 'completed' ? ('已完成' + (concl === 'success' ? ' ✅' : ' (' + concl + ')')) : (status === 'queued' ? '排队中' : (ghPollKind === 'text' ? '补文中' : '解析中'));
             // 叠加后端已落库的实际数据 (videos_saved / mp4_resolved)
             var extra = '';
             if ($stat) extra = ' · 数据 ' + ($stat.textContent || '');
-            updateGhInfo('🤖 ' + taskName + ' ' + label + '  ' + pct + '%' + extra);
+            updateGhInfo('🤖 ' + taskName + ' ' + label + pctTxt + byteTxt + extra);
 
             if (status === 'completed') {
                 stopGhPolling();
@@ -8009,7 +8050,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         toast('☁️ 云端作者抓取已触发, 等待运行…');
         authorCloudPolling = true; authorCloudRunId = null;
         var ps = document.getElementById('asPollStop'); if (ps) ps.disabled = false;
-        asBar(5);
+        asBar(0);
         var runId = await asFindNewRun(t0);
         if (!runId) {
             asCloudSay('⚠️ 2 分钟没等到运行记录, 请去 GitHub Actions 里看 (任务可能已在跑)。');
@@ -8055,10 +8096,13 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 var run = await rr.json();
                 var st = run.status || '';
                 if (st === 'completed') { asCloudFinish(run, authors, maxPages, t0); return; }
-                asBar(st === 'queued' ? 8 : 8 + Math.min(80, Math.round((Date.now() - t0) / 1000 / 12)));
+                // 进度按真实字节: 本次作业日志字节 / 上次完整运行日志总字节 (见 _ghRunByteProgress)。
+                // 旧版是 8 + 已用秒数/12 的纯时间假进度, 已废弃; 拿不到真实字节时进度条保持不动。
+                var bp = st === 'queued' ? { pct: null, now: null, total: null } : await _ghRunByteProgress(GH_AUTHOR_WORKFLOW, run);
+                if (bp.pct != null) asBar(bp.pct);
                 var el = Math.round((Date.now() - t0) / 1000);
                 var log = document.getElementById('asCloudLog');
-                if (log) log.innerHTML = esc(st === 'queued' ? '排队中…' : '云端抓取中… 已用时 ' + Math.floor(el / 60) + '分' + (el % 60) + '秒') + '<br>' +
+                if (log) log.innerHTML = esc(st === 'queued' ? '排队中…' : '云端抓取中… 已用时 ' + Math.floor(el / 60) + '分' + (el % 60) + '秒' + (bp.pct != null ? ' · 进度 ' + bp.pct + '% (日志 ' + _fmtKB(bp.now) + '/' + _fmtKB(bp.total) + ')' : ' · 进度统计中')) + '<br>' +
                     esc('运行 #' + run.run_number + (run.html_url ? ' (详情见 GitHub Actions)' : ''));
             }
             if (authorCloudPolling) {
@@ -8219,8 +8263,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
                 if (ri % 2 === 1) await new Promise(function (r) { setTimeout(r, 600); });
             }
         } catch (e) { scrapeStatus = 'error'; asLog('出错: ' + ((e && e.message) || e)); }
-        asBar(100);
         if (authorScrapeCancel) scrapeStatus = 'cancelled';
+        if (scrapeStatus === 'done') asBar(100); // 出错/取消时停在真实到达的位置, 不假装走完
         asLog('完成: 发现 ' + found + ' · 新增 ' + saved + ' · 已存在 ' + existed + ' · MP4 ' + resolved + ' · 补文案 ' + textFixed);
         toast('作者抓取完成: 发现 ' + found + ' / 新增 ' + saved);
         try {
