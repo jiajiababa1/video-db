@@ -59,7 +59,6 @@
 <meta name="format-detection" content="telephone=no">
 <link rel="apple-touch-icon" href="https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png">
 <link rel="icon" sizes="192x192" href="https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png">
-<link rel="manifest" href="https://user.uploads.dev/file/6671c3eb28c6f02f5c5a06c7c55e68d5.txt">
 <meta name="build-iso" content="2026-10-10T18:08:59.273Z">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
@@ -2438,7 +2437,6 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         <div id="announceBanner" style="display:none;background:rgba(200,164,92,0.08);border-bottom:1px solid rgba(200,164,92,0.15);padding:8px 0;font-size:11px;color:var(--vprimary);overflow:hidden;white-space:nowrap;font-family:var(--font-sans);">
             <span id="announceText" style="display:inline-block;padding-left:100%;animation:marquee 20s linear infinite;"></span>
         </div>
-        <style>@keyframes marquee { from { transform:translateX(0); } to { transform:translateX(-100%); } }</style>
         <div id="notificationBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(200,164,92,0.95);color:#1a1808;padding:10px 20px;text-align:center;font-size:13px;font-weight:600;font-family:var(--font-sans);">
             <span id="notifText"></span>
             <button onclick="dismissNotification()" style="margin-left:12px;padding:4px 12px;border-radius:var(--radius-sm);border:1px solid #1a1808;background:transparent;color:#1a1808;cursor:pointer;font-weight:600;">确认收到</button>
@@ -8560,7 +8558,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         var date = v.scraped_at ? new Date(v.scraped_at).toLocaleDateString('zh-CN') : '';
         var thumb = v.thumbnail_url || '';
         var thumbHtml = thumb
-            ? '<img class="ar-thumb" src="' + esc(thumb) + '" loading="lazy" onerror="this.style.display=\'none\'">'
+            ? '<img class="ar-thumb" src="' + esc(thumb) + '" alt="" loading="lazy" decoding="async" onerror="this.style.display=\'none\'">'
             : '<div class="ar-thumb" style="display:flex;align-items:center;justify-content:center;font-size:10px;color:#6b6760;">N/A</div>';
         row.innerHTML =
             thumbHtml +
@@ -9642,7 +9640,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             for (var i = 0; i < data.length; i++) {
                 var d = data[i];
                 html += '<div class="vpi-related-item" onclick="playRelatedVideo(\'' + esc(d.video_id) + '\')">';
-                html += '<img class="ri-thumb" src="' + esc(d.thumbnail_url||'') + '" onerror="this.style.display=\'none\'" loading="lazy">';
+                html += '<img class="ri-thumb" src="' + esc(d.thumbnail_url||'') + '" onerror="this.style.display=\'none\'" alt="" loading="lazy" decoding="async">';
                 html += '<span class="ri-title">' + esc(d.title || d.video_id) + '</span>';
                 html += '</div>';
             }
@@ -11264,7 +11262,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         if (!noSave) _aiChatHist.push({ role: role, html: html });
     }
     function aiChatVideoCard(v) {
-        var thumb = v.thumbnail_url ? '<img src="' + esc(v.thumbnail_url) + '" style="width:56px;height:40px;object-fit:cover;border-radius:4px;" loading="lazy">' : '';
+        var thumb = v.thumbnail_url ? '<img src="' + esc(v.thumbnail_url) + '" style="width:56px;height:40px;object-fit:cover;border-radius:4px;" alt="" loading="lazy" decoding="async">' : '';
         return '<div onclick="closeAdminPanel();location.hash=\'#/video/' + esc(v.video_id) + '\'" style="display:flex;gap:8px;align-items:center;padding:6px;border:1px solid var(--vborder);border-radius:6px;margin-top:6px;cursor:pointer;background:rgba(255,255,255,0.02);">' +
             thumb +
             '<div style="flex:1;min-width:0;"><div style="font-size:11px;color:var(--vtext);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(v.title || v.video_id) + '</div>' +
@@ -13928,7 +13926,7 @@ function getLoginToken() {
         if (vid) {
             mediaHtml = '<video src="' + esc(w.file_url) + '" controls playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" preload="metadata"' + (w.cover_url ? ' poster="' + esc(w.cover_url) + '"' : '') + ' style="width:100%;display:block;background:#000;max-height:400px;"></video>';
         } else if (w.cover_url) {
-            mediaHtml = '<div style="height:150px;background:#0a0a0c;overflow:hidden;"><img loading="lazy" src="' + esc(w.cover_url) + '" style="width:100%;height:100%;object-fit:cover;"></div>';
+            mediaHtml = '<div style="height:150px;background:#0a0a0c;overflow:hidden;"><img alt="" loading="lazy" decoding="async" src="' + esc(w.cover_url) + '" style="width:100%;height:100%;object-fit:cover;"></div>';
         } else {
             mediaHtml = '<div style="height:150px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0e0e12,#121210);color:var(--vmuted);font-size:28px;">🎨</div>';
         }
@@ -14385,7 +14383,7 @@ function getLoginToken() {
             var inRole = st.mems[gr.id] || '';
             var badge = inRole === 'owner' ? ' <span style="color:#e04040;font-size:9px;">群主</span>' : (inRole === 'admin' ? ' <span style="color:#4a9adf;font-size:9px;">管理员</span>' : '');
             h += '<div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--vborder);border-radius:12px;margin-bottom:8px;background:rgba(14,14,18,0.5);">' +
-                '<div style="width:40px;height:40px;border-radius:50%;background:rgba(200,164,92,0.15);display:flex;align-items:center;justify-content:center;font-size:18px;overflow:hidden;flex-shrink:0;">' + (gr.avatar_url ? '<img src="' + esc(gr.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;">' : '💬') + '</div>' +
+                '<div style="width:40px;height:40px;border-radius:50%;background:rgba(200,164,92,0.15);display:flex;align-items:center;justify-content:center;font-size:18px;overflow:hidden;flex-shrink:0;">' + (gr.avatar_url ? '<img alt="" loading="lazy" decoding="async" src="' + esc(gr.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;">' : '💬') + '</div>' +
                 '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--vtext);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(gr.name) + badge + '</div>' +
                 '<div style="font-size:10px;color:var(--vmuted);">群主 @' + esc(gr.owner) + (gr.entry_mode === 'question' ? ' · 需回答问题入群' : ' · 直接入群') + '</div></div>' +
                 (inRole ? '<button class="cheat-btn" onclick="openBoardRoom(' + gr.id + ')">进入</button>' : '<button class="cheat-btn accent" onclick="openBoardRoom(' + gr.id + ')">加入</button>') +
