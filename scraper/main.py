@@ -61,6 +61,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 
 try:
+    from lang_util import classify_title, cn_score, is_chinese
+except Exception:  # lang_util 缺失时降级为旧行为 (仅按 CJK 判中文, 不排序)
+    def classify_title(text):
+        return ("zh", 0.5) if re.search(r"[\u4e00-\u9fff]", text or "") else ("other", 0.0)
+    def cn_score(text):
+        return 0.5
+    def is_chinese(text):
+        return classify_title(text)[0] == "zh"
+
+try:
     from curl_cffi import requests as creq  # 浏览器 TLS 指纹 (curl_cffi)
 except Exception:
     creq = None
@@ -804,10 +814,22 @@ def crawl_ranking(fetcher, deadline, seen):
     return vids
 
 
+SEARCH_STALE_PAGES = _env_int("SEARCH_STALE_PAGES", 2)  # 一个词连续 N 页无新卡就停 (省预算给别的词)
+
+
+def _terms_cn_first(terms):
+    """词表按语言分组排序: 中文词 → 其他词 → 日文词 (组内保持轮换顺序)。
+    时间预算永远先花在中文词上, 不再被英文/日文词插队消耗。"""
+    zh = [t for t in terms if classify_title(t)[0] == "zh"]
+    ja = [t for t in terms if classify_title(t)[0] == "ja"]
+    rest = [t for t in terms if classify_title(t)[0] not in ("zh", "ja")]
+    return zh + rest + ja
+
+
 def crawl_search(fetcher, deadline, seen):
     vids = []
-    terms = _rotated_terms()
-    log(f"阶段3: 关键词搜索 ({len(terms)} 个词) — 直达历史库")
+    terms = _terms_cn_first(_rotated_terms())
+    log(f"阶段3: 关键词搜索 ({len(terms)} 个词, 中文词优先) — 直达历史库")
     for term in terms:
         if time.time() > deadline:
             log("  搜索时间预算用完, 停止")
@@ -815,6 +837,7 @@ def crawl_search(fetcher, deadline, seen):
         url = BASE_URL + "/search.php?search=" + quote_plus(term) + "&u=ja"
         p = 0
         got = 0
+        stale = 0
         while url and p < SEARCH_MAX_PAGES and time.time() < deadline:
             h = fetcher.fetch(url, referer=BASE_URL + "/")
             if not h or len(h) < 200:
@@ -827,7 +850,10 @@ def crawl_search(fetcher, deadline, seen):
                 seen.add(c["video_id"])
             vids.extend(new)
             got += len(new)
+            stale = stale + 1 if not new else 0
             p += 1
+            if stale >= SEARCH_STALE_PAGES:
+                break  # 连续多页全是重复卡: 这个词的历史区已翻完, 别陪跑
             url = _next_url(url, find_more(h))
             time.sleep(0.3)
         log(f"  [搜索] {term}: {p} 页, +{got} 新 (累计 {len(vids)})")
@@ -928,9 +954,15 @@ CN_TITLE_SCAN = _env_int("CN_TITLE_SCAN", 2000)  # 每轮扫描多少行找中�
 
 
 def sb_chinese_authors(want=8):
-    """扫一段 (author,title), 把标题/作者名含中文的作者去重返回 (2 小时轮换 offset)。
-    PostgREST 单次最多 1000 行, 分页拉 CN_TITLE_SCAN 行, Python 侧过滤 CJK。"""
-    authors = []
+    """扫一段 (author,title), 返回中文作者 (按中文作品数从多到少)。
+
+    v15 改法 (原版两个问题):
+      1. 原版只看 CJK_RE — 日文标题全是汉字+假名, 会把日文作者误判成"中文作者",
+         名额被日文作者占走。改用 lang_util.classify_title (含假名判日文)。
+      2. 原版凑满 want 个就停, 先到先得 — 改为整段扫完按中文作品计数排序,
+         优先挖真正高产的中文作者 (一条中文标题也入池, 但排在后面)。
+    PostgREST 单次最多 1000 行, 分页拉 CN_TITLE_SCAN 行 (2 小时轮换 offset)。"""
+    counts = {}
     bucket = int(time.time() // 7200)
     base_off = (bucket * 1000) % 60000
     for page in range((CN_TITLE_SCAN + 999) // 1000):
@@ -943,13 +975,12 @@ def sb_chinese_authors(want=8):
             break
         for r in rows:
             a = (r.get("author") or "").strip().lstrip("@")
-            if not a or a.lower() == "anon-user" or a in authors:
+            if not a or a.lower() == "anon-user":
                 continue
-            if CJK_RE.search((r.get("title") or "") + a):
-                authors.append(a)
-                if len(authors) >= want:
-                    return authors
-    return authors
+            title = r.get("title") or ""
+            if is_chinese(title) or (not title and is_chinese(a)):
+                counts[a] = counts.get(a, 0) + 1
+    return [a for a, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:want]]
 
 
 def _author_key(name):
@@ -1229,7 +1260,7 @@ def sb_pending(limit):
         take = min(page, limit - len(rows))
         url = (
             SUPABASE_URL + "/rest/v1/videos"
-            + "?select=video_id,monsnode_video_id"
+            + "?select=video_id,monsnode_video_id,title"
             + "&has_mp4=is.false"
             + "&monsnode_video_id=not.is.null"
             + "&removed=not.is.true"
@@ -1252,7 +1283,13 @@ def sb_pending(limit):
         offset += len(batch)
         if len(batch) < take:
             break
-    return [x for x in rows if (x.get("monsnode_video_id") or "").strip().isdigit()]
+    out = [x for x in rows if (x.get("monsnode_video_id") or "").strip().isdigit()]
+    # 中文优先解析 (v15): 解析是最贵的环节 (twjn 抓取常被 CF 拦), 队列不再纯按
+    # 时间排 — 同一批里先解析中文标题的, 无标题的居中 (不埋没), 日文/英文垫后。
+    # 只是重排不丢弃, 全部仍会解析; CN_PRIORITY_RESOLVE=0 可关。
+    if os.environ.get("CN_PRIORITY_RESOLVE", "1") != "0" and len(out) > 1:
+        out.sort(key=lambda x: -cn_score(x.get("title") or ""))
+    return out
 
 
 def sb_save(videos):
@@ -1697,6 +1734,9 @@ def scrape_all():
             log(f"  详情相关异常: {e}", "WARN")
 
         stats["videos_found"] = len(all_v)
+        if all_v:
+            zh_n = sum(1 for v in all_v if is_chinese(v.get("title") or ""))
+            log(f"  本轮中文标题占比: {zh_n}/{len(all_v)} = {zh_n * 100 // len(all_v)}%")
         log(f"阶段4: 保存 {len(all_v)} 条到数据库 ...")
         saved = sb_save(all_v)
         stats["videos_saved"] = saved
