@@ -627,127 +627,239 @@ def parse_cards(html_text, source_url, section):
     return out
 
 
-# ---------------------------------------------------------------- AV4 外链聚合
-# https://jp.av4us.asia/hot/LONG- 是外链聚合页 (站内/客户端/云端三端共用同一解析与 ID 方案)。
-# video_id: "av4_" + sha1(real_url)[:12]。外链无 twjn 可解析, resolve 队列会自动跳过。
-AV4_LIST_URLS = [u.strip() for u in os.environ.get("AV4_URLS", "https://jp.av4us.asia/hot/LONG-").split(",") if u.strip()]
-RE_AV4 = re.compile(r'<div class="vid"><a title="([^"]*)" href="([^"]+)"[\s\S]*?<img[^>]*src="([^"]+)"[\s\S]*?<div class="dwc">([\s\S]*?)</div>', re.S)
+# ---------------------------------------------------------------- 新来源: twidouga (栏目 twidouga)
+# twidouga.net 是 X 视频排行榜/实时聚合站, 列表页服务端直出 data 属性:
+#   排行榜 .rank-item / 实时页 .grid-item 的开标签上带 data-video (mp4 直链;
+#   .grid-item 另有 data-video-lq 低清版) / data-image (缩略图) /
+#   data-url (推特链接 https://x.com/<作者>/status/<推文ID>) / data-tweetid (实时页)。
+# 字段一次拿齐, 无需二次解析: 入库即 has_mp4=True 并带 mp4_url。
+TD_BASE = "https://www.twidouga.net"
+TD_LIST_URLS = [
+    TD_BASE + "/jp/ranking_t1.php",
+    TD_BASE + "/jp/ranking_t2.php",
+    TD_BASE + "/jp/ranking_tweek.php",
+    TD_BASE + "/jp/ranking_tmonth.php",
+    TD_BASE + "/jp/ranking_hot.php",
+    TD_BASE + "/jp/realtime_t1.php",
+]
+TD_BUDGET = _env_int("TD_BUDGET", 240)   # twidouga 每轮时间预算(秒)
+TV_BUDGET = _env_int("TV_BUDGET", 240)   # twivideo 每轮时间预算(秒)
 
-def _av4_real(href):
-    if href.startswith("/v/"):
-        return "http" + href[3:]
-    return href
+RE_TD_TAG = re.compile(r'<div\b[^>]*class="[^"]*(?:rank-item|grid-item)[^"]*"[^>]*>', re.S)
 
-def parse_av4(html_text, source_url):
+
+def _td_attr(tag, name):
+    m = re.search(r'\bdata-' + name + r'="([^"]*)"', tag)
+    return htmlmod.unescape(m.group(1)).strip() if m else ""
+
+
+def parse_twidouga(html_text, source_url):
+    """解析 twidouga 列表页 (排行榜 .rank-item / 实时页 .grid-item), 结构见上。"""
     out, seen = [], set()
-    for m in RE_AV4.finditer(html_text or ""):
-        title = re.sub(r"\s*\[[^\]]*\]\s*$", "", m.group(1) or "").strip()
-        real = _av4_real(m.group(2) or "")
-        if not real.startswith("http"):
+    for m in RE_TD_TAG.finditer(html_text or ""):
+        tag = m.group(0)
+        url = _td_attr(tag, "url")
+        mp4 = _td_attr(tag, "video") or _td_attr(tag, "video-lq")
+        tid = _td_attr(tag, "tweetid")
+        screen = ""
+        if url:
+            _s, _t = extract_tweet_ref(url)
+            screen = _s or ""
+            if not tid:
+                tid = _t or ""
+        if not tid:
             continue
-        thumb = m.group(3) or ""
-        if thumb.startswith("//"):
-            thumb = "https:" + thumb
-        dwc = re.sub(r"<[^>]*>", "", (m.group(4) or "").replace("&nbsp;", " "))
-        dwc = re.sub(r"^[\s]+", "", dwc).strip()
-        vid = "av4_" + hashlib.sha1(real.encode()).hexdigest()[:12]
+        vid = "td_" + tid
         if vid in seen:
             continue
         seen.add(vid)
-        out.append({
+        rec = {
             "video_id": vid,
             "monsnode_video_id": "",
-            "title": title,
-            "thumbnail": thumb,
-            "author": "",
-            "url": real,
-            "duration": dwc,
+            "title": "",
+            "thumbnail": _td_attr(tag, "image"),
+            "author": ("@" + screen) if screen else "",
+            "url": url or (TD_BASE + "/"),
+            "duration": "",
             "source_page": source_url,
-            "source_section": "av4",
-            "has_mp4": False,
+            "source_section": "twidouga",
+            "has_mp4": bool(mp4),
             "needs_rescrape": False,
-        })
+        }
+        if mp4:
+            rec["mp4_url"] = mp4
+        out.append(rec)
     return out
 
-def crawl_av4(fetcher, deadline, seen):
+
+def crawl_twidouga(fetcher, deadline, seen):
     vids = []
-    for url in AV4_LIST_URLS:
+    for url in TD_LIST_URLS:
         if time.time() > deadline:
             break
         try:
-            h = fetcher.fetch(url, referer=url)
+            h = fetcher.fetch(url, referer=TD_BASE + "/")
         except Exception:
             h = None
         if not h:
             continue
-        cards = parse_av4(h, url)
+        cards = parse_twidouga(h, url)
         new = [c for c in cards if c["video_id"] not in seen]
         for c in new:
             seen.add(c["video_id"])
         vids.extend(new)
-        log(f"  [av4] {url} -> {len(cards)} cards, +{len(new)} new")
+        log(f"  [twidouga] {url} -> {len(cards)} cards, +{len(new)} new")
         time.sleep(0.35)
     return vids
 
-# ---------------------------------------------------------------- AV4 直链回填
-# 外链详情页分三类:
-#  A. 静态直给 (pornolomka/chezcathy/getducked 等 WP 站): <video>/<source> 里直接嵌 mp4。
-#  B. JSON 给流: clariontoday/incofoods/faadforum 系在 ld+json VideoObject.contentUrl 里放
-#     m3u8; 9188porn 系 (maccms) 在播放器 JSON "url" 里放 m3u8/mp4 (斜杠被转义为 \/)。
-#  C. JS/墙 (javwind Cloudflare, mtd4u 跳转盾, javvhub 正片走 ajax): 静态抓不到 -> miss,
-#     只更新 mp4_checked_at, 下轮继续轮换。javvhub 静态 HTML 里只有一个前贴片广告 mp4,
-#     必须用 BAD 规则拦下, 宁可 miss 不写脏数据。
-# >>AV4EXTRACT-START
-RE_AV4_MP4 = re.compile(r"https?://[^\s\"'<>]+\.mp4[^\s\"'<>]*", re.I)
-RE_AV4_M3U8 = re.compile(r"https?://[^\s\"'<>]+\.m3u8[^\s\"'<>]*", re.I)
-RE_AV4_SOURCE = re.compile(r'<source[^>]+src="([^"]+)"', re.I)
-RE_AV4_VIDEO_SRC = re.compile(r'<video[^>]+src=["\']([^"\']+)', re.I)
-RE_AV4_OGVIDEO = re.compile(r'<meta[^>]+property=["\']og:video(?::secure_url)?["\'][^>]+content=["\']([^"\']+)', re.I)
-RE_AV4_CONTENTURL = re.compile(r'"contentUrl"\s*:\s*"([^"]+)"', re.I)
-RE_AV4_PLAYERURL = re.compile(r'"url"\s*:\s*"((?:https?:)?\\?/\\?/[^"]+?\.(?:m3u8|mp4)[^"]*)"', re.I)
-RE_AV4_BAD = re.compile(r"/ad/|/ads/|advert|thumb|preview|sample|trailer|poster|screenshot|/blank|loading|play\.php", re.I)
 
-def _av4_clean(u):
-    if not u:
-        return ""
-    u = htmlmod.unescape(u).replace("\\/", "/").replace("&amp;", "&").strip()
-    if u.startswith("//"):
-        u = "https:" + u
-    return u[:1000]
+# ---------------------------------------------------------------- 新来源: twivideo (栏目 twivideo)
+# twivideo.net 列表走 ajax: 先 GET 首页拿 cookie, POST ajax_view_token.php 得
+# view_token, 再 POST view_lists.php (offset 步进 20) 得 HTML 片段; 片段每卡只有
+# 站内 ID + 缩略图, 还要逐卡补两跳 (HEAD 不跟随重定向, 读 Location 头):
+#   /api/link.php?id=<站内ID>  -> Location 是推特链接 (得作者 + 推文ID)
+#   /api/video.php?id=<站内ID> -> Location 是 mp4 直链
+# 站点要 cookie 会话, 用独立 httpx.Client, 不套 Fetcher 的多层传输。
+TV_BASE = "https://twivideo.net"
+TWIVIDEO_MAX = _env_int("TWIVIDEO_MAX", 60)   # twivideo 每轮最多抓多少条
 
-def av4_extract_mp4(html_text):
-    """按权威度依次提取, 首个通过过滤的胜出:
-    1) JSON-LD VideoObject contentUrl (B 类站内直给)
-    2) maccms 播放器 JSON "url"
-    3) og:video
-    4) <video src> / <source src>
-    5) 裸 m3u8
-    6) 裸 mp4"""
-    if not html_text:
+RE_TV_ID = re.compile(r'href="/api/video\.php\?id=(\d+)"')
+RE_TV_IMG = re.compile(r'<img[^>]+src="([^"]+)"')
+
+
+def parse_twivideo(html_text):
+    """解析 view_lists.php 返回的 HTML 片段 -> [(站内ID, 缩略图), ...]"""
+    out, seen = [], set()
+    for chunk in (html_text or "").split('class="art_li')[1:]:
+        chunk = chunk[:2500]
+        m = RE_TV_ID.search(chunk)
+        if not m:
+            continue
+        sid = m.group(1)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        im = RE_TV_IMG.search(chunk)
+        out.append((sid, htmlmod.unescape(im.group(1)).strip() if im else ""))
+    return out
+
+
+def _tv_token(resp):
+    """从 ajax_view_token.php 的 JSON 里取 view_token。"""
+    if resp is None:
         return ""
-    m = RE_AV4_CONTENTURL.search(html_text)
-    if m:
-        u = _av4_clean(m.group(1))
-        if u.startswith("http"):
-            return u
-    m = RE_AV4_PLAYERURL.search(html_text)
-    if m:
-        u = _av4_clean(m.group(1))
-        if u.startswith("http") and not RE_AV4_BAD.search(u):
-            return u
-    for rx in (RE_AV4_OGVIDEO, RE_AV4_VIDEO_SRC, RE_AV4_SOURCE):
-        m = rx.search(html_text)
-        if m:
-            u = _av4_clean(m.group(1))
-            if u.startswith("http") and not RE_AV4_BAD.search(u):
-                return u
-    for rx in (RE_AV4_M3U8, RE_AV4_MP4):
-        for m in rx.finditer(html_text):
-            u = _av4_clean(m.group(0))
-            if u.startswith("http") and not RE_AV4_BAD.search(u):
-                return u
-    return ""
-# >>AV4EXTRACT-END
+    try:
+        j = resp.json()
+    except Exception:
+        j = None
+    if isinstance(j, dict):
+        for k in ("view_token", "token", "viewToken"):
+            if j.get(k):
+                return str(j[k])
+    elif isinstance(j, str) and j.strip():
+        return j.strip()
+    m = re.search(r"[0-9a-fA-F]{24,}", resp.text or "")
+    return m.group(0) if m else ""
+
+
+def _tv_location(client, url):
+    """HEAD (不跟随重定向) 读 Location; 个别服务器对 HEAD 返回 405 时用 GET 兜底 (同样不跟随)。"""
+    try:
+        r = client.head(url, follow_redirects=False, timeout=REQUEST_TIMEOUT)
+        loc = (r.headers.get("location") or "").strip()
+        if loc:
+            return loc
+    except Exception:
+        pass
+    try:
+        r = client.get(url, follow_redirects=False, timeout=REQUEST_TIMEOUT)
+        return (r.headers.get("location") or "").strip()
+    except Exception:
+        return ""
+
+
+def _tv_record(client, sid, thumb):
+    tweet = _tv_location(client, f"{TV_BASE}/api/link.php?id={sid}")
+    mp4 = _tv_location(client, f"{TV_BASE}/api/video.php?id={sid}")
+    screen, tid = extract_tweet_ref(tweet) if tweet else (None, None)
+    if mp4 and not mp4.startswith("http"):
+        mp4 = urljoin(TV_BASE + "/", mp4)
+    rec = {
+        "video_id": "tv_" + (tid or sid),
+        "monsnode_video_id": "",
+        "title": "",
+        "thumbnail": thumb,
+        "author": ("@" + screen) if screen else "",
+        "url": tweet if tweet else f"{TV_BASE}/api/video.php?id={sid}",
+        "duration": "",
+        "source_page": f"{TV_BASE}/api/video.php?id={sid}",
+        "source_section": "twivideo",
+        "has_mp4": bool(mp4),
+        "needs_rescrape": False,
+    }
+    if mp4:
+        rec["mp4_url"] = mp4
+    return rec
+
+
+def crawl_twivideo(fetcher, deadline, seen):
+    """签名与其余 crawl_* 一致 (fetcher, deadline, seen); twivideo 要 cookie 会话,
+    实际走自建 httpx.Client, fetcher 不直接参与。"""
+    vids = []
+    client = httpx.Client(timeout=REQUEST_TIMEOUT, follow_redirects=True,
+                          headers=_headers(TV_BASE + "/"))
+    try:
+        try:
+            client.get(TV_BASE + "/")
+            tr = client.post(TV_BASE + "/templates/ajax_view_token.php", data={},
+                             headers={"Referer": TV_BASE + "/",
+                                      "X-Requested-With": "XMLHttpRequest"})
+            token = _tv_token(tr)
+        except Exception as e:
+            log(f"  [twivideo] 取 view_token 失败: {str(e)[:100]}", "WARN")
+            return vids
+        if not token:
+            log("  [twivideo] view_token 为空, 本轮跳过", "WARN")
+            return vids
+        offset = 0
+        while len(vids) < TWIVIDEO_MAX and time.time() < deadline:
+            data = {
+                "offset": str(offset), "limit": "20", "tag": "null",
+                "type": "ranking", "order": "24", "le": "1000", "ty": "p6",
+                "myarray": "[]", "offset_int": str(offset), "view_token": token,
+            }
+            try:
+                r = client.post(TV_BASE + "/templates/view_lists.php", data=data,
+                                headers={"Referer": TV_BASE + "/",
+                                         "X-Requested-With": "XMLHttpRequest"})
+                frag = r.text if r.status_code == 200 else ""
+            except Exception:
+                frag = ""
+            cards = parse_twivideo(frag)
+            if not cards:
+                break
+            fresh = 0
+            for sid, thumb in cards:
+                if len(vids) >= TWIVIDEO_MAX or time.time() > deadline:
+                    break
+                try:
+                    rec = _tv_record(client, sid, thumb)
+                except Exception:
+                    continue
+                time.sleep(0.25)
+                if rec["video_id"] in seen:
+                    continue
+                seen.add(rec["video_id"])
+                vids.append(rec)
+                fresh += 1
+            log(f"  [twivideo] offset={offset} -> {len(cards)} cards, +{fresh} new (累计 {len(vids)})")
+            offset += 20
+            if len(cards) < 20:
+                break
+    finally:
+        client.close()
+    return vids
+
 
 def find_more(html_text):
     """返回页面底部 'More' 按钮指向的相对 URL (无则 None)"""
@@ -1335,17 +1447,24 @@ def sb_save(videos):
             for k_src, k_dst in (("title", "title"), ("thumbnail", "thumbnail"), ("author", "author")):
                 if not ex.get(k_dst) and v.get(k_src):
                     ex[k_dst] = v[k_src]
+            if not ex.get("mp4_url") and v.get("mp4_url"):
+                ex["mp4_url"] = v["mp4_url"]
+                ex["has_mp4"] = True
+                ex["needs_rescrape"] = False
 
     records = []
     for vid, v in merged.items():
+        # 带 mp4_url 的记录 (新来源抓取时直给): 按 resolve 写回的口径存 ——
+        # duration 与 mp4_url 都写完整 mp4 直链; 不带的记录保持原有行为。
+        mp4 = (v.get("mp4_url") or "").strip()
         records.append({
             "video_id": vid,
             "title": (v.get("title") or "")[:500],
             "thumbnail_url": (v.get("thumbnail") or "")[:1000],
             "video_url": urljoin(BASE_URL, v.get("url", ""))[:1000],
             "author": (v.get("author") or "")[:200],
-            "duration": (v.get("duration") or "")[:50],
-            "mp4_url": "",
+            "duration": mp4 if mp4 else (v.get("duration") or "")[:50],
+            "mp4_url": mp4,
             "views": "",
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
             "source_page": (v.get("source_page") or "")[:500],
@@ -1593,116 +1712,38 @@ def resolve_pending(fetcher, limit, budget, tag="解析"):
 
 
 # ---------------------------------------------------------------- 主流程
-AV4_RESOLVE_LIMIT = _env_int("AV4_RESOLVE_LIMIT", 500)
-AV4_RESOLVE_BUDGET = _env_int("AV4_RESOLVE_BUDGET", 600)
+# 一次性清理: 删除数据库中全部 av4 历史行。确认库里 av4 清零后可移除本函数
+# (连同 scrape_all 开头那一行调用)。异常只打日志, 绝不中断 full 流程。
+def purge_av4_once():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    flt = "or=(source_section.eq.av4,source_section.ilike.*av4*,video_id.like.av4_*)"
 
-def sb_av4_pending(limit):
-    rows, offset = [], 0
-    while len(rows) < limit:
-        take = min(1000, limit - len(rows))
-        url = (SUPABASE_URL + "/rest/v1/videos"
-            + "?select=video_id,video_url"
-            + "&source_section=eq.av4"
-            + "&has_mp4=is.false"
-            + "&removed=not.is.true"
-            + "&order=mp4_checked_at.asc.nullsfirst,video_id.asc"
-            + "&limit=" + str(take) + "&offset=" + str(offset))
-        try:
-            r = httpx.get(url, headers=sb_headers(), timeout=60)
-        except Exception as e:
-            log(f"查询av4待解析异常: {e}", "WARN")
-            break
-        if r.status_code != 200:
-            log(f"查询av4待解析失败: HTTP {r.status_code} {r.text[:120]}", "WARN")
-            break
-        batch = r.json()
-        if not batch:
-            break
-        rows.extend(batch)
-        offset += len(batch)
-        if len(batch) < take:
-            break
-    return [x for x in rows if (x.get("video_url") or "").startswith("http")]
+    def _count():
+        r = httpx.head(SUPABASE_URL + "/rest/v1/videos?" + flt,
+                       headers={**sb_headers(), "Prefer": "count=exact"}, timeout=60)
+        cr = r.headers.get("content-range", "")
+        tail = cr.rsplit("/", 1)[-1] if "/" in cr else ""
+        return int(tail) if tail.isdigit() else 0
 
-def sb_write_av4(touched):
-    if not touched:
-        return 0
-    now = datetime.now(timezone.utc).isoformat()
-    recs = []
-    for vid, mp4 in touched:
-        if mp4:
-            recs.append({"video_id": vid, "duration": mp4, "mp4_url": mp4, "has_mp4": True,
-                         "needs_rescrape": False, "playable": True, "mp4_checked_at": now})
-        else:
-            recs.append({"video_id": vid, "has_mp4": False, "needs_rescrape": False, "mp4_checked_at": now})
-    saved, client = 0, httpx.Client(timeout=60)
     try:
-        for i in range(0, len(recs), BATCH_SIZE):
-            batch = recs[i:i + BATCH_SIZE]
-            try:
-                r = client.post(SUPABASE_URL + "/rest/v1/rpc/upsert_videos",
-                                headers=sb_headers(True), json={"videos": batch})
-                if r.status_code in (200, 201, 204):
-                    saved += len(batch)
-                else:
-                    log(f"  av4写回失败 HTTP {r.status_code}: {r.text[:120]}", "WARN")
-            except Exception as e:
-                log(f"  av4写回异常: {str(e)[:100]}", "WARN")
-    finally:
-        client.close()
-    return saved
+        before = _count()
+        if before <= 0:
+            log("  [清理] 数据库中无 av4 行, 跳过一次性清理")
+            return
+        r = httpx.delete(SUPABASE_URL + "/rest/v1/videos?" + flt,
+                         headers={**sb_headers(), "Prefer": "count=exact"}, timeout=300)
+        if r.status_code not in (200, 204):
+            log(f"  [清理] 删除 av4 行失败 HTTP {r.status_code}: {r.text[:120]}", "WARN")
+            return
+        after = _count()
+        log(f"  [清理] av4 行清理完成: 删除前 {before} 条 -> 删除后剩 {after} 条")
+    except Exception as e:
+        log(f"  [清理] av4 清理异常 (忽略, 不影响抓取): {str(e)[:120]}", "WARN")
 
-def resolve_av4(fetcher, limit, budget, tag="av4直链"):
-    targets = sb_av4_pending(limit)
-    if not targets:
-        log(f"[{tag}] 没有待挖直链的av4视频")
-        return 0
-    log(f"[{tag}] 待处理 {len(targets)} 条")
-    t0, touched, hits, done = time.time(), [], 0, 0
-    miss_log_n, dom = 0, {}
-    for tg in targets:
-        if time.time() - t0 > budget:
-            log(f"[{tag}] 时间预算用完, 已处理 {done}/{len(targets)}")
-            break
-        vid, url = tg["video_id"], tg["video_url"]
-        try:
-            h = fetcher.fetch(url, referer=url)
-        except Exception:
-            h = None
-        mp4 = av4_extract_mp4(h)
-        touched.append((vid, mp4))
-        done += 1
-        try:
-            d = url.split("/")[2]
-        except Exception:
-            d = "?"
-        st = dom.get(d, [0, 0, 0, 0])
-        if mp4:
-            hits += 1
-            st[0] += 1
-            log(f"  [{tag}] {vid} -> {mp4[:70]}")
-        else:
-            reason = "fetch_fail" if not h else ("blocked" if _looks_blocked(h) else "no_match")
-            st[{"fetch_fail": 1, "blocked": 2, "no_match": 3}[reason]] += 1
-            if miss_log_n < 15:
-                miss_log_n += 1
-                log(f"  [{tag}] miss {vid} {d} ({reason}, 页 {(len(h) if h else 0)} 字节)")
-        dom[d] = st
-        if done % 20 == 0:
-            log(f"  [{tag}] 进度 {done}/{len(targets)} (命中 {hits})")
-            time.sleep(0.5)
-    if dom:
-        for d in sorted(dom, key=lambda k: -(dom[k][1] + dom[k][2] + dom[k][3])):
-            s = dom[d]
-            if s[1] + s[2] + s[3]:
-                log(f"  [{tag}] 域名小结 {d}: 命中 {s[0]}, 抓取失败 {s[1]}, 被墙 {s[2]}, 无匹配 {s[3]}")
-    if touched:
-        n = sb_write_av4(touched)
-        log(f"[{tag}] 完成: 命中 {hits}, 写回 {n}")
-        return hits
-    return 0
 
 def scrape_all():
+    purge_av4_once()
     stats = {
         "started_at": datetime.now(timezone.utc).isoformat(),
         "pages_crawled": 0,
@@ -1756,6 +1797,22 @@ def scrape_all():
         except Exception as e:
             log(f"  详情相关异常: {e}", "WARN")
 
+        log("阶段3d: twidouga 栏目 (新来源, X 视频排行/实时聚合)")
+        try:
+            td_v = crawl_twidouga(fetcher, time.time() + TD_BUDGET, seen)
+            all_v.extend(td_v)
+            log(f"  twidouga 合计 +{len(td_v)} 条")
+        except Exception as e:
+            log(f"  twidouga 异常: {e}", "WARN")
+
+        log("阶段3e: twivideo 栏目 (新来源, X 视频排行榜)")
+        try:
+            tv_v = crawl_twivideo(fetcher, time.time() + TV_BUDGET, seen)
+            all_v.extend(tv_v)
+            log(f"  twivideo 合计 +{len(tv_v)} 条")
+        except Exception as e:
+            log(f"  twivideo 异常: {e}", "WARN")
+
         stats["videos_found"] = len(all_v)
         if all_v:
             zh_n = sum(1 for v in all_v if is_chinese(v.get("title") or ""))
@@ -1768,7 +1825,6 @@ def scrape_all():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, FULL_RESOLVE_LIMIT, FULL_RESOLVE_BUDGET, tag="解析"
         )
-        stats["mp4_resolved"] += resolve_av4(fetcher, AV4_RESOLVE_LIMIT, AV4_RESOLVE_BUDGET)
     except Exception as e:
         import traceback
         log(f"抓取流程异常: {e}", "ERROR")
@@ -1824,7 +1880,6 @@ def resolve_only():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, RESOLVE_LIMIT, RESOLVE_BUDGET, tag="解析"
         )
-        stats["mp4_resolved"] += resolve_av4(fetcher, AV4_RESOLVE_LIMIT, AV4_RESOLVE_BUDGET)
     except Exception as e:
         import traceback
         log(f"解析流程异常: {e}", "ERROR")
@@ -1865,12 +1920,6 @@ def selftest():
             log(f"  [{tier:10s}] twjn: ⚠️ 有响应但没解析出 mp4")
         else:
             log(f"  [{tier:10s}] twjn: ❌ 失败/被 Cloudflare 拦截")
-    try:
-        _avh = fetcher._get(fetcher.mode or Fetcher.RAW_TIERS[0], AV4_LIST_URLS[0], AV4_LIST_URLS[0])
-        _avn = len(parse_av4(_avh or "", AV4_LIST_URLS[0]))
-        log("  [av4] 外链聚合 cards: " + str(_avn) if _avh and _avn else "  [av4] 外链聚合: 失败/0卡片")
-    except Exception as e:
-        log(f"  [av4] 异常: {type(e).__name__}", "WARN")
     # 深挖自检: 作者搜索 + twjn 作者提取 (逐层试, 第一层出结果即停)
     try:
         _an, _tier_used = 0, None

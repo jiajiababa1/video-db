@@ -2336,13 +2336,17 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         </div>
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
+            <div class="sidebar-label">来源栏目</div>
+            <button class="sidebar-item" data-section="twidouga" onclick="selectSidebar('twidouga','🎬 Twidouga 排行')"><span class="ico">🎬</span>Twidouga 排行</button>
+            <button class="sidebar-item" data-section="twivideo" onclick="selectSidebar('twivideo','📺 Twivideo 排行')"><span class="ico">📺</span>Twivideo 排行</button>
+        </div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section">
             <div class="sidebar-label">我的</div>
             <button class="sidebar-item" data-section="favs" onclick="selectSidebar('favs','⭐ 我的收藏')"><span class="ico">⭐</span>我的收藏 <span class="badge" id="favsCount">0</span></button>
             <button class="sidebar-item" onclick="showFollowsPanel()"><span class="ico">⭐</span>我的关注 <span class="badge" id="followsCount">0</span></button>
             <button class="sidebar-item" data-section="watchlater" onclick="selectSidebar('watchlater','📌 稍后观看')"><span class="ico">📌</span>稍后观看 <span class="badge" id="wlCount">0</span></button>
             <button class="sidebar-item" data-section="history" onclick="selectSidebar('history','🕐 观看历史')"><span class="ico">🕐</span>观看历史 <span class="badge" id="histCount">0</span></button>
-            <button class="sidebar-item" onclick="clearHistory()" style="color:#c08080;"><span class="ico">🧹</span>清空观看历史</button>
-            <button class="sidebar-item" onclick="clearAllPersonal()" style="color:#c08080;"><span class="ico">🗑</span>清空全部数据</button>
             <button class="sidebar-item" onclick="openSyncDialog()"><span class="ico">☁️</span>云同步 <span class="badge" id="cloudSyncStatus">未登录</span></button>
             <button class="sidebar-item" id="sideAiSearch" onclick="openAiSearchSidebar()" style="display:none;"><span class="ico">🤖</span>AI 搜片</button>
         </div>
@@ -2423,6 +2427,19 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <div class="row"><span>返回游戏</span><span><kbd>Esc</kbd></span></div>
             <div class="row"><span>搜索</span><span><kbd>/</kbd></span></div>
             <div class="row"><span>关闭面板</span><span><kbd>?</kbd> / 点击空白</span></div>
+        </div>
+    </div>
+
+    <!-- ==================== 站内对话框 (替代原生 prompt/confirm) ==================== -->
+    <div class="cheat-dialog-overlay" id="uiDialogOverlay" onclick="if(event.target===this)_uiDlgClose(null)">
+        <div class="cheat-dialog">
+            <p class="title">提示</p>
+            <p class="desc" id="uiDialogMsg" style="white-space:pre-wrap;"></p>
+            <input type="text" id="uiDialogInput" autocomplete="off" style="display:none;" onkeydown="if(event.key==='Enter')_uiDlgClose(true)">
+            <div class="actions">
+                <button class="btn-cancel" onclick="_uiDlgClose(null)">取消</button>
+                <button class="cheat-btn accent" id="uiDialogOk" onclick="_uiDlgClose(true)">确定</button>
+            </div>
         </div>
     </div>
 
@@ -2534,6 +2551,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <button class="vid-tab" data-section="3d">📅 3天</button>
             <button class="vid-tab" data-section="7d">📆 7天</button>
             <button class="vid-tab" data-section="ranking">🏆 排行</button>
+            <button class="vid-tab" data-section="twidouga">🎬 Twidouga</button>
+            <button class="vid-tab" data-section="twivideo">📺 Twivideo</button>
             <button class="vid-tab" data-section="favs" id="favTab" style="display:none;">⭐ 收藏</button>
             <button class="vid-tab" data-section="history" id="histTab" style="display:none;">🕐 历史</button>
         </div>
@@ -2821,7 +2840,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         var ov = document.createElement('div');
         ov.className = 'cheat-dialog-overlay on';
         ov.id = 'gameStatsOverlay';
-        ov.innerHTML = '<div class="cheat-dialog" style="max-width:420px;max-height:80vh;overflow-y:auto;"><button onclick="document.getElementById(\'gameStatsOverlay\').remove()" style="position:absolute;top:8px;right:8px;background:none;border:none;font-size:18px;cursor:pointer;color:inherit;">✕</button><p class="title" style="margin-bottom:12px;">📊 游戏统计</p>' + html + '<button class="cheat-btn danger" style="width:100%;margin-top:12px;" onclick="if(confirm(\'确定重置全部统计？\')){localStorage.removeItem(\'stats2048\');localStorage.removeItem(\'achievements2048\');document.getElementById(\'gameStatsOverlay\').remove();toast(\'已重置\');}">🗑️ 重置统计</button></div>';
+        ov.innerHTML = '<div class="cheat-dialog" style="max-width:420px;max-height:80vh;overflow-y:auto;"><button onclick="document.getElementById(\'gameStatsOverlay\').remove()" style="position:absolute;top:8px;right:8px;background:none;border:none;font-size:18px;cursor:pointer;color:inherit;">✕</button><p class="title" style="margin-bottom:12px;">📊 游戏统计</p>' + html + '<button class="cheat-btn danger" style="width:100%;margin-top:12px;" onclick="resetGameStats()">🗑️ 重置统计</button></div>';
         document.body.appendChild(ov);
     }
 
@@ -4644,8 +4663,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         // 登录后同步到云端 (fire-and-forget)
         if (_loggedIn && _cloudReady) cloudPush('hist', [vid]);
     }
-    function clearHistory() {
-        if (!confirm('确定要清空全部观看历史吗？此操作不可撤销。')) return;
+    async function clearHistory() {
+        if (!(await uiConfirm('确定要清空全部观看历史吗？此操作不可撤销。'))) return;
         localStorage.removeItem('vid_history');
         localStorage.removeItem('vid_history_ts');
         updateHistBadge();
@@ -4653,15 +4672,15 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         if (_loggedIn) cloudClearKind('hist');
         if (activeSection === 'history') loadVids(true);
     }
-    function clearWatchLater() {
-        if (!confirm('确定要清空稍后观看列表吗？')) return;
+    async function clearWatchLater() {
+        if (!(await uiConfirm('确定要清空稍后观看列表吗？'))) return;
         localStorage.removeItem('vid_watchlater');
         updateWlBadge();
         if (_loggedIn) cloudClearKind('wl');
         if (activeSection === 'watchlater') loadVids(true);
     }
-    function clearAllPersonal() {
-        if (!confirm('确定要清空本机的观看历史 / 收藏 / 稍后观看 / 黑名单 / 后台数据 等全部个人数据吗？此操作不可撤销！')) return;
+    async function clearAllPersonal() {
+        if (!(await uiConfirm('确定要清空本机的观看历史 / 收藏 / 稍后观看 / 黑名单 / 后台数据 等全部个人数据吗？此操作不可撤销！'))) return;
         localStorage.removeItem('vid_history');
         localStorage.removeItem('vid_history_ts');
         localStorage.removeItem('vid_favs');
@@ -5638,9 +5657,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
 
     function renderVideoError(wrap, title, detail) {
         var v = currentInlineVideo;
-        var isExtE = v && v.video_id && v.video_id.indexOf('av4_') === 0;
-        // 自动标记为需要重爬 (外链栏目跳过)
-        if (v && v.video_id && !isExtE) {
+        // 自动标记为需要重爬
+        if (v && v.video_id) {
             try {
                 fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
                     method: 'PATCH', headers: _h(),
@@ -5668,77 +5686,58 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         wrap.innerHTML = html;
     }
 
+    // ============ 站内对话框 (替代浏览器原生 prompt/confirm, 返回 Promise) ============
+    var _uiDlgResolve = null;
+    function _uiDlgClose(val) {
+        var ov = document.getElementById('uiDialogOverlay');
+        if (ov) ov.classList.remove('on');
+        if (_uiDlgResolve) { var r = _uiDlgResolve; _uiDlgResolve = null; r(val); }
+    }
+    function _uiDlgOpen(msg, opts) {
+        opts = opts || {};
+        return new Promise(function(resolve) {
+            if (_uiDlgResolve) { var prev = _uiDlgResolve; _uiDlgResolve = null; prev(null); }
+            _uiDlgResolve = resolve;
+            var ov = document.getElementById('uiDialogOverlay');
+            var inp = document.getElementById('uiDialogInput');
+            var okBtn = document.getElementById('uiDialogOk');
+            document.getElementById('uiDialogMsg').textContent = msg || '';
+            if (opts.input) {
+                inp.style.display = '';
+                inp.type = opts.password ? 'password' : 'text';
+                inp.value = opts.def != null ? String(opts.def) : '';
+                inp.placeholder = opts.placeholder || '';
+            } else { inp.style.display = 'none'; }
+            okBtn.textContent = opts.okText || '确定';
+            okBtn.className = 'cheat-btn ' + (opts.danger ? 'danger' : 'accent');
+            ov.classList.add('on');
+            if (opts.input) setTimeout(function() { try { inp.focus(); inp.select(); } catch (e) {} }, 60);
+        });
+    }
+    function uiConfirm(msg, opts) {
+        return _uiDlgOpen(msg, opts || {}).then(function(v) { return v === true; });
+    }
+    function uiPrompt(msg, def, opts) {
+        opts = opts || {}; opts.input = true; opts.def = def;
+        return _uiDlgOpen(msg, opts).then(function(v) {
+            if (v !== true) return null;
+            var inp = document.getElementById('uiDialogInput');
+            return inp ? inp.value : null;
+        });
+    }
+    function resetGameStats() {
+        uiConfirm('确定重置全部统计？').then(function(ok) {
+            if (!ok) return;
+            localStorage.removeItem('stats2048');
+            localStorage.removeItem('achievements2048');
+            var ov = document.getElementById('gameStatsOverlay'); if (ov) ov.remove();
+            toast('已重置');
+        });
+    }
+
     // ============ 内联视频播放器 (卡片展开, 紧挨卡片) ============
     var currentInlineVideo = null;
     var currentInlineCard = null;
-    async function resolveAv4Mp4(pageUrl) {
-        try {
-            var html = (typeof fetchPage === "function") ? await fetchPage(pageUrl) : await fetch(pageUrl).then(function(r){ return r.ok ? r.text() : null; });
-            if (!html) return null;
-            var m = html.match(/https?:\/\/[^"'<>\s]+\.mp4[^"'<>\s]*/i);
-            if (m) return m[0].replace(/&amp;/g, "&");
-            var s = html.match(/<source[^>]+src="([^"]+)"/i);
-            if (s && s[1]) return s[1].replace(/&amp;/g, "&");
-        } catch (e) {}
-        return null;
-    }
-    async function tryAv4Direct(btn) {
-        var v = currentInlineVideo;
-        if (!v || !v.video_url) return;
-        var player = currentInlinePlayer;
-        var wrap = player ? player.querySelector(".vpi-player-wrap") : null;
-        if (!wrap) return;
-        try { btn.textContent = "⏳ 解析中..."; btn.disabled = true; } catch (e) {}
-        var pr = await av4ProbeVideo(v, 3);
-        var mp4 = (pr.st === 'playable') ? pr.mp4 : null;
-        if (mp4) {
-            setInlineVideo(wrap, mp4);
-            currentInlineMp4 = mp4;
-            updateInlineBtns(player, mp4, v);
-            loadRelatedVideos(v);
-            v.duration = mp4; v.has_mp4 = true; v.needs_rescrape = false;
-            try {
-                fetch(SUPABASE_URL + "/rest/v1/rpc/submit_mp4", {
-                    method: "POST", headers: _h(),
-                    body: JSON.stringify({ p_video_id: v.video_id, p_mp4_url: mp4 })
-                }).catch(function(){});
-            } catch (e) {}
-            if (currentInlineCard) {
-                currentInlineCard.classList.remove("unplayable", "needs-rescrape");
-                currentInlineCard.classList.add("has-mp4");
-                var st = currentInlineCard.querySelector(".vid-status");
-                if (st) { st.textContent = "✅"; st.style.color = "#7a9a7a"; st.title = "可播放"; st.setAttribute("data-status", "playable"); }
-            }
-        } else {
-            if (pr.st === 'dead') {
-                try { btn.textContent = "⚠️ 可能已失效"; setTimeout(function(){ try { btn.textContent = "⚡ 试试站内播放"; btn.disabled = false; } catch (e) {} }, 2500); } catch (e) {}
-                toast('该链接可能已失效, 可去原站碰碰运气');
-                renderExternalPanel(wrap, v);
-            } else if (!pr.ok) {
-                try { btn.textContent = "❓ 网络失败"; setTimeout(function(){ try { btn.textContent = "⚡ 试试站内播放"; btn.disabled = false; } catch (e) {} }, 2500); } catch (e) {}
-                toast('代理网络失败, 稍后重试或直接去原站');
-            } else {
-                try { btn.textContent = "🔗 请去原站看"; setTimeout(function(){ try { btn.textContent = "⚡ 试试站内播放"; btn.disabled = false; } catch (e) {} }, 2500); } catch (e) {}
-                renderExternalPanel(wrap, v);
-            }
-            try { if (typeof av4UpdateCounts === 'function') av4UpdateCounts(); } catch (_e2) {}
-        }
-    }
-    function renderExternalPanel(wrap, v) {
-        var h = "<div style=\"width:100%;padding:28px 20px;text-align:center;border:1px solid #1c1a16;border-radius:var(--radius-sm);background:#0a0a0e;\">";
-        if (v.thumbnail_url) h += "<img src=\"" + esc(v.thumbnail_url) + "\" style=\"max-width:100%;max-height:220px;border-radius:var(--radius-sm);margin-bottom:12px;\" loading=\"lazy\" onerror=\"this.style.display='none'\">";
-        h += "<div style=\"font-size:13px;color:var(--vtext);margin-bottom:4px;\">" + esc(v.title || v.video_id) + "</div>";
-        var _avs2 = (typeof av4GetStatus === "function") ? av4GetStatus(v) : { st: 'unknown', reason: '' };
-        if (_avs2.st === 'playable') h += "<div style=\"font-size:11px;color:#7a9a7a;margin-bottom:12px;\">✅ 已识别为站内可播</div>";
-        else if (_avs2.st === 'dead') h += "<div style=\"font-size:11px;color:#c08080;margin-bottom:12px;\">⚠️ 该链接可能已失效 (" + esc(_avs2.reason || '') + ") · 仍可去原站碰运气</div>";
-        else if (_avs2.st === 'external') h += "<div style=\"font-size:11px;color:#c8a45c;margin-bottom:12px;\">🔗 " + esc(_avs2.reason || '未爬出直链') + " · 建议去原站观看</div>";
-        else h += "<div style=\"font-size:11px;color:#6b6760;margin-bottom:12px;\">⏳ 尚未检测 · 点「试试站内播放」可自动识别</div>";
-        if (v.duration) h += "<div style=\"font-size:11px;color:#6b6760;margin-bottom:14px;\">" + esc(v.duration) + " · 站外资源</div>";
-        h += "<button onclick=\"event.stopPropagation();window.open('" + esc(v.video_url) + "','_blank')\" style=\"padding:9px 26px;border-radius:var(--radius-sm);border:none;background:var(--vprimary);color:#1a1808;cursor:pointer;font-size:12px;font-weight:700;\">🔗 前往原站观看</button>";
-        h += "<button onclick=\"event.stopPropagation();tryAv4Direct(this)\" style=\"padding:9px 26px;margin-left:8px;border-radius:var(--radius-sm);border:1px solid var(--vprimary);background:transparent;color:var(--vprimary);cursor:pointer;font-size:12px;font-weight:700;\">⚡ 试试站内播放</button>";
-        h += "<div style=\"font-size:10px;color:#6b6760;margin-top:10px;\">AV4聚合外链 · 状态由本机独立识别 (✅可播/🔗跳原站/⚠️失效)</div></div>";
-        wrap.innerHTML = h;
-    }
     var currentInlinePlayer = null;
     var currentInlineMp4 = '';
     var currentInlineOpenAt = 0;
@@ -5839,22 +5838,6 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         requestAnimationFrame(function(){ scrollElIntoView(player, 'nearest'); });
 
         var wrap = player.querySelector('.vpi-player-wrap');
-        var isExtV = v && v.video_id && v.video_id.indexOf('av4_') === 0 && v.video_url && v.video_url.indexOf('http') === 0;
-        // 本机已识别为可播 (直链回写 DB 失败时兜底, 下次点开照样直接播)
-        var _avMapMp4 = '';
-        try {
-            var _avMap = (typeof av4MapLoad === 'function') ? av4MapLoad() : {};
-            var _avRec = v && _avMap[v.video_id];
-            if (_avRec && _avRec.st === 'playable' && typeof _avRec.mp4 === 'string' && _avRec.mp4.indexOf('http') === 0) _avMapMp4 = _avRec.mp4;
-        } catch (_e3) {}
-        var dur0 = _avMapMp4 || v.duration || '';
-        if (_avMapMp4 && !v.has_mp4) { v.duration = _avMapMp4; v.mp4_url = _avMapMp4; v.has_mp4 = true; }
-        var durIsMp4 = dur0.indexOf('http') === 0 && (dur0.indexOf('.mp4') >= 0 || dur0.indexOf('video.twimg.com') >= 0);
-        if (isExtV && !durIsMp4) {
-            renderExternalPanel(wrap, v);
-            loadRelatedVideos(v);
-            return;
-        }
         wrap.innerHTML = '<div class="vpi-spinner"></div>';
 
         // 快速路径: duration 已有 MP4 直链
@@ -7165,9 +7148,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             toast('已导出 ' + TL.size() + ' 条标注');
         } catch (e) { toast('导出失败: ' + e.message); }
     }
-    function aiClear() {
+    async function aiClear() {
         if (!aiOn() || !TL.size()) { toast('本机没有标注数据'); return; }
-        if (!confirm('确定清空本机全部 AI 标注 (' + TL.size() + ' 条)? 不可恢复.')) return;
+        if (!(await uiConfirm('确定清空本机全部 AI 标注 (' + TL.size() + ' 条)? 不可恢复.'))) return;
         try { localStorage.removeItem('tl_tags_v1'); } catch (e) {}
         toast('已清空'); aiRenderPanel();
         if (!aiPanelOpen) loadVids(true);
@@ -7356,204 +7339,6 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         return null;
     }
 
-    // ============ AV4 独立可播识别 (仅 🎬AV4 栏目, 与普通视频互不干扰) ============
-    // 四态: playable=✅站内可播 / external=🔗跳原站(含待检测) / dead=⚠️已失效 / unknown=⏳待检测
-    // has_mp4=true 全端共享即 playable; external/dead 存本机 localStorage(av4_status_v2);
-    // 成功直链回写 DB(duration/mp4_url/has_mp4), 纯检查只刷新 mp4_checked_at (不写脏数据)。
-    var av4Filter = 'all';
-    try {
-        var _af = localStorage.getItem('av4_filter');
-        if (_af === 'all' || _af === 'playable' || _af === 'external' || _af === 'dead') av4Filter = _af;
-    } catch (e) {}
-    function av4MapLoad() { try { return JSON.parse(localStorage.getItem('av4_status_v2') || '{}'); } catch (e) { return {}; } }
-    function av4MapSave(m) { try { localStorage.setItem('av4_status_v2', JSON.stringify(m)); } catch (e) {} }
-    function av4IsMp4Url(u) { return typeof u === 'string' && u.indexOf('http') === 0 && (u.indexOf('.mp4') >= 0 || u.indexOf('m3u8') >= 0 || u.indexOf('video.twimg.com') >= 0); }
-    function av4GetStatus(v) {
-        if (!v) return { st: 'unknown', reason: '' };
-        if (v.has_mp4 === true || av4IsMp4Url(v.duration) || av4IsMp4Url(v.mp4_url)) return { st: 'playable', reason: '直链已命中' };
-        var m = av4MapLoad();
-        var r = m[v.video_id];
-        if (r && (r.st === 'playable' || r.st === 'external' || r.st === 'dead')) return r;
-        return { st: 'unknown', reason: '' };
-    }
-    function av4InFilter(v, f, map) {
-        if (f === 'all') return true;
-        var s = (v.has_mp4 === true || av4IsMp4Url(v.duration) || av4IsMp4Url(v.mp4_url)) ? 'playable'
-            : ((map && map[v.video_id] && map[v.video_id].st) || 'unknown');
-        if (f === 'playable') return s === 'playable';
-        if (f === 'dead') return s === 'dead';
-        if (f === 'external') return s === 'external' || s === 'unknown';
-        return true;
-    }
-    function av4ClassifyHtml(html, ok) {
-        if (!ok || html == null) return { st: 'unknown', reason: '代理网络失败' };
-        var t = String(html);
-        var m = t.match(/https?:\/\/[^"'<>\s]+\.mp4[^"'<>\s]*/i);
-        if (m) return { st: 'playable', reason: '挖到直链', mp4: m[0].replace(/&amp;/g, '&') };
-        var s = t.match(/<source[^>]+src="([^"]+)"/i);
-        if (s && s[1] && /\.mp4/i.test(s[1])) return { st: 'playable', reason: '挖到直链', mp4: s[1].replace(/&amp;/g, '&') };
-        if (t.length < 800 && /(404|not\s*found|已被删除|不存在|已下架|video[^<]{0,40}(removed|deleted|expired|invalid)|invalid[^<]{0,20}(video|id|link)|off-?line|has been (removed|deleted)|page not found)/i.test(t)) return { st: 'dead', reason: '原站页面已失效' };
-        if (/just a moment|attention required|cf-challenge|cf_challenge|cloudflare/i.test(t)) return { st: 'external', reason: 'CF防护·需跳原站' };
-        if (/\.m3u8|<video[\s>]|jwplayer|videojs|dplayer|artplayer|plyr|player-container|<iframe/i.test(t)) return { st: 'external', reason: '站内无直链·去原站看' };
-        if (t.length < 800) return { st: 'dead', reason: '页面异常' };
-        return { st: 'external', reason: '未爬出直链' };
-    }
-    function av4SetStatus(vid, st, reason, mp4) {
-        if (!vid) return;
-        var m = av4MapLoad();
-        m[vid] = { st: st, reason: reason || '', ts: Date.now(), mp4: mp4 || '' };
-        var ks = Object.keys(m);
-        if (ks.length > 2000) {
-            ks.sort(function(a, b) { return (m[a].ts || 0) - (m[b].ts || 0); });
-            for (var i = 0; i < ks.length - 2000; i++) delete m[ks[i]];
-        }
-        av4MapSave(m);
-        var card = document.querySelector('.vid-card[data-vid="' + vid + '"]');
-        if (card && card._vidData) av4RefreshCardBadge(card, card._vidData);
-    }
-    function av4RefreshCardBadge(cardEl, v) {
-        if (!cardEl || !v) return;
-        var s = av4GetStatus(v).st;
-        cardEl.classList.remove('av4-playable', 'av4-ext', 'av4-dead');
-        cardEl.classList.add(s === 'playable' ? 'av4-playable' : (s === 'dead' ? 'av4-dead' : 'av4-ext'));
-        var st = cardEl.querySelector('.vid-status');
-        if (st) {
-            if (s === 'playable') { st.textContent = '✅'; st.style.color = '#7a9a7a'; st.title = '站内可播'; st.setAttribute('data-status', 'playable'); }
-            else if (s === 'dead') { st.textContent = '⚠️'; st.style.color = '#c08080'; st.title = '可能已失效·可去原站碰运气'; st.setAttribute('data-status', 'av4dead'); }
-            else if (s === 'external') { st.textContent = '🔗'; st.style.color = '#c8a45c'; st.title = '跳原站观看'; st.setAttribute('data-status', 'ext'); }
-            else { st.textContent = '🔗'; st.style.color = '#6b6760'; st.title = '待检测·点卡片自动识别'; st.setAttribute('data-status', 'ext'); }
-        }
-    }
-    function av4ApplyPlayable(v, mp4, reason) {
-        v.duration = mp4; v.mp4_url = mp4; v.has_mp4 = true; v.needs_rescrape = false;
-        av4SetStatus(v.video_id, 'playable', reason || '挖到直链', mp4);
-        try {
-            fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
-                method: 'PATCH', headers: _h(),
-                body: JSON.stringify({ duration: mp4, mp4_url: mp4, has_mp4: true, needs_rescrape: false, mp4_checked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-            }).catch(function() {});
-        } catch (e) {}
-        var card = document.querySelector('.vid-card[data-vid="' + v.video_id + '"]');
-        if (card) { card.classList.remove('unplayable', 'needs-rescrape'); card.classList.add('has-mp4'); av4RefreshCardBadge(card, v); }
-    }
-    async function av4ProbeVideo(v, retries) {
-        var pageUrl = v.video_url;
-        var html = null, ok = false;
-        // 测试桩: 外部测试可设 window.__av4FetchStub(url) 覆盖抓取 (生产环境恒为 undefined, 走真实 fetchPage)
-        var _stubFp = (typeof window !== 'undefined' && typeof window.__av4FetchStub === 'function') ? window.__av4FetchStub : null;
-        try {
-            if (_stubFp) { html = await _stubFp(pageUrl); ok = (html != null); }
-            else if (typeof fetchPage === 'function') { html = await fetchPage(pageUrl, (retries == null ? 2 : retries)); ok = (html != null); }
-            else { var r = await fetch(pageUrl); ok = r.ok; html = ok ? await r.text() : null; }
-        } catch (e) { ok = false; html = null; }
-        var c = av4ClassifyHtml(html, ok);
-        if (c.st === 'playable' && c.mp4) { av4ApplyPlayable(v, c.mp4, c.reason); return { st: 'playable', mp4: c.mp4, ok: true }; }
-        if (c.st === 'dead' || c.st === 'external') {
-            av4SetStatus(v.video_id, c.st, c.reason);
-            v.__av4 = c.st;
-            try {
-                fetch(SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + encodeURIComponent(v.video_id), {
-                    method: 'PATCH', headers: _h(),
-                    body: JSON.stringify({ mp4_checked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-                }).catch(function() {});
-            } catch (e) {}
-            return { st: c.st, reason: c.reason, ok: ok };
-        }
-        return { st: 'unknown', reason: c.reason, ok: ok };
-    }
-    var _av4DetectRunning = false;
-    async function av4DetectVisible() {
-        if (_av4DetectRunning) { toast('检测中,请稍候…'); return; }
-        var cards = Array.prototype.slice.call(document.querySelectorAll('#videoGrid .vid-card'));
-        var jobs = [];
-        var now = Date.now();
-        for (var i = 0; i < cards.length; i++) {
-            var v = cards[i]._vidData;
-            if (!v || !v.video_id || v.video_id.indexOf('av4_') !== 0) continue;
-            var s = av4GetStatus(v);
-            if (s.st === 'playable') continue;
-            if ((s.st === 'external' || s.st === 'dead') && s.ts && (now - s.ts < 7 * 24 * 3600 * 1000)) continue;
-            jobs.push({ c: cards[i], v: v });
-        }
-        if (!jobs.length) { toast('本页都已检测过 ✅'); return; }
-        _av4DetectRunning = true;
-        var btn = document.getElementById('av4DetectBtn');
-        var total = jobs.length, done = 0, okN = 0, deadN = 0;
-        if (btn) btn.disabled = true;
-        toast('🔍 开始检测本页 ' + total + ' 个…');
-        async function worker() {
-            while (jobs.length) {
-                var j = jobs.shift();
-                try {
-                    var r = await av4ProbeVideo(j.v, 2);
-                    if (r.st === 'playable') okN++;
-                    if (r.st === 'dead') deadN++;
-                    av4RefreshCardBadge(j.c, j.v);
-                    if (av4Filter !== 'all' && !av4InFilter(j.v, av4Filter)) j.c.style.display = 'none';
-                } catch (e) {}
-                done++;
-                if (btn) btn.textContent = '🔍 检测中 ' + done + '/' + total;
-                av4UpdateCounts();
-                await new Promise(function(rr) { setTimeout(rr, 350); });
-            }
-        }
-        await Promise.all([worker(), worker(), worker()]);
-        _av4DetectRunning = false;
-        if (btn) { btn.disabled = false; btn.textContent = '🔍 检测本页'; }
-        av4UpdateCounts();
-        toast('检测完: ✅' + okN + ' · ⚠️' + deadN + ' · 其余跳原站');
-    }
-    function av4PageStats() {
-        var cards = document.querySelectorAll('#videoGrid .vid-card');
-        var n = { all: 0, playable: 0, external: 0, dead: 0 };
-        for (var i = 0; i < cards.length; i++) {
-            var v = cards[i]._vidData;
-            if (!v || !v.video_id || v.video_id.indexOf('av4_') !== 0) continue;
-            n.all++;
-            var s = av4GetStatus(v).st;
-            if (s === 'playable') n.playable++;
-            else if (s === 'dead') n.dead++;
-            else n.external++;
-        }
-        return n;
-    }
-    function av4UpdateCounts() {
-        var n = av4PageStats();
-        var set = function(id, t) { var el = document.getElementById(id); if (el) el.textContent = t; };
-        set('av4CAll', n.all ? '(' + n.all + ')' : '');
-        set('av4CPlay', n.playable ? '(' + n.playable + ')' : '');
-        set('av4CExt', n.external ? '(' + n.external + ')' : '');
-        set('av4CDead', n.dead ? '(' + n.dead + ')' : '');
-        var h = document.getElementById('av4Hint');
-        if (h) h.textContent = n.all ? ('本页 ✅' + n.playable + ' · 🔗' + n.external + ' · ⚠️' + n.dead) : '';
-    }
-    var AV4_LIST_URL = 'https://jp.av4us.asia/hot/LONG-';
-    async function sha12hex(s) {
-        try {
-            var d = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(s));
-            return Array.from(new Uint8Array(d)).map(function(b){return b.toString(16).padStart(2,'0');}).join('').slice(0,12);
-        } catch(e) {
-            var h1 = 0x811c9dc5;
-            for (var i=0;i<s.length;i++){ h1 ^= s.charCodeAt(i); h1 = Math.imul(h1, 0x01000193) >>> 0; }
-            return ('0000000' + h1.toString(16)).slice(-8) + '0000';
-        }
-    }
-    function parseAV4HTML(html, pageUrl) {
-        var out = [];
-        var re = /<div class="vid"><a title="([^"]*)" href="([^"]+)"[\s\S]*?<img[^>]*src="([^"]+)"[\s\S]*?<div class="dwc">([\s\S]*?)<\/div>/g;
-        var m;
-        while ((m = re.exec(html)) !== null) {
-            var title = (m[1] || '').replace(/\s*\[[^\]]*\]\s*$/, '').trim();
-            var href = m[2] || '';
-            var real = href.indexOf('/v/') === 0 ? 'http' + href.slice(3) : href;
-            if (real.indexOf('http') !== 0) continue;
-            var thumb = m[3] || '';
-            if (thumb.indexOf('//') === 0) thumb = 'https:' + thumb;
-            var dwc = (m[4] || '').replace(/&nbsp;/g, ' ').replace(/<[^>]*>/g, '').trim();
-            out.push({ title: title, url: real, thumbnail_url: thumb, duration: dwc, source_page: pageUrl });
-        }
-        return out;
-    }
     async function clientScrape(sectionFilter) {
         var stats = {found:0, saved:0, mp4Resolved:0, errors:[]};
         var hds = _h();
@@ -7653,44 +7438,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
 
             await new Promise(function(r){setTimeout(r, 2000);});
         }
-        try {
-            toast('抓取中: av4...');
-            var av4Html = await fetchPage(AV4_LIST_URL);
-            if (av4Html) {
-                var av4Raw = parseAV4HTML(av4Html, AV4_LIST_URL);
-                var av4Saved = 0;
-                for (var ab = 0; ab < av4Raw.length; ab += 30) {
-                    var achunk = [];
-                    for (var aq = ab; aq < Math.min(ab + 30, av4Raw.length); aq++) {
-                        var ar = av4Raw[aq];
-                        achunk.push({
-                            video_id: 'av4_' + await sha12hex(ar.url),
-                            title: (ar.title || '').substring(0, 500),
-                            thumbnail_url: (ar.thumbnail_url || '').substring(0, 1000),
-                            video_url: (ar.url || '').substring(0, 1000),
-                            author: '',
-                            monsnode_video_id: '',
-                            source_page: AV4_LIST_URL.substring(0, 500),
-                            source_section: 'av4',
-                            scraped_at: new Date().toISOString(),
-                            updated_at: new Date().toISOString(),
-                            has_mp4: false,
-                            needs_rescrape: false
-                        });
-                        stats.found += 1;
-                    }
-                    try {
-                        var aresp = await fetch(SUPABASE_URL + '/rest/v1/videos', {
-                            method: 'POST', headers: Object.assign({}, hds, {'Prefer': 'resolution=merge-duplicates'}),
-                            body: JSON.stringify(achunk)
-                        });
-                        if (aresp.ok || aresp.status === 409) av4Saved += achunk.length;
-                    } catch(e) {}
-                }
-                stats.saved += av4Saved;
-                toast('已保存: av4 (' + av4Saved + '个)');
-            }
-        } catch(e) { stats.errors.push('av4: ' + String(e).slice(0, 80)); }
+
         return stats;
     }
 
@@ -7719,9 +7467,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
 
     // 让管理员输入一次 GitHub PAT (仅存本机 localStorage, 不会写入公开源码)
-    function ghConfigPrompt() {
+    async function ghConfigPrompt() {
         if (!(window.isOwner && window.isOwner())) { toast('仅站主可配置'); return; }
-        var t = prompt('请输入 GitHub Personal Access Token (需勾选 Actions 读+写权限, 用于触发云端解析):');
+        var t = await uiPrompt('请输入 GitHub Personal Access Token (需勾选 Actions 读+写权限, 用于触发云端解析):');
         if (t === null) return;
         setGhToken(t.trim());
         if (_loggedIn) cloudPushConfig(); // 登录后把 GitHub 配置同步到云端
@@ -7735,9 +7483,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     function sbToken() { return localStorage.getItem('sb_token') || ''; }
     function setSbToken(t) { localStorage.setItem('sb_token', t || ''); }
     function refreshSbStatus() { var t = sbToken(); var b = document.getElementById('sbCfgBadge'); if (b) b.textContent = t ? '已配置' : '未配置'; }
-    function sbConfigPrompt() {
+    async function sbConfigPrompt() {
         if (!(window.isOwner && window.isOwner())) { toast('仅站主可配置'); return; }
-        var t = prompt('请输入 Supabase Personal Access Token (sbp_ 开头, 在 supabase.com/dashboard/account/tokens 点 Generate new token 生成):');
+        var t = await uiPrompt('请输入 Supabase Personal Access Token (sbp_ 开头, 在 supabase.com/dashboard/account/tokens 点 Generate new token 生成):');
         if (t === null) return;
         setSbToken(t.trim());
         refreshSbStatus();
@@ -8535,13 +8283,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             localStorage.setItem('vid_rescrape', JSON.stringify(rl));
         }
         var needsRescrape = v.needs_rescrape === true || isInRescrapeList(v.video_id);
-        var isExt = v.video_id && v.video_id.indexOf('av4_') === 0 && v.video_url && v.video_url.indexOf('http') === 0;
-        if(!hasMp4 && !isExt) c.classList.add('unplayable');
-        if(isExt && !hasMp4) {
-            var _avC = av4GetStatus(v).st;
-            c.classList.add(_avC === 'dead' ? 'av4-dead' : (_avC === 'playable' ? 'av4-playable' : 'av4-ext'));
-        }
-        if(needsRescrape && !hasMp4 && !isExt) c.classList.add('needs-rescrape');
+        if(!hasMp4) c.classList.add('unplayable');
+        if(needsRescrape && !hasMp4) c.classList.add('needs-rescrape');
         if(hasMp4) c.classList.add('has-mp4');
         // duration 字段: 可能是真实时长, 也可能是 URL (爬虫复用来存 redirect/resolved URL)
         var isRedirectUrl = v.duration && v.duration.indexOf('http') === 0;
@@ -8571,13 +8314,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         var sectionLabel = _secTxt ? '<span style="color:#6b6760;font-size:10px;">#' + esc(_secTxt) + '</span>' : '';
         // 播放状态标记 (用 data-status 属性方便 JS 更新)
         var statusText, statusColor, statusTitle, statusClass;
-        if (isExt && !hasMp4) {
-            var _avS = av4GetStatus(v);
-            if (_avS.st === 'playable') { statusText = '✅'; statusColor = '#7a9a7a'; statusTitle = '站内可播'; statusClass = 'playable'; }
-            else if (_avS.st === 'dead') { statusText = '⚠️'; statusColor = '#c08080'; statusTitle = '可能已失效·可去原站碰运气'; statusClass = 'av4dead'; }
-            else if (_avS.st === 'external') { statusText = '🔗'; statusColor = '#c8a45c'; statusTitle = '跳原站观看 (' + (_avS.reason || '未爬出直链') + ')'; statusClass = 'ext'; }
-            else { statusText = '🔗'; statusColor = '#6b6760'; statusTitle = '待检测·点卡片自动识别'; statusClass = 'ext'; }
-        } else if (!hasMp4 && needsRescrape) {
+        if (!hasMp4 && needsRescrape) {
             statusText = '\u{1F504}'; statusColor = '#c8a45c'; statusTitle = '等待重爬'; statusClass = 'needs';
         } else if (!hasMp4) {
             statusText = '⚠️'; statusColor = '#c08080'; statusTitle = '无法播放'; statusClass = 'unplay';
@@ -8824,13 +8561,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     // ============ 通用: 过滤 + 渲染统计 + 分页 ============
     function applyFiltersAndRender(data, count, append) {
         if (_friendsPanelOpen) return data;   // 加载途中切到了功能页: 结果直接作废, 不往面板里追加卡片
-        // AV4 栏目走独立四态过滤 (不受全局 可播/失效 按钮影响); 其它栏目走原逻辑
-        if (activeSection === 'av4' && av4Filter !== 'all') {
-            var _avM = av4MapLoad();
-            data = data.filter(function(v){ return av4InFilter(v, av4Filter, _avM); });
-        } else if (activeSection !== 'av4' && playableFilter === 'playable') {
+        if (playableFilter === 'playable') {
             data = data.filter(function(v){ return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0); });
-        } else if (activeSection !== 'av4' && playableFilter === 'unplayable') {
+        } else if (playableFilter === 'unplayable') {
             data = data.filter(function(v){ return !(v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com') >= 0)); });
         }
         // 观看历史排序
@@ -8880,18 +8613,6 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         else if(activeSection === 'watchlater') $stat.innerHTML='📌 <b>稍后观看</b> — 共 '+count.toLocaleString()+' 个视频 <button onclick="clearWatchLater()" style="margin-left:8px;padding:2px 8px;border-radius:4px;border:1px solid #c08080;background:transparent;color:#c08080;cursor:pointer;font-size:10px;">清空</button>' + _cloudStatusHtml;
         else if(activeSection === 'favs') $stat.innerHTML='⭐ <b>我的收藏</b> — 共 '+count.toLocaleString()+' 个视频' + _cloudStatusHtml;
         else if(activeAuthor) $stat.innerHTML='@<b>'+esc(activeAuthor)+'</b> 的作品 — 共 '+count.toLocaleString()+' 个视频';
-        else if (activeSection === 'av4') {
-            var _am = av4MapLoad();
-            var _pa = 0, _ex = 0, _de = 0;
-            for (var _ai = 0; _ai < data.length; _ai++) {
-                var _as = ((data[_ai].has_mp4 === true || av4IsMp4Url(data[_ai].duration) || av4IsMp4Url(data[_ai].mp4_url)) ? 'playable' : ((_am[data[_ai].video_id] && _am[data[_ai].video_id].st) || 'unknown'));
-                if (_as === 'playable') _pa++;
-                else if (_as === 'dead') _de++;
-                else _ex++;
-            }
-            var _fl = av4Filter === 'all' ? '' : (av4Filter === 'playable' ? ' [仅可播]' : (av4Filter === 'dead' ? ' [仅失效]' : ' [跳原站]'));
-            $stat.innerHTML = '🎬 <b>AV4长片</b> — 共 ' + count.toLocaleString() + ' 个视频' + _fl + ' · 本页 <span style="color:#7a9a7a;">✅' + _pa + '</span> <span style="color:#c8a45c;">🔗' + _ex + '</span> <span style="color:#c08080;">⚠️' + _de + '</span>';
-        }
         else {
             var pc = data.filter(function(v){return v.has_mp4 === true || (v.duration && v.duration.indexOf('video.twimg.com')>=0);}).length;
             var uc = data.length - pc;
@@ -9131,7 +8852,6 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     function rpHide() { var el = _rpEl(); if (el) el.classList.remove('on'); }
     async function batchResolveMp4() {
         if (resolveRunning) { toast('正在解析中, 请稍后...'); return; }
-        if (typeof activeSection !== 'undefined' && activeSection === 'av4') { av4DetectVisible(); return; }
         var btn = document.getElementById('resolveBtn');
         resolveRunning = true; _resolveCancel = false;
         if (btn) { btn.disabled = true; btn.textContent = '解析中...'; }
@@ -10076,7 +9796,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     async function downloadSelected() {
         var ids = Object.keys(selectedIds);
         if (!ids.length) { toast('未选中任何视频'); return; }
-        if (ids.length > 10 && !confirm('选中 ' + ids.length + ' 个视频，确定全部下载？')) return;
+        if (ids.length > 10 && !(await uiConfirm('选中 ' + ids.length + ' 个视频，确定全部下载？'))) return;
         var hds = _h();
         var idList = ids.map(function(id){return '%22'+encodeURIComponent(id)+'%22'}).join(',');
         try {
@@ -10867,7 +10587,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         } catch(e) { toast('❌ 失败'); }
     }
     async function removeFriend(other) {
-        if (!confirm('确定删除好友 @' + other + ' 吗？')) return;
+        if (!(await uiConfirm('确定删除好友 @' + other + ' 吗？'))) return;
         var ok1 = await _delete(SUPABASE_URL + '/rest/v1/friends?user1=eq.'+escUrl(_username)+'&user2=eq.'+escUrl(other));
         var ok2 = await _delete(SUPABASE_URL + '/rest/v1/friends?user2=eq.'+escUrl(_username)+'&user1=eq.'+escUrl(other));
         if (ok1 || ok2) {
@@ -11569,7 +11289,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             : '<span style="font-size:9px;color:var(--vmuted);">没有更多了</span>';
     }
     async function cmDeleteUser(username, btn) {
-        var n = prompt('删除用户「' + username + '」的全部评论?\n输入 DELETE 确认', '');
+        var n = await uiPrompt('删除用户「' + username + '」的全部评论?\n输入 DELETE 确认', '');
         if (n !== 'DELETE') return;
         btn.textContent = '...';
         var ok = await _delete(SUPABASE_URL + '/rest/v1/video_comments?username=eq.' + escUrl(username));
@@ -11577,7 +11297,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         else { btn.textContent = '清此人'; toast('失败（仅站主可操作）'); }
     }
     async function cmDelete(id, btn) {
-        if (!confirm('删除这条评论?')) return;
+        if (!(await uiConfirm('删除这条评论?'))) return;
         btn.textContent = '...';
         var ok = await _delete(SUPABASE_URL + '/rest/v1/video_comments?id=eq.' + id);
         if (ok) { btn.closest('div').parentElement.remove(); toast('已删除'); }
@@ -11585,7 +11305,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
 
     async function deleteAnnounce(id, btn) {
-        if (!confirm('删除此公告?')) return;
+        if (!(await uiConfirm('删除此公告?'))) return;
         btn.textContent = '...';
         var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_announce_delete', {p_token: getLoginToken(), p_id: id});
         var ok = j && j[0] && j[0].ok;
@@ -11611,7 +11331,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
 
     async function clearAnnounces() {
-        if (!confirm('清除所有公告?')) return;
+        if (!(await uiConfirm('清除所有公告?'))) return;
         var j3 = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_announce_clear', {p_token: getLoginToken()});
         document.getElementById('annResult').textContent = (j3 && j3[0] && j3[0].ok) ? '✅ 已清除' : '❌ ' + (j3 && j3[0] && j3[0].message || '失败');
     }
@@ -11665,9 +11385,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         });
     }
 
-    function delUserAccount(username, btn) {
+    async function delUserAccount(username, btn) {
         if (username === SITE_OWNER) { toast('站主不可删除'); return; }
-        if (!confirm('确定删除用户 @'+username+' ？此操作不可撤销！')) return;
+        if (!(await uiConfirm('确定删除用户 @'+username+' ？此操作不可撤销！'))) return;
         if (btn) btn.textContent = '...';
         _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', {p_token: getLoginToken(), p_action: 'delete_user', p_target: username, p_detail: ''}).then(function(j){
             var ok = !!(j && j.length && j[0].ok);
@@ -11785,7 +11505,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     async function doAdminDelVideo() {
         var vid = document.getElementById('delVideoId').value.trim();
         if (!vid) return;
-        if (!confirm('确定删除 ' + vid + ' ?')) return;
+        if (!(await uiConfirm('确定删除 ' + vid + ' ?'))) return;
         addToRecycle(vid);
         // 走 token 鉴权 RPC (videos 表已对 anon 收回 DELETE)
         var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_delete_videos', {p_token: getLoginToken(), p_ids: [vid]});
@@ -11804,7 +11524,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         var ids = input.split(',').map(function(s){return s.trim();}).filter(function(s){return s;});
         var r = document.getElementById('delVideoResult');
         if (!ids.length) { r.textContent = '请输入视频ID'; return; }
-        if (!confirm('确定批量删除 ' + ids.length + ' 个视频？此操作不可撤销！')) return;
+        if (!(await uiConfirm('确定批量删除 ' + ids.length + ' 个视频？此操作不可撤销！'))) return;
         r.textContent = '删除中...'; r.style.color = 'var(--vmuted)';
         var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_delete_videos', {p_token: getLoginToken(), p_ids: ids});
         var deleted = (Array.isArray(j) && j.length) ? (parseInt(j[0].deleted) || 0) : 0;
@@ -11953,7 +11673,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             default:
                 r.textContent = '未知操作'; return;
         }
-        if (!confirm(confirmMsg)) { r.textContent = '已取消'; r.style.color = 'var(--vmuted)'; return; }
+        if (!(await uiConfirm(confirmMsg))) { r.textContent = '已取消'; r.style.color = 'var(--vmuted)'; return; }
         if (isRpc) {
             try {
                 var rj = await _post(SUPABASE_URL + '/rest/v1/rpc/reset_retry_batch', {p_limit: 300});
@@ -12281,7 +12001,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
     function addToRecycle(vid, title) { var rec = _lsGet('vid_recycle'); rec.unshift({ vid: vid, title: title || '', t: Date.now() }); if (rec.length > 200) rec = rec.slice(0, 200); _lsSet('vid_recycle', rec); }
     function restoreRecycle(i) { var rec = _lsGet('vid_recycle'); rec.splice(i, 1); _lsSet('vid_recycle', rec); toast('已从回收站移除'); adminDo('admin_recycle'); }
-    function clearRecycle() { if (!confirm('清空回收站?')) return; _lsSet('vid_recycle', []); adminDo('admin_recycle'); }
+    async function clearRecycle() { if (!(await uiConfirm('清空回收站?'))) return; _lsSet('vid_recycle', []); adminDo('admin_recycle'); }
 
     // -------- 👁️ 下架管理 --------
     function showAdminHidden(area) {
@@ -12312,7 +12032,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         h += '<button class="cheat-btn" onclick="clearBlocked()" style="width:100%;margin-top:6px;background:rgba(200,100,100,0.1);color:#c08080;">全部解除</button>';
         area.innerHTML = h;
     }
-    function clearBlocked() { if (!confirm('解除全部拉黑?')) return; localStorage.setItem('blocked_authors', '[]'); if (_loggedIn) cloudPushConfig(); loadVids(true); adminDo('admin_blocked'); }
+    async function clearBlocked() { if (!(await uiConfirm('解除全部拉黑?'))) return; localStorage.setItem('blocked_authors', '[]'); if (_loggedIn) cloudPushConfig(); loadVids(true); adminDo('admin_blocked'); }
 
     // -------- 🛒 VIP 套餐 --------
     function showAdminPlans(area) {
@@ -12634,9 +12354,9 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         });
     }
 
-    function deleteSitePage(slug, btn) {
+    async function deleteSitePage(slug, btn) {
         if (_username !== SITE_OWNER) { toast('只有站主可以删除页面'); return; }
-        if (!confirm('确定删除页面 /'+slug+' ？')) return;
+        if (!(await uiConfirm('确定删除页面 /'+slug+' ？'))) return;
         if (btn) btn.textContent = '...';
         _post(SUPABASE_URL + '/rest/v1/rpc/admin_sitepage_delete', {p_token: getLoginToken(), p_slug: slug}).then(function(j5){
             if (j5 && j5[0] && j5[0].ok) { toast('已删除 /'+slug); adminDo('pages'); }
@@ -13070,7 +12790,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
 
     async function adminRenameTag(oldTag) {
-        var newName = prompt('将栏目 "' + oldTag + '" 重命名为:', oldTag);
+        var newName = await uiPrompt('将栏目 "' + oldTag + '" 重命名为:', oldTag);
         if (!newName || newName === oldTag) return;
         try {
             var resp = await fetch(SUPABASE_URL + '/rest/v1/rpc/admin_rename_tag', {method:'POST', headers:_H(), body:JSON.stringify({p_token:getLoginToken(), p_old:oldTag, p_new:newName})});
@@ -13080,7 +12800,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
 
     async function adminDelTag(tag) {
-        if (!confirm('确定删除栏目 "' + tag + '" 的所有视频？此操作不可撤销！')) return;
+        if (!(await uiConfirm('确定删除栏目 "' + tag + '" 的所有视频？此操作不可撤销！'))) return;
         try {
             var dj = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_delete_videos', {p_token: getLoginToken(), p_filter: 'section', p_value: tag});
             if (Array.isArray(dj) && dj.length) { toast('✅ 已删除栏目 ' + tag + ' (' + (parseInt(dj[0].deleted)||0) + ' 个)'); adminDo('tag_mgmt'); }
@@ -13135,8 +12855,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         }).catch(function(){ area.innerHTML = 'scraped_videos表不存在 — 需执行SQL建表'; });
     }
 
-    function clearScrapedVids() {
-        if (!confirm('确定清空所有抓取的视频？')) return;
+    async function clearScrapedVids() {
+        if (!(await uiConfirm('确定清空所有抓取的视频？'))) return;
         fetch(SUPABASE_URL + '/rest/v1/rpc/admin_scraped_clear', {method:'POST', headers:_h(), body:JSON.stringify({p_token:getLoginToken()})}).then(function(){
             toast('已清空'); adminDo('scraped_vids');
         });
@@ -13418,7 +13138,7 @@ function getLoginToken() {
     async function adminBanQuick(u) { if (u === SITE_OWNER) { toast('站主不可封禁'); return; } var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', {p_token: getLoginToken(), p_action: 'ban', p_target: u, p_detail: '管理员封禁'}); toast((j && j.length && j[0].ok) ? '已封禁 @' + u : ('❌ ' + ((j && j.length && j[0].message) || '无权限'))); refreshAdminSearchResults(); }
     async function adminUnbanQuick(u) { var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', {p_token: getLoginToken(), p_action: 'unban', p_target: u, p_detail: ''}); toast((j && j.length && j[0].ok) ? '已解封 @' + u : '❌ 失败'); refreshAdminSearchResults(); }
     async function adminVerifyQuick(u, val) { var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', {p_token: getLoginToken(), p_action: val ? 'verify' : 'unverify', p_target: u, p_detail: ''}); toast((j && j.length && j[0].ok) ? '✅ 已操作' : '❌ 失败'); refreshAdminSearchResults(); }
-    async function adminDelQuick(u) { if (_username !== SITE_OWNER) { toast('仅站主可删除用户'); return; } if (u === SITE_OWNER) { toast('站主不可删除'); return; } if (!confirm('确定删除@' + u + '？')) return; var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', {p_token: getLoginToken(), p_action: 'delete_user', p_target: u, p_detail: ''}); toast((j && j.length && j[0].ok) ? '已删除 @' + u : '❌ 失败'); refreshAdminSearchResults(); }
+    async function adminDelQuick(u) { if (_username !== SITE_OWNER) { toast('仅站主可删除用户'); return; } if (u === SITE_OWNER) { toast('站主不可删除'); return; } if (!(await uiConfirm('确定删除@' + u + '？'))) return; var j = await _post(SUPABASE_URL + '/rest/v1/rpc/admin_exec', {p_token: getLoginToken(), p_action: 'delete_user', p_target: u, p_detail: ''}); toast((j && j.length && j[0].ok) ? '已删除 @' + u : '❌ 失败'); refreshAdminSearchResults(); }
 
     // 修改播放量
     function showAdminBulkViews(area) {
@@ -13483,7 +13203,7 @@ function getLoginToken() {
     async function doAdminResetViews() {
         var vid = document.getElementById('resetViewsId').value.trim();
         var r = document.getElementById('resetViewsResult');
-        if (!confirm('确定清零播放量？' + (vid ? '('+vid+')' : '(全部!)'))) return;
+        if (!(await uiConfirm('确定清零播放量？' + (vid ? '('+vid+')' : '(全部!)')))) return;
         r.textContent = '处理中...'; r.style.color = 'var(--vmuted)';
         var url = vid ? SUPABASE_URL + '/rest/v1/videos?video_id=eq.' + escUrl(vid) : SUPABASE_URL + '/rest/v1/videos?id=gt.0&limit=1000';
         var ok = await _adminPatch(url, {views: 0, updated_at: new Date().toISOString()});
@@ -13598,7 +13318,7 @@ function getLoginToken() {
             '<div id="dbCleanResult" style="font-size:10px;margin-top:6px;"></div>';
     }
     async function doAdminDbClean(type) {
-        if (!confirm('确定执行此操作？不可撤销!')) return;
+        if (!(await uiConfirm('确定执行此操作？不可撤销!'))) return;
         var r = document.getElementById('dbCleanResult');
         r.textContent = '处理中...'; r.style.color = 'var(--vmuted)';
         var ok = false;
@@ -14821,7 +14541,7 @@ function getLoginToken() {
         openBoardManage();
     }
     async function bcMute(gid, user) {
-        var mins = prompt('禁言时长(分钟):');
+        var mins = await uiPrompt('禁言时长(分钟):');
         if (mins === null) return; mins = parseInt(mins) || 0;
         if (mins <= 0) return;
         var ok = await _patch(SUPABASE_URL + '/rest/v1/board_members?group_id=eq.' + gid + '&username=eq.' + escUrl(user), { muted_until: new Date(Date.now() + mins * 60000).toISOString() });
@@ -14829,8 +14549,8 @@ function getLoginToken() {
         else toast('❌ 失败');
         openBoardManage();
     }
-    async function bcUnmute(gid, user) { if (!confirm('解禁 @' + user + ' ?')) return; var ok = await _patch(SUPABASE_URL + '/rest/v1/board_members?group_id=eq.' + gid + '&username=eq.' + escUrl(user), { muted_until: null }); if (ok) { toast('🔊 已解除禁言 @' + user); bcPublish(); } else toast('❌ 失败'); openBoardManage(); }
-    async function bcKick(gid, user) { if (!confirm('确定踢出 @' + user + ' ?')) return; var ok = await _delete(SUPABASE_URL + '/rest/v1/board_members?group_id=eq.' + gid + '&username=eq.' + escUrl(user)); if (ok) { toast('👢 已踢出 @' + user); bcPublish(); } else toast('❌ 失败'); openBoardManage(); }
+    async function bcUnmute(gid, user) { if (!(await uiConfirm('解禁 @' + user + ' ?'))) return; var ok = await _patch(SUPABASE_URL + '/rest/v1/board_members?group_id=eq.' + gid + '&username=eq.' + escUrl(user), { muted_until: null }); if (ok) { toast('🔊 已解除禁言 @' + user); bcPublish(); } else toast('❌ 失败'); openBoardManage(); }
+    async function bcKick(gid, user) { if (!(await uiConfirm('确定踢出 @' + user + ' ?'))) return; var ok = await _delete(SUPABASE_URL + '/rest/v1/board_members?group_id=eq.' + gid + '&username=eq.' + escUrl(user)); if (ok) { toast('👢 已踢出 @' + user); bcPublish(); } else toast('❌ 失败'); openBoardManage(); }
     async function bcPromote(gid, user) { var ok = await _patch(SUPABASE_URL + '/rest/v1/board_members?group_id=eq.' + gid + '&username=eq.' + escUrl(user), { role: 'admin' }); if (ok) { toast('✅ 已设为管理员'); bcPublish(); } else toast('❌ 失败'); openBoardManage(); }
     async function bcApproveJoin(gid, user) { await _patch(SUPABASE_URL + '/rest/v1/board_join_reqs?group_id=eq.' + gid + '&applicant=eq.' + escUrl(user), { status: 'approved' }); await _post(SUPABASE_URL + '/rest/v1/board_members', { group_id: gid, username: user, role: 'member' }); toast('✅ 已通过 @' + user); bcPublish(); bcPublishHub(); openBoardManage(); }
     async function bcRejectJoin(gid, user) { await _patch(SUPABASE_URL + '/rest/v1/board_join_reqs?group_id=eq.' + gid + '&applicant=eq.' + escUrl(user), { status: 'rejected' }); toast('已拒绝 @' + user); bcPublish(); openBoardManage(); }
@@ -15191,11 +14911,10 @@ function getLoginToken() {
                   '点右下「注册」→ 成功自动登录。',
                   '只有注册频繁被限才需 key: 去 xxapi.cn 免费领 → 粘贴到本卡点「保存」。'] },
         { id: 'jina', name: 'Jina 解析', free: '免费 · 可选 key 提额', url: 'https://jina.ai/reader',
-          desc: '外链解析: AV4 长片「站内播放」就靠它挖直链, 不填 key 免费可用。',
-          help: 'AV4 外链页点「⚡ 试试站内播放」能直接播, 省得跳去原站。',
-          steps: ['点侧栏「🎬 AV4长片」→ 点任意卡片。',
-                  '点「⚡ 试试站内播放」→ 出画面 = 解析链正常。',
-                  '挖不到会提示去原站, 属正常 (对方有墙)。',
+          desc: '外链解析: 解析视频直链时的兜底通道, 不填 key 免费可用。',
+          help: '直链解析失败时靠它读原页面再试, 省得跳去原站。',
+          steps: ['打开任意视频, 系统自动解析直链。',
+                  '解析失败时自动走 Jina 兜底再读一次原页面。',
                   '只有量大被限才需 key: 去 jina.ai 免费领 → 粘贴保存。'] },
         { id: 'twelvelabs', name: 'Twelve Labs', free: '注册送免费额度', url: 'https://twelvelabs.io',
           desc: 'AI 看片打标: 给无标题视频生成中文标题 + 类型标签, key 只存本机+本人账号。',
@@ -15597,8 +15316,8 @@ function getLoginToken() {
         ov.addEventListener('click', function (e) { if (e.target === ov) ov.classList.remove('on'); });
         document.getElementById('integClose').onclick = function () { ov.classList.remove('on'); };
         document.getElementById('integSecBtn').onclick = runSecCheck;
-        document.getElementById('integClear').onclick = function () {
-            if (W.confirm('清除本机所有联动 key? (云端账号数据不受影响, 下次同步会恢复)')) {
+        document.getElementById('integClear').onclick = async function () {
+            if (await uiConfirm('清除本机所有联动 key? (云端账号数据不受影响, 下次同步会恢复)')) {
                 lsSet({});
                 try { ['tl_api_key', 'turnstile_sitekey'].forEach(function (k) { try { W.localStorage.removeItem(k); } catch (e) {} }); } catch (e) {}
                 renderPanel(); toast('已清除本机联动 key');
@@ -15672,8 +15391,7 @@ function getLoginToken() {
                 h += '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">' +
                     '<input class="ai-input" id="f_jina_key" type="password" placeholder="可选, 留空=免费免key" value="' + esc(curStr) + '" style="flex:1;min-width:120px;">' +
                     '<button class="ai-btn" data-t="jina_save">保存</button>' +
-                    '<button class="ai-btn" data-t="jina_clear">清除</button>' +
-                    '<button class="ai-btn" data-t="go_av4">🚀 去 AV4 试试</button></div>';
+                    '<button class="ai-btn" data-t="jina_clear">清除</button></div>';
             } else if (c.id === 'twelvelabs') {
                 var tlCur = '';
                 try { tlCur = getKey('twelvelabs') || ''; } catch (e) {}
@@ -15784,7 +15502,6 @@ function getLoginToken() {
             set('jina_key', ($('f_jina_key').value || '').trim());
             toast('✅ 已保存 (外链解析提额)'); renderPanel();
         } else if (t === 'jina_clear') { clearKey('jina_key'); clearKey('jina'); toast('已清除'); renderPanel(); }
-        else if (t === 'go_av4') { go(function () { W.selectSidebar('av4', '🎬 AV4长片'); }); }
         else if (t === 'tl_save') {
             var kv = ($('f_tl_key').value || '').trim();
             setKey('twelvelabs', kv);
@@ -16762,7 +16479,7 @@ function getLoginToken() {
     for (var j = 0; j < btns.length; j++) {
       (function (btn) {
         btn.addEventListener('click', async function () {
-          if (!window.confirm('删除这条评论？')) return;
+          if (!(await uiConfirm('删除这条评论？'))) return;
           var ok = await deleteComment(btn.getAttribute('data-vdb-del'));
           if (ok) { toast('已删除'); refresh(videoId); }
           else toast('❌ 删除失败');
@@ -16959,8 +16676,8 @@ function getLoginToken() {
       ';color:' + (on ? 'var(--vprimary)' : 'var(--vtext)') + ';">' + esc(label) + '</button>';
   }
 
-  function newFolder() {
-    var name = window.prompt('新建分组名称（20字以内）:');
+  async function newFolder() {
+    var name = await uiPrompt('新建分组名称（20字以内）:');
     if (name === null) return;
     name = (name || '').trim().slice(0, 20);
     if (!name) { toast('分组名不能为空'); return; }
@@ -16973,9 +16690,9 @@ function getLoginToken() {
     toast('✅ 已创建分组「' + name + '」');
   }
 
-  function renameFolder() {
+  async function renameFolder() {
     if (cur === ALL) return;
-    var name = window.prompt('重命名分组「' + cur + '」为:', cur);
+    var name = await uiPrompt('重命名分组「' + cur + '」为:', cur);
     if (name === null) return;
     name = (name || '').trim().slice(0, 20);
     if (!name) { toast('分组名不能为空'); return; }
@@ -16989,9 +16706,9 @@ function getLoginToken() {
     toast('✅ 已重命名');
   }
 
-  function deleteFolder() {
+  async function deleteFolder() {
     if (cur === ALL) return;
-    if (!window.confirm('删除分组「' + cur + '」？（组内视频仍保留在收藏中）')) return;
+    if (!(await uiConfirm('删除分组「' + cur + '」？（组内视频仍保留在收藏中）'))) return;
     var o = load();
     delete o[cur];
     save(o);
@@ -17046,10 +16763,10 @@ function getLoginToken() {
     }
   }
 
-  function moveToFolder(vid) {
+  async function moveToFolder(vid) {
     var ns = names();
     var tip = ns.length ? '现有分组：' + ns.join('、') + '\n' : '还没有分组，';
-    var name = window.prompt(tip + '输入分组名（新名称=新建分组，留空=移出所有分组）:');
+    var name = await uiPrompt(tip + '输入分组名（新名称=新建分组，留空=移出所有分组）:');
     if (name === null) return;
     var o = load();
     // 先从所有分组移除
