@@ -1332,6 +1332,24 @@ self.onmessage = ({conn, data}) => {
             font-family:var(--font-mono);
         }
         .sidebar-item.active .badge { color:var(--vprimary); }
+        /* ============ App 底部标签栏 ============ */
+        #appTabBar { position:fixed; left:0; right:0; bottom:0; z-index:90; display:none;
+            background:rgba(10,10,14,0.88); backdrop-filter:var(--glass-blur-lg); -webkit-backdrop-filter:var(--glass-blur-lg);
+            border-top:1px solid var(--glass-dark-border); padding-bottom:env(safe-area-inset-bottom, 0px); }
+        body.dark-mode #appTabBar { display:block; }
+        #appTabBar .app-tab-row { display:flex; max-width:640px; margin:0 auto; }
+        .app-tab { flex:1; background:none; border:none; cursor:pointer; padding:7px 0 6px; display:flex; flex-direction:column; align-items:center; gap:2px;
+            color:var(--vmuted); font-size:10px; font-family:inherit; position:relative; -webkit-tap-highlight-color:transparent; }
+        .app-tab .app-tab-ico { font-size:21px; line-height:1.15; filter:grayscale(0.6); opacity:0.75; }
+        .app-tab.on { color:var(--vprimary); }
+        .app-tab.on .app-tab-ico { filter:none; opacity:1; }
+        .app-tab-badge { position:absolute; top:2px; left:calc(50% + 2px); min-width:16px; height:16px; padding:0 4px; border-radius:8px;
+            background:#c0392b; color:#fff; font-size:10px; line-height:16px; text-align:center; display:none; box-sizing:border-box; }
+        body.dark-mode .view-video { padding-bottom:calc(58px + env(safe-area-inset-bottom, 0px)); }
+        .lib-hub-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+        .lib-hub-item { background:var(--vcard); border:1px solid var(--vborder); border-radius:12px; padding:18px 10px; text-align:center; cursor:pointer; color:var(--vtext); font-size:14px; font-family:inherit; width:100%; }
+        .lib-hub-item .ico { display:block; font-size:26px; margin-bottom:6px; }
+        .lib-hub-item small { display:block; color:var(--vmuted); font-size:11px; margin-top:3px; }
         .sidebar-divider { height:1px; background:var(--vborder); margin:8px 0; }
 
         /* ============ 收藏按钮 ============ */
@@ -2345,6 +2363,16 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <button class="sidebar-item" onclick="openChat(SITE_OWNER)"><span class="ico">📨</span>联系站主</button>
         </div>
     </nav>
+
+    <!-- ==================== App 底部标签栏 ==================== -->
+    <div id="appTabBar">
+        <div class="app-tab-row">
+            <button class="app-tab on" data-tab="videos" onclick="appTabGo('videos')"><span class="app-tab-ico">🎬</span>视频</button>
+            <button class="app-tab" data-tab="friends" onclick="appTabGo('friends')"><span class="app-tab-ico">👥</span>好友<span class="app-tab-badge" id="appTabFriendBadge">0</span></button>
+            <button class="app-tab" data-tab="library" onclick="appTabGo('library')"><span class="app-tab-ico">📚</span>片库</button>
+            <button class="app-tab" data-tab="me" onclick="appTabGo('me')"><span class="app-tab-ico">👤</span>我的</button>
+        </div>
+    </div>
 
     <!-- ==================== 游戏视图 ==================== -->
     <div class="view-game" id="gameView">
@@ -4251,6 +4279,61 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         document.getElementById('sidebarOverlay').classList.remove('on');
         document.getElementById('hamburgerBtn').classList.remove('on');
     }
+    // ============ App 底部标签栏 ============
+    var _appTab = 'videos';        // 当前内容标签: videos / friends / library
+    var _appLastFeed = '';         // 视频标签上次看的分区
+    var _appScroll = {};           // 好友/片库的滚动位置记忆
+    function appTabPaint() {
+        var meOn = document.getElementById('sidebar').classList.contains('on');
+        var tabs = document.querySelectorAll('#appTabBar .app-tab');
+        for (var i = 0; i < tabs.length; i++) {
+            var t = tabs[i].dataset.tab;
+            tabs[i].classList.toggle('on', t === 'me' ? meOn : (t === _appTab && !meOn));
+        }
+    }
+    function appTabSet(t) { _appTab = t; appTabPaint(); }
+    function appTabGo(t) {
+        _appScroll[_appTab] = window.scrollY || 0;
+        if (t === 'me') {
+            if (document.getElementById('sidebar').classList.contains('on')) closeSidebar();
+            else toggleSidebar();
+            appTabPaint();
+            return;
+        }
+        if (t === 'friends') {
+            if (typeof _loggedIn !== 'undefined' && !_loggedIn) { openFriendsPanel('list'); return; }
+            closeSidebar();
+            appTabSet('friends');
+            openFriendsPanel('list');
+        } else if (t === 'library') {
+            closeSidebar();
+            appTabSet('library');
+            openLibraryHub();
+        } else {
+            closeSidebar();
+            appTabSet('videos');
+            selectSidebar(_appLastFeed, '📺 视频');
+            return;
+        }
+        var y = _appScroll[t] || 0;
+        setTimeout(function(){ window.scrollTo(0, y); }, 60);
+    }
+    function openLibraryHub() {
+        _friendsPanelOpen = true;
+        activeAuthor = '';
+        var ah = document.getElementById('authorHeader'); if (ah) ah.classList.remove('on');
+        var fb = document.getElementById('authorFollowBtn'); if (fb) fb.style.display = 'none';
+        closeSidebar();
+        $grid.classList.remove('compact', 'large', 'author-list');
+        $grid.innerHTML = '<div class="stats-panel"><h2>📚 我的片库</h2><div class="lib-hub-grid">' +
+            '<button class="lib-hub-item" onclick="selectSidebar(\'favs\',\'⭐ 我的收藏\')"><span class="ico">⭐</span>我的收藏<small>收藏的视频都在这里</small></button>' +
+            '<button class="lib-hub-item" onclick="showFollowsPanel()"><span class="ico">👤</span>我的关注<small>关注的作者与更新</small></button>' +
+            '<button class="lib-hub-item" onclick="selectSidebar(\'watchlater\',\'📌 稍后观看\')"><span class="ico">📌</span>稍后观看<small>先存着, 有空再看</small></button>' +
+            '<button class="lib-hub-item" onclick="selectSidebar(\'history\',\'🕐 观看历史\')"><span class="ico">🕐</span>观看历史<small>最近看过的视频</small></button>' +
+            '</div></div>';
+        $stat.textContent = '片库';
+        window.scrollTo({top: 0, behavior: 'instant'});
+    }
     function selectSidebar(section, label) {
         // 更新顶部 tabs
         var tabs = document.querySelectorAll('#vidTabs .vid-tab');
@@ -4269,6 +4352,8 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         updateFavsBadge();
         updateHistBadge();
     updateWlBadge();
+        if (section === 'favs' || section === 'watchlater' || section === 'history') appTabSet('library');
+        else if (section !== 'ghconfig' && section !== 'sbconfig') { _appLastFeed = section; appTabSet('videos'); }
         activeSection = section;
         activeAuthor = '';
         _friendsPanelOpen = false;
@@ -4394,6 +4479,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         }
     }
     function showFollowsPanel() {
+        appTabSet('library');
         _friendsPanelOpen = false;
         activeAuthor = '';
         var ah = document.getElementById('authorHeader');
@@ -10577,6 +10663,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     var _friendsPanelOpen = false;
     function openFriendsPanel(tab) {
         if (!_loggedIn) { toast('请先登录'); showLoginDialog(); return; }
+        appTabSet('friends');
         _friendTab = tab || 'list';
         _friendsPanelOpen = true;
         $grid.classList.remove('compact', 'large', 'author-list');
@@ -10736,6 +10823,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         if (!badge && !lbadge) return;
         if (!_loggedIn) {
             if (badge) badge.style.display = 'none';
+            var _tb0 = document.getElementById('appTabFriendBadge'); if (_tb0) _tb0.style.display = 'none';
             if (lbadge) lbadge.textContent = '0';
             return;
         }
@@ -10746,6 +10834,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             else if (rows[i].status === 'pending' && rows[i].user2 === _username) pending++;
         }
         if (badge) { badge.textContent = pending; badge.style.display = pending > 0 ? '' : 'none'; }
+        var _tb = document.getElementById('appTabFriendBadge'); if (_tb) { _tb.textContent = pending; _tb.style.display = pending > 0 ? '' : 'none'; }
         if (lbadge) lbadge.textContent = friends;
         if (pending > 0 && pending !== _lastPendingShown) toast('📩 ' + pending + ' 个新的好友申请');
         _lastPendingShown = pending;
