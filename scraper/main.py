@@ -225,10 +225,25 @@ def _headers(referer=None):
 
 # ---------------------------------------------------------------- HTTP 抓取器
 def _looks_twjn_page(text):
-    """twjn.php 的页面特征 (用于探测解析层是否可用, 不依赖某个具体视频是否还在)。"""
+    """twjn.php 的页面特征 (用于探测解析层是否可用, 不依赖某个具体视频是否还在)。
+    注意: 不能只认标题 "Link to external site" — 那只是空壳页的标题, 壳里
+    可能根本没有 atob 载荷 (代理层剥脚本/源站对机房 IP 只给壳时就会这样),
+    认壳不认载荷会让探测误判可用、整批解析悄悄全灭。"""
     if not text:
         return False
-    return ("atob(" in text) or ("Data does not exist" in text) or ("Link to external site" in text)
+    return ("atob(" in text) or ("Data does not exist" in text)
+
+
+def _resolve_payload_ok(text):
+    """twjn 返回是否带回了可判定结果: 有 mp4 直链, 或有明确的已删除提示。
+    空壳页/代理错误页 (如 codetabs 的 'error code: 522') 一律不算成功 —
+    解析必须按内容验收, 不能按「HTTP 200 且有文本」验收。"""
+    if not text:
+        return False
+    if _extract_mp4(text):
+        return True
+    low = text.lower()
+    return any(h in low for h in _DELETED_HINTS)
 
 
 def _extract_mp4(text):
@@ -456,10 +471,18 @@ class Fetcher:
             if self.blocked:
                 return None
         if self.resolve_mode:
-            text = self._tier_retry(self.resolve_mode, url, referer, tries)
-            if text:
-                self._stats["ok"] += 1
-                return text
+            # 按内容验收: 拿到文本不算成功, 文本里必须有 mp4 载荷或已删除提示。
+            # 否则空壳页/代理错误页会被误判成功, 整批视频假解析、永远待重爬。
+            for i in range(max(1, tries)):
+                try:
+                    text = self._get(self.resolve_mode, url, referer)
+                except Exception:
+                    text = None
+                if _resolve_payload_ok(text):
+                    self._stats["ok"] += 1
+                    return text
+                if i < tries - 1:
+                    time.sleep(0.6 + i * 0.8)
             self._stats["fail"] += 1
             for alt in self.RAW_TIERS:
                 if alt == self.resolve_mode:
@@ -468,7 +491,7 @@ class Fetcher:
                     text = self._get(alt, url, referer)
                 except Exception:
                     text = None
-                if text:
+                if _resolve_payload_ok(text):
                     self.resolve_mode = alt
                     self._stats["tier_switched"] = self._stats.get("tier_switched", 0) + 1
                     self._stats["ok"] += 1
@@ -476,7 +499,7 @@ class Fetcher:
                     return text
         if self.jina_ok:
             j = self._jina_get(url)
-            if j:
+            if j and _resolve_payload_ok(j):
                 self._stats["ok"] += 1
                 self._stats["jina_ok"] += 1
                 return j

@@ -1,0 +1,1 @@
+{"display":"standalone","icons":[{"sizes":"192x192","src":"./icon-192.png","type":"image/png"},{"sizes":"512x512","src":"./icon-512.png","type":"image/png"}],"name":"2048 在线小游戏","short_name":"2048","start_url":"./index.html","theme_color":"#08080a"}

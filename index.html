@@ -57,8 +57,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="2048">
 <meta name="format-detection" content="telephone=no">
-<link rel="apple-touch-icon" href="https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png">
-<link rel="icon" sizes="192x192" href="https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<link rel="icon" sizes="192x192" href="./icon-192.png">
 <meta name="build-iso" content="2026-10-10T18:08:59.273Z">
 <title>2048 在线小游戏</title>
 <script>window.root = window.root || {};</script>
@@ -158,10 +158,10 @@ self.onmessage = ({conn, data}) => {
    (index.html 是 body 片段, 不能写 <head>, 所以用脚本往 head 里注入。) */
 (function () {
     "use strict";
-    var ICON_180 = "https://user.uploads.dev/file/6a4ba6f675b0c8c7971d5d3441266873.png";
-    var ICON_192 = "https://user.uploads.dev/file/02ca975e5eb04ebef6aefc589299fba9.png";
-    var ICON_512 = "https://user.uploads.dev/file/01a111312f9c3fc644efbfb4d1adeac8.png";
-    var MANIFEST = "https://user.uploads.dev/file/6671c3eb28c6f02f5c5a06c7c55e68d5.txt";
+    var ICON_180 = "https://jiajiababa1.github.io/video-db/icon-180.png";
+    var ICON_192 = "https://jiajiababa1.github.io/video-db/icon-192.png";
+    var ICON_512 = "https://jiajiababa1.github.io/video-db/icon-512.png";
+    var MANIFEST = "https://jiajiababa1.github.io/video-db/manifest-2048.json";
     function ensureLink(rel, href, sizes) {
         var l = document.querySelector('link[rel="' + rel + '"]' + (sizes ? '[sizes="' + sizes + '"]' : ''));
         if (!l) { l = document.createElement("link"); l.rel = rel; document.head.appendChild(l); }
@@ -5623,7 +5623,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         video.muted = false;
         video.preload = 'auto';
         video.referrerPolicy = 'no-referrer';
-        video.style.cssText = 'width:100%;max-height:60vh;max-height:60dvh;background:#000;display:block;outline:none;';
+        video.style.cssText = 'width:100%;aspect-ratio:16/9;max-height:72vh;max-height:72dvh;object-fit:cover;background:#000;display:block;outline:none;';
         applyVideoAttrs(video);
         video.src = mp4Url;
         try { video.load(); } catch (e) {}
@@ -5910,7 +5910,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         video.autoplay = true;
         applyVideoAttrs(video);
         video.setAttribute('preload', 'auto');
-        video.style.cssText = 'width:100%;max-height:50vh;max-height:50dvh;background:#000;border-radius:var(--radius-sm);display:block;';
+        video.style.cssText = 'width:100%;aspect-ratio:16/9;max-height:72vh;max-height:72dvh;object-fit:cover;background:#000;border-radius:var(--radius-sm);display:block;';
         wrap.innerHTML = '';
         wrap.appendChild(video);
         // 先挂到 DOM 再设 src 并显式 load(): 偶发(尤其首次)会卡在 networkState=NO_SOURCE, readyState 永远为 0
@@ -9348,7 +9348,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         try {
             var hds = _h();
             var recentCut = new Date(Date.now() - 3600000).toISOString();
-            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id,monsnode_video_id&needs_rescrape=is.true&monsnode_video_id=not.is.null&or=(mp4_checked_at.is.null,mp4_checked_at.lt.' + recentCut + ')&order=mp4_checked_at.asc.nullsfirst&limit=6', { headers: hds });
+            var resp = await fetch(SUPABASE_URL + '/rest/v1/videos?select=video_id,monsnode_video_id&needs_rescrape=is.true&removed=not.is.true&monsnode_video_id=not.is.null&or=(mp4_checked_at.is.null,mp4_checked_at.lt.' + recentCut + ')&order=mp4_checked_at.asc.nullsfirst&limit=6', { headers: hds });
             if (!resp.ok) return;
             var vids = await resp.json();
             if (!vids.length) { updateBgInfo('✅ 后台解析: 暂无待重爬'); return; }
@@ -10232,7 +10232,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             var p = [];
             p.push(fetch(SUPABASE_URL + '/rest/v1/videos?select=id&limit=1', {headers:{...hds,'Prefer':'count=exact'}}));
             p.push(fetch(SUPABASE_URL + '/rest/v1/videos?select=id&has_mp4=is.true&limit=1', {headers:{...hds,'Prefer':'count=exact'}}));
-            p.push(fetch(SUPABASE_URL + '/rest/v1/videos?select=id&needs_rescrape=is.true&limit=1', {headers:{...hds,'Prefer':'count=exact'}}));
+            p.push(fetch(SUPABASE_URL + '/rest/v1/videos?select=id&needs_rescrape=is.true&has_mp4=is.false&removed=not.is.true&limit=1', {headers:{...hds,'Prefer':'count=exact'}}));
             var results = await Promise.all(p);
             var total = 0, playable = 0, needs = 0;
             for (var ri = 0; ri < results.length; ri++) {
