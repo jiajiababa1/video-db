@@ -1350,6 +1350,8 @@ self.onmessage = ({conn, data}) => {
         .lib-hub-item { background:var(--vcard); border:1px solid var(--vborder); border-radius:12px; padding:18px 10px; text-align:center; cursor:pointer; color:var(--vtext); font-size:14px; font-family:inherit; width:100%; }
         .lib-hub-item .ico { display:block; font-size:26px; margin-bottom:6px; }
         .lib-hub-item small { display:block; color:var(--vmuted); font-size:11px; margin-top:3px; }
+        .lib-hub-label { color:var(--vmuted); font-size:11px; letter-spacing:1px; margin:16px 0 2px; }
+        .lib-hub-label:first-of-type { margin-top:8px; }
         .sidebar-divider { height:1px; background:var(--vborder); margin:8px 0; }
 
         /* ============ 收藏按钮 ============ */
@@ -4284,27 +4286,22 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     var _appLastFeed = '';         // 视频标签上次看的分区
     var _appScroll = {};           // 好友/片库的滚动位置记忆
     function appTabPaint() {
-        var meOn = document.getElementById('sidebar').classList.contains('on');
         var tabs = document.querySelectorAll('#appTabBar .app-tab');
         for (var i = 0; i < tabs.length; i++) {
-            var t = tabs[i].dataset.tab;
-            tabs[i].classList.toggle('on', t === 'me' ? meOn : (t === _appTab && !meOn));
+            tabs[i].classList.toggle('on', tabs[i].dataset.tab === _appTab);
         }
     }
     function appTabSet(t) { _appTab = t; appTabPaint(); }
     function appTabGo(t) {
         _appScroll[_appTab] = window.scrollY || 0;
-        if (t === 'me') {
-            if (document.getElementById('sidebar').classList.contains('on')) closeSidebar();
-            else toggleSidebar();
-            appTabPaint();
-            return;
-        }
         if (t === 'friends') {
-            if (typeof _loggedIn !== 'undefined' && !_loggedIn) { openFriendsPanel('list'); return; }
             closeSidebar();
             appTabSet('friends');
-            openFriendsPanel('list');
+            openSocialHub();
+        } else if (t === 'me') {
+            closeSidebar();
+            appTabSet('me');
+            openMeHub();
         } else if (t === 'library') {
             closeSidebar();
             appTabSet('library');
@@ -4330,8 +4327,76 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             '<button class="lib-hub-item" onclick="showFollowsPanel()"><span class="ico">👤</span>我的关注<small>关注的作者与更新</small></button>' +
             '<button class="lib-hub-item" onclick="selectSidebar(\'watchlater\',\'📌 稍后观看\')"><span class="ico">📌</span>稍后观看<small>先存着, 有空再看</small></button>' +
             '<button class="lib-hub-item" onclick="selectSidebar(\'history\',\'🕐 观看历史\')"><span class="ico">🕐</span>观看历史<small>最近看过的视频</small></button>' +
+            '</div><div class="lib-hub-label">我的作品与数据</div><div class="lib-hub-grid">' +
+            '<button class="lib-hub-item" onclick="openUploadDialog()"><span class="ico">📤</span>上传作品<small>把图片发到作品墙</small></button>' +
+            '<button class="lib-hub-item" onclick="openSyncDialog()"><span class="ico">☁️</span>云同步<small>收藏与历史跨设备同步</small></button>' +
+            '<button class="lib-hub-item" onclick="exportFavorites()"><span class="ico">💾</span>导出收藏<small>把收藏导出为文件</small></button>' +
+            '<button class="lib-hub-item" onclick="importFavorites()"><span class="ico">📥</span>导入收藏<small>从文件恢复收藏</small></button>' +
             '</div></div>';
         $stat.textContent = '片库';
+        window.scrollTo({top: 0, behavior: 'instant'});
+    }
+    function openSocialHub() {
+        _friendsPanelOpen = true;
+        activeAuthor = '';
+        var ah = document.getElementById('authorHeader'); if (ah) ah.classList.remove('on');
+        var fb = document.getElementById('authorFollowBtn'); if (fb) fb.style.display = 'none';
+        closeSidebar();
+        $grid.classList.remove('compact', 'large', 'author-list');
+        $grid.innerHTML = '<div class="stats-panel"><h2>👥 社交</h2>' +
+            '<div class="lib-hub-label">好友</div><div class="lib-hub-grid">' +
+            '<button class="lib-hub-item" onclick="openFriendsPanel(\'list\')"><span class="ico">👥</span>我的好友<small>好友列表与私信</small></button>' +
+            '<button class="lib-hub-item" onclick="openFriendsPanel(\'requests\')"><span class="ico">📩</span>好友申请<small>收到的与发出的申请</small></button>' +
+            '<button class="lib-hub-item" onclick="openFriendsPanel(\'add\')"><span class="ico">➕</span>添加好友<small>按用户名查找添加</small></button>' +
+            '<button class="lib-hub-item" onclick="openBoardHub()"><span class="ico">💬</span>板块群聊<small>兴趣板块与群组聊天</small></button>' +
+            '</div><div class="lib-hub-label">社区</div><div class="lib-hub-grid">' +
+            '<button class="lib-hub-item" onclick="showWorks()"><span class="ico">🎨</span>作品墙<small>大家上传的图片作品</small></button>' +
+            '<button class="lib-hub-item" onclick="openChat(SITE_OWNER)"><span class="ico">📨</span>联系站主<small>私信站主反馈问题</small></button>' +
+            '</div></div>';
+        $stat.textContent = '社交';
+        window.scrollTo({top: 0, behavior: 'instant'});
+    }
+    function openMeHub() {
+        _friendsPanelOpen = true;
+        activeAuthor = '';
+        var ah = document.getElementById('authorHeader'); if (ah) ah.classList.remove('on');
+        var fb = document.getElementById('authorFollowBtn'); if (fb) fb.style.display = 'none';
+        closeSidebar();
+        $grid.classList.remove('compact', 'large', 'author-list');
+        var logged = (typeof _loggedIn !== 'undefined' && _loggedIn);
+        window._meName = (typeof _username !== 'undefined' && _username) ? _username : '';
+        var h = '<div class="stats-panel"><h2>👤 我的</h2>';
+        h += '<div class="lib-hub-label">账号</div><div class="lib-hub-grid">';
+        if (logged) {
+            h += '<button class="lib-hub-item" onclick="showUserProfile(window._meName)"><span class="ico">🪪</span>我的主页<small>当前登录: ' + window._meName + '</small></button>' +
+                 '<button class="lib-hub-item" onclick="showPwdDialog()"><span class="ico">🔑</span>修改密码<small>更换登录密码</small></button>' +
+                 '<button class="lib-hub-item" onclick="clearLoginSession()"><span class="ico">🚪</span>退出登录<small>退出当前账号</small></button>';
+        } else {
+            h += '<button class="lib-hub-item" onclick="showLoginDialog()"><span class="ico">🔐</span>登录 / 注册<small>登录后可用好友/同步等功能</small></button>';
+        }
+        h += '<button class="lib-hub-item" onclick="openSyncDialog()"><span class="ico">☁️</span>云同步<small>收藏与历史跨设备同步</small></button></div>';
+        h += '<div class="lib-hub-label">工具</div><div class="lib-hub-grid">' +
+            '<button class="lib-hub-item" onclick="enterMultiselect()"><span class="ico">☑️</span>多选模式<small>批量操作视频卡片</small></button>' +
+            '<button class="lib-hub-item" onclick="showPopularAuthors()"><span class="ico">🏆</span>热门作者<small>作品最多的作者排行</small></button>' +
+            '<button class="lib-hub-item" onclick="showStats()"><span class="ico">📊</span>数据库统计<small>视频与作者数据概览</small></button>' +
+            '<button class="lib-hub-item" onclick="toggleGameDark()"><span class="ico">🌙</span>游戏暗色<small>切换 2048 游戏外观</small></button></div>';
+        var sa = document.getElementById('sidebarAdmin');
+        var oc = document.getElementById('ownerCfgSection');
+        var showAdmin = sa && sa.style.display !== 'none';
+        var showCfg = oc && oc.style.display !== 'none';
+        if (showAdmin || showCfg) {
+            h += '<div class="lib-hub-label">站主</div><div class="lib-hub-grid">';
+            if (showAdmin) h += '<button class="lib-hub-item" onclick="showAdminPanel()"><span class="ico">🛠️</span>管理面板<small>用户/视频/公告管理</small></button>';
+            if (showCfg) h += '<button class="lib-hub-item" onclick="ghConfigPrompt()"><span class="ico">🤖</span>GitHub 云端解析<small>云端爬虫配置</small></button>' +
+                              '<button class="lib-hub-item" onclick="sbConfigPrompt()"><span class="ico">🐘</span>Supabase 管理<small>数据库连接配置</small></button>';
+            h += '</div>';
+        }
+        h += '<div class="lib-hub-label">数据</div><div class="lib-hub-grid">' +
+            '<button class="lib-hub-item" onclick="clearHistory()"><span class="ico">🧹</span>清空观看历史<small>只清历史记录</small></button>' +
+            '<button class="lib-hub-item" onclick="clearAllPersonal()"><span class="ico">🗑️</span>清空全部数据<small>收藏/历史/本地数据全清</small></button></div>';
+        h += '</div>';
+        $grid.innerHTML = h;
+        $stat.textContent = '我的';
         window.scrollTo({top: 0, behavior: 'instant'});
     }
     function selectSidebar(section, label) {
