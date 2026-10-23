@@ -1,0 +1,22 @@
+name: Check (语法与清单校验)
+
+# 每次 push 到 main 或 PR 时自动跑: 拦下 JS/Python 语法错误和坏的 JSON,
+# 避免坏代码直接上线。只做检查, 不部署 (部署仍由 pages.yml 负责)。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 运行静态检查
+        run: python3 tools/check_site.py
