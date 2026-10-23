@@ -6514,12 +6514,14 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         if (q.trim() && !opts.quiet && !_special) ssRecentAdd(q.trim());
         ssResetPool();
         ssUpdateTools();
+        _friendsPanelOpen = false; appTabSet('videos');   // 在功能页上搜索 → 回到视频标签看结果
         loadVids(true);
     }
     function clearSearch() {
         clearTimeout(ssTimer); clearTimeout(ssSuggestTimer);
         $search.value = ''; sq = ''; $clear.style.display = 'none';
         ssResetPool(); ssUpdateTools(); ssClosePanel();
+        _friendsPanelOpen = false; appTabSet('videos');
         loadVids(true); $search.focus();
     }
 
@@ -8821,6 +8823,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
 
     // ============ 通用: 过滤 + 渲染统计 + 分页 ============
     function applyFiltersAndRender(data, count, append) {
+        if (_friendsPanelOpen) return data;   // 加载途中切到了功能页: 结果直接作废, 不往面板里追加卡片
         // AV4 栏目走独立四态过滤 (不受全局 可播/失效 按钮影响); 其它栏目走原逻辑
         if (activeSection === 'av4' && av4Filter !== 'all') {
             var _avM = av4MapLoad();
@@ -8904,6 +8907,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
 
     // ============ 加载数据 ============
     async function loadVids(reset){
+        if (_friendsPanelOpen) return;   // 功能页(好友/片库/我的等面板)打开时, 禁止视频流加载往面板里塞卡片
         if(loading){ if(reset) ssPendingReload=true; return; }   // 正在加载时又有新查询 → 标记, 结束后补跑 (避免连打搜索丢结果)
         loading=true;
         // 离开作品墙时恢复视频视图 (修复: 作品墙返回后卡住无法回到视频库)
@@ -8971,7 +8975,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
 
     // ============ 无限滚动 ============
     var observer=new IntersectionObserver(function(entries){
-        if(entries[0].isIntersecting&&hasMore&&!loading)loadMore();
+        if(entries[0].isIntersecting&&hasMore&&!loading&&!_friendsPanelOpen)loadMore();
     },{rootMargin:'200px'});
     observer.observe($sentinel);
 
@@ -8989,7 +8993,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     window.addEventListener('touchend',function(){
         if ($pull.classList.contains('active')) {
             $pull.classList.remove('active');
-            loadVids(true); // 下拉刷新仅刷新本地列表, 不触发云端爬虫
+            if (!_friendsPanelOpen) loadVids(true); // 下拉刷新仅刷新本地列表, 不触发云端爬虫; 功能页上不刷新视频流
         }
         pulling = false;
     });
