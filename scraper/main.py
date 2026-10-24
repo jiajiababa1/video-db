@@ -695,17 +695,34 @@ def _iwara_stale_ids(limit):
 def crawl_iwara(fetcher, deadline, seen):
     """签名与其余 crawl_* 一致 (fetcher 未用: iwara 走官方 API 直连)"""
     out = []
-    client = httpx.Client(timeout=30, headers={
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"})
+    ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+    client = httpx.Client(timeout=30, headers={"User-Agent": ua})
     try:
-        def detail(vid):
+        def _get_json(url, params=None):
+            """先 httpx 直连; 被拦 (非 200/异常) 时换 curl_cffi 伪装 Chrome 指纹重试。
+            iwara 在 Cloudflare 后面, Actions 机房 IP + httpx 默认指纹会被秒拦
+            (实测整轮 1 秒结束、列表请求非 200 静默退出)。失败原因打日志便于定位。"""
             try:
-                r = client.get(IW_API + "/video/" + vid)
+                r = client.get(url, params=params)
                 if r.status_code == 200:
-                    return _iwara_record(r.json())
-            except Exception:
-                pass
+                    return r.json()
+                log(f"  [iwara] GET {url} -> HTTP {r.status_code} (httpx), 换 curl_cffi 重试", "WARN")
+            except Exception as e:
+                log(f"  [iwara] GET {url} httpx 异常: {str(e)[:80]}, 换 curl_cffi 重试", "WARN")
+            if creq is not None:
+                try:
+                    rr = creq.get(url, params=params, headers={"User-Agent": ua},
+                                  timeout=30, impersonate="chrome")
+                    if rr.status_code == 200:
+                        return rr.json()
+                    log(f"  [iwara] GET {url} -> HTTP {rr.status_code} (curl_cffi)", "WARN")
+                except Exception as e:
+                    log(f"  [iwara] GET {url} curl_cffi 异常: {str(e)[:80]}", "WARN")
             return None
+
+        def detail(vid):
+            data = _get_json(IW_API + "/video/" + vid)
+            return _iwara_record(data) if data else None
 
         # 1) 回访已入库最旧的一批, 刷新将过期的签名直链
         refreshed = 0
@@ -724,15 +741,13 @@ def crawl_iwara(fetcher, deadline, seen):
         for sort in ("date", "trending"):
             page = 0
             while len(out) < IW_MAX and time.time() < deadline:
-                try:
-                    r = client.get(IW_API + "/videos", params={
-                        "sort": sort, "rating": "general",
-                        "page": page, "limit": 32})
-                    if r.status_code != 200:
-                        break
-                    items = (r.json() or {}).get("results") or []
-                except Exception:
+                data = _get_json(IW_API + "/videos", params={
+                    "sort": sort, "rating": "general",
+                    "page": page, "limit": 32})
+                if data is None:
+                    log(f"  [iwara] sort={sort} page={page} 列表获取失败, 本类跳过", "WARN")
                     break
+                items = data.get("results") or []
                 if not items:
                     break
                 for it in items:
@@ -1783,6 +1798,8 @@ def iwara_only():
         stats["videos_found"] = len(vids)
         if vids:
             stats["videos_saved"] = sb_save(vids)
+        else:
+            stats["errors"].append("iwara 本轮抓到 0 条 (原因见运行日志的 [iwara] 行)")
         log(f"iwara 专属抓取完成: 发现 {stats['videos_found']}, 保存 {stats['videos_saved']}")
     except Exception as e:
         import traceback
