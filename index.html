@@ -2553,6 +2553,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <button class="vid-tab" data-section="iwara">🎨 Iwara</button>
             <button class="vid-tab" data-section="favs" id="favTab" style="display:none;">⭐ 收藏</button>
             <button class="vid-tab" data-section="history" id="histTab" style="display:none;">🕐 历史</button>
+            <button id="iwaraScrapeBtn" onclick="triggerIwaraScraper()" style="display:none;margin-left:auto;align-self:center;padding:6px 12px;border:1px solid var(--vprimary);border-radius:999px;background:transparent;color:var(--vprimary);font-size:12px;cursor:pointer;white-space:nowrap;">🕷️ 抓取 Iwara</button>
         </div>
         <div class="author-header" id="authorHeader">
             <button class="author-back" onclick="backToMainView()">← 返回全部</button>
@@ -4438,6 +4439,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         else if (section !== 'ghconfig' && section !== 'sbconfig') { _appLastFeed = section; appTabSet('videos'); }
         activeSection = section;
         activeAuthor = '';
+        updateIwaraBtn();
         _friendsPanelOpen = false;
         document.getElementById('authorHeader').classList.remove('on');
         var fb = document.getElementById('authorFollowBtn');
@@ -7175,6 +7177,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         e.target.classList.add('active');
         activeSection=e.target.dataset.section;
         activeAuthor='';
+        updateIwaraBtn();
         document.getElementById('authorHeader').classList.remove('on');
         var fb = document.getElementById('authorFollowBtn');
         if (fb) fb.style.display = 'none';
@@ -7672,6 +7675,33 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         ghDispatch(GH_WORKFLOW, { mode: (mode === 'resolve' ? 'resolve' : 'full') }, 'scrape').then(function(ok) {
             if (!ok) { setRefreshBusy(false, '🔄 更新'); lastTrigger = 0; }
             else setRefreshBusy(false, '🔄 更新');
+        });
+    }
+
+    // ============ Iwara 专属抓取 (栏目页按钮 → 只触发 mode=iwara, 不碰其他栏目) ============
+    function updateIwaraBtn(){
+        var b = document.getElementById('iwaraScrapeBtn');
+        if (b) b.style.display = (typeof activeSection !== 'undefined' && activeSection === 'iwara') ? '' : 'none';
+    }
+    var lastIwaraTrigger = 0;
+    function triggerIwaraScraper(){
+        // 仅站主可用 (与云端抓取同一闸门)
+        if (!(window.isOwner && window.isOwner())) {
+            if (window.showOwnerGate) { try { window.showOwnerGate('Iwara 抓取', '仅站主可触发 Iwara 专属抓取，其他用户请联系站主。'); } catch (e) {} }
+            return;
+        }
+        var now = Date.now();
+        if (now - lastIwaraTrigger < COOLDOWN) {
+            toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastIwaraTrigger))/60000) + ' 分钟后可再触发');
+            return;
+        }
+        lastIwaraTrigger = now;
+        var btn = document.getElementById('iwaraScrapeBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '🕷️ 抓取中...'; }
+        toast('正在触发 Iwara 专属抓取 (只爬 Iwara 栏目)...');
+        ghDispatch(GH_WORKFLOW, { mode: 'iwara' }, 'scrape').then(function(ok) {
+            if (btn) { btn.disabled = false; btn.textContent = '🕷️ 抓取 Iwara'; }
+            if (!ok) lastIwaraTrigger = 0;
         });
     }
 

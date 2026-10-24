@@ -1769,6 +1769,33 @@ def deep_only():
     return stats
 
 
+def iwara_only():
+    """只抓 iwara 栏目 (站点 Iwara 专属按钮触发, mode=iwara):
+    回访刷新已入库直链 + 最新/热门列表, 不碰其他栏目, 不做 MP4 解析。"""
+    stats = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "videos_found": 0, "videos_saved": 0, "pages_crawled": 0,
+        "mp4_resolved": 0, "errors": [],
+    }
+    fetcher = Fetcher()
+    try:
+        vids = crawl_iwara(fetcher, time.time() + IW_BUDGET, set())
+        stats["videos_found"] = len(vids)
+        if vids:
+            stats["videos_saved"] = sb_save(vids)
+        log(f"iwara 专属抓取完成: 发现 {stats['videos_found']}, 保存 {stats['videos_saved']}")
+    except Exception as e:
+        import traceback
+        log(f"iwara 抓取异常: {e}", "ERROR")
+        traceback.print_exc()
+        stats["errors"].append(str(e)[:200])
+    finally:
+        fetcher.close()
+    stats["finished_at"] = datetime.now(timezone.utc).isoformat()
+    sb_save_status(stats)
+    return stats
+
+
 def resolve_only():
     stats = {
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -1883,6 +1910,17 @@ def main():
         stats = deep_only()
         print("\n" + "=" * 60)
         print(f"  深挖发现: {stats['videos_found']}   保存: {stats['videos_saved']}")
+        if stats["errors"]:
+            print(f"  错误 ({len(stats['errors'])}):")
+            for e in stats["errors"][:5]:
+                print(f"    - {e[:120]}")
+        print("=" * 60)
+        return
+
+    if mode == "iwara":
+        stats = iwara_only()
+        print("\n" + "=" * 60)
+        print(f"  iwara 发现: {stats['videos_found']}   保存: {stats['videos_saved']}")
         if stats["errors"]:
             print(f"  错误 ({len(stats['errors'])}):")
             for e in stats["errors"][:5]:
