@@ -627,238 +627,131 @@ def parse_cards(html_text, source_url, section):
     return out
 
 
-# ---------------------------------------------------------------- 新来源: twidouga (栏目 twidouga)
-# twidouga.net 是 X 视频排行榜/实时聚合站, 列表页服务端直出 data 属性:
-#   排行榜 .rank-item / 实时页 .grid-item 的开标签上带 data-video (mp4 直链;
-#   .grid-item 另有 data-video-lq 低清版) / data-image (缩略图) /
-#   data-url (推特链接 https://x.com/<作者>/status/<推文ID>) / data-tweetid (实时页)。
-# 字段一次拿齐, 无需二次解析: 入库即 has_mp4=True 并带 mp4_url。
-TD_BASE = "https://www.twidouga.net"
-TD_LIST_URLS = [
-    TD_BASE + "/jp/ranking_t1.php",
-    TD_BASE + "/jp/ranking_t2.php",
-    TD_BASE + "/jp/ranking_tweek.php",
-    TD_BASE + "/jp/ranking_tmonth.php",
-    TD_BASE + "/jp/ranking_hot.php",
-    TD_BASE + "/jp/realtime_t1.php",
-]
-TD_BUDGET = _env_int("TD_BUDGET", 240)   # twidouga 每轮时间预算(秒)
-TV_BUDGET = _env_int("TV_BUDGET", 240)   # twivideo 每轮时间预算(秒)
-
-RE_TD_TAG = re.compile(r'<div\b[^>]*class="[^"]*(?:rank-item|grid-item)[^"]*"[^>]*>', re.S)
+# ---------------------------------------------------------------- 新来源: iwara (栏目 iwara)
+# iwara.tv 是 MMD/3D 动画投稿站, 视频存自家文件 CDN (files*.iwara.tv 的 mp4
+# 直链), 非解析跳转站。官方 API (免登录):
+#   列表 GET api.iwara.tv/videos?sort=date|trending&rating=general&page=N&limit=32
+#        —— rating 服务端过滤, 只收 general 级 (该站成人向占比极高, 不收 ecchi)。
+#   详情 GET api.iwara.tv/video/<id> —— 列表不带直链, 详情才有 fileUrl。
+# fileUrl 是签名链接 (约数小时过期): 每轮先回访已入库最旧的一批刷新直链,
+# 再爬最新/热门列表 (列表内的视频顺带也被刷新)。
+IW_API = "https://api.iwara.tv"
+IW_BUDGET = _env_int("IW_BUDGET", 240)          # iwara 每轮时间预算(秒)
+IW_MAX = _env_int("IW_MAX", 48)                 # iwara 每轮最多处理条数 (含回访)
+IW_REFRESH_MAX = _env_int("IW_REFRESH_MAX", 24)  # 每轮回访刷新多少条已入库行
 
 
-def _td_attr(tag, name):
-    m = re.search(r'\bdata-' + name + r'="([^"]*)"', tag)
-    return htmlmod.unescape(m.group(1)).strip() if m else ""
-
-
-def parse_twidouga(html_text, source_url):
-    """解析 twidouga 列表页 (排行榜 .rank-item / 实时页 .grid-item), 结构见上。"""
-    out, seen = [], set()
-    for m in RE_TD_TAG.finditer(html_text or ""):
-        tag = m.group(0)
-        url = _td_attr(tag, "url")
-        mp4 = _td_attr(tag, "video") or _td_attr(tag, "video-lq")
-        tid = _td_attr(tag, "tweetid")
-        screen = ""
-        if url:
-            _s, _t = extract_tweet_ref(url)
-            screen = _s or ""
-            if not tid:
-                tid = _t or ""
-        if not tid:
-            continue
-        vid = "td_" + tid
-        if vid in seen:
-            continue
-        seen.add(vid)
-        rec = {
-            "video_id": vid,
-            "monsnode_video_id": "",
-            "title": "",
-            "thumbnail": _td_attr(tag, "image"),
-            "author": ("@" + screen) if screen else "",
-            "url": url or (TD_BASE + "/"),
-            "duration": "",
-            "source_page": source_url,
-            "source_section": "twidouga",
-            "has_mp4": bool(mp4),
-            "needs_rescrape": False,
-        }
-        if mp4:
-            rec["mp4_url"] = mp4
-        out.append(rec)
-    return out
-
-
-def crawl_twidouga(fetcher, deadline, seen):
-    vids = []
-    for url in TD_LIST_URLS:
-        if time.time() > deadline:
-            break
-        try:
-            h = fetcher.fetch(url, referer=TD_BASE + "/")
-        except Exception:
-            h = None
-        if not h:
-            continue
-        cards = parse_twidouga(h, url)
-        new = [c for c in cards if c["video_id"] not in seen]
-        for c in new:
-            seen.add(c["video_id"])
-        vids.extend(new)
-        log(f"  [twidouga] {url} -> {len(cards)} cards, +{len(new)} new")
-        time.sleep(0.35)
-    return vids
-
-
-# ---------------------------------------------------------------- 新来源: twivideo (栏目 twivideo)
-# twivideo.net 列表走 ajax: 先 GET 首页拿 cookie, POST ajax_view_token.php 得
-# view_token, 再 POST view_lists.php (offset 步进 20) 得 HTML 片段; 片段每卡只有
-# 站内 ID + 缩略图, 还要逐卡补两跳 (HEAD 不跟随重定向, 读 Location 头):
-#   /api/link.php?id=<站内ID>  -> Location 是推特链接 (得作者 + 推文ID)
-#   /api/video.php?id=<站内ID> -> Location 是 mp4 直链
-# 站点要 cookie 会话, 用独立 httpx.Client, 不套 Fetcher 的多层传输。
-TV_BASE = "https://twivideo.net"
-TWIVIDEO_MAX = _env_int("TWIVIDEO_MAX", 60)   # twivideo 每轮最多抓多少条
-
-RE_TV_ID = re.compile(r'href="/api/video\.php\?id=(\d+)"')
-RE_TV_IMG = re.compile(r'<img[^>]+src="([^"]+)"')
-
-
-def parse_twivideo(html_text):
-    """解析 view_lists.php 返回的 HTML 片段 -> [(站内ID, 缩略图), ...]"""
-    out, seen = [], set()
-    for chunk in (html_text or "").split('class="art_li')[1:]:
-        chunk = chunk[:2500]
-        m = RE_TV_ID.search(chunk)
-        if not m:
-            continue
-        sid = m.group(1)
-        if sid in seen:
-            continue
-        seen.add(sid)
-        im = RE_TV_IMG.search(chunk)
-        out.append((sid, htmlmod.unescape(im.group(1)).strip() if im else ""))
-    return out
-
-
-def _tv_token(resp):
-    """从 ajax_view_token.php 的 JSON 里取 view_token。"""
-    if resp is None:
-        return ""
-    try:
-        j = resp.json()
-    except Exception:
-        j = None
-    if isinstance(j, dict):
-        for k in ("view_token", "token", "viewToken"):
-            if j.get(k):
-                return str(j[k])
-    elif isinstance(j, str) and j.strip():
-        return j.strip()
-    m = re.search(r"[0-9a-fA-F]{24,}", resp.text or "")
-    return m.group(0) if m else ""
-
-
-def _tv_location(client, url):
-    """HEAD (不跟随重定向) 读 Location; 个别服务器对 HEAD 返回 405 时用 GET 兜底 (同样不跟随)。"""
-    try:
-        r = client.head(url, follow_redirects=False, timeout=REQUEST_TIMEOUT)
-        loc = (r.headers.get("location") or "").strip()
-        if loc:
-            return loc
-    except Exception:
-        pass
-    try:
-        r = client.get(url, follow_redirects=False, timeout=REQUEST_TIMEOUT)
-        return (r.headers.get("location") or "").strip()
-    except Exception:
-        return ""
-
-
-def _tv_record(client, sid, thumb):
-    tweet = _tv_location(client, f"{TV_BASE}/api/link.php?id={sid}")
-    mp4 = _tv_location(client, f"{TV_BASE}/api/video.php?id={sid}")
-    screen, tid = extract_tweet_ref(tweet) if tweet else (None, None)
-    if mp4 and not mp4.startswith("http"):
-        mp4 = urljoin(TV_BASE + "/", mp4)
-    rec = {
-        "video_id": "tv_" + (tid or sid),
-        "monsnode_video_id": "",
-        "title": "",
+def _iwara_record(detail):
+    """iwara 详情 JSON -> 入库记录; 不合格 (非 general/无直链/私密) 返回 None"""
+    if not detail or detail.get("private") or detail.get("unlisted"):
+        return None
+    if detail.get("rating") != "general":
+        return None
+    f = detail.get("file") or {}
+    mp4 = (detail.get("fileUrl") or "").strip()
+    if not mp4 or f.get("type") != "video":
+        return None
+    vid_id = detail.get("id") or ""
+    if not vid_id:
+        return None
+    thumb = ""
+    if f.get("id"):
+        thumb = (f"https://i.iwara.tv/image/thumbnail/{f['id']}"
+                 f"/thumbnail-{detail.get('thumbnail') or 0}.jpg")
+    user = detail.get("user") or {}
+    return {
+        "video_id": "iw_" + vid_id,
+        "title": detail.get("title") or "",
         "thumbnail": thumb,
-        "author": ("@" + screen) if screen else "",
-        "url": tweet if tweet else f"{TV_BASE}/api/video.php?id={sid}",
-        "duration": "",
-        "source_page": f"{TV_BASE}/api/video.php?id={sid}",
-        "source_section": "twivideo",
-        "has_mp4": bool(mp4),
+        "author": user.get("name") or "",
+        "url": "https://www.iwara.tv/video/" + vid_id,
+        "source_page": IW_API + "/video/" + vid_id,
+        "source_section": "iwara",
+        "mp4_url": mp4,
+        "has_mp4": True,
         "needs_rescrape": False,
     }
-    if mp4:
-        rec["mp4_url"] = mp4
-    return rec
 
 
-def crawl_twivideo(fetcher, deadline, seen):
-    """签名与其余 crawl_* 一致 (fetcher, deadline, seen); twivideo 要 cookie 会话,
-    实际走自建 httpx.Client, fetcher 不直接参与。"""
-    vids = []
-    client = httpx.Client(timeout=REQUEST_TIMEOUT, follow_redirects=True,
-                          headers=_headers(TV_BASE + "/"))
+def _iwara_stale_ids(limit):
+    """已入库 iwara 行里 scraped_at 最旧的一批原始 ID (刷新签名直链用)"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
     try:
-        try:
-            client.get(TV_BASE + "/")
-            tr = client.post(TV_BASE + "/templates/ajax_view_token.php", data={},
-                             headers={"Referer": TV_BASE + "/",
-                                      "X-Requested-With": "XMLHttpRequest"})
-            token = _tv_token(tr)
-        except Exception as e:
-            log(f"  [twivideo] 取 view_token 失败: {str(e)[:100]}", "WARN")
-            return vids
-        if not token:
-            log("  [twivideo] view_token 为空, 本轮跳过", "WARN")
-            return vids
-        offset = 0
-        while len(vids) < TWIVIDEO_MAX and time.time() < deadline:
-            data = {
-                "offset": str(offset), "limit": "20", "tag": "null",
-                "type": "ranking", "order": "24", "le": "1000", "ty": "p6",
-                "myarray": "[]", "offset_int": str(offset), "view_token": token,
-            }
+        r = httpx.get(SUPABASE_URL + "/rest/v1/videos",
+                      params={"source_section": "eq.iwara",
+                              "select": "video_id",
+                              "order": "scraped_at.asc",
+                              "limit": str(limit)},
+                      headers=sb_headers(), timeout=30)
+        if r.status_code != 200:
+            return []
+        return [row["video_id"][3:] for row in r.json()
+                if (row.get("video_id") or "").startswith("iw_")]
+    except Exception:
+        return []
+
+
+def crawl_iwara(fetcher, deadline, seen):
+    """签名与其余 crawl_* 一致 (fetcher 未用: iwara 走官方 API 直连)"""
+    out = []
+    client = httpx.Client(timeout=30, headers={
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"})
+    try:
+        def detail(vid):
             try:
-                r = client.post(TV_BASE + "/templates/view_lists.php", data=data,
-                                headers={"Referer": TV_BASE + "/",
-                                         "X-Requested-With": "XMLHttpRequest"})
-                frag = r.text if r.status_code == 200 else ""
+                r = client.get(IW_API + "/video/" + vid)
+                if r.status_code == 200:
+                    return _iwara_record(r.json())
             except Exception:
-                frag = ""
-            cards = parse_twivideo(frag)
-            if not cards:
+                pass
+            return None
+
+        # 1) 回访已入库最旧的一批, 刷新将过期的签名直链
+        refreshed = 0
+        for vid in _iwara_stale_ids(IW_REFRESH_MAX):
+            if time.time() > deadline or len(out) >= IW_MAX:
                 break
-            fresh = 0
-            for sid, thumb in cards:
-                if len(vids) >= TWIVIDEO_MAX or time.time() > deadline:
-                    break
-                try:
-                    rec = _tv_record(client, sid, thumb)
-                except Exception:
-                    continue
-                time.sleep(0.25)
-                if rec["video_id"] in seen:
-                    continue
+            rec = detail(vid)
+            if rec:
+                out.append(rec)
                 seen.add(rec["video_id"])
-                vids.append(rec)
-                fresh += 1
-            log(f"  [twivideo] offset={offset} -> {len(cards)} cards, +{fresh} new (累计 {len(vids)})")
-            offset += 20
-            if len(cards) < 20:
-                break
+                refreshed += 1
+        if refreshed:
+            log(f"  [iwara] 回访刷新 {refreshed} 条已入库视频的直链")
+
+        # 2) 最新 + 热门列表 (服务端已按 rating=general 过滤)
+        for sort in ("date", "trending"):
+            page = 0
+            while len(out) < IW_MAX and time.time() < deadline:
+                try:
+                    r = client.get(IW_API + "/videos", params={
+                        "sort": sort, "rating": "general",
+                        "page": page, "limit": 32})
+                    if r.status_code != 200:
+                        break
+                    items = (r.json() or {}).get("results") or []
+                except Exception:
+                    break
+                if not items:
+                    break
+                for it in items:
+                    if len(out) >= IW_MAX or time.time() > deadline:
+                        break
+                    vid = it.get("id") or ""
+                    if not vid or "iw_" + vid in seen:
+                        continue
+                    seen.add("iw_" + vid)
+                    rec = detail(vid)
+                    if rec:
+                        out.append(rec)
+                log(f"  [iwara] sort={sort} page={page} -> 累计 {len(out)} 条")
+                if len(items) < 32:
+                    break
+                page += 1
     finally:
         client.close()
-    return vids
+    return out
 
 
 def find_more(html_text):
@@ -1712,38 +1605,53 @@ def resolve_pending(fetcher, limit, budget, tag="解析"):
 
 
 # ---------------------------------------------------------------- 主流程
-# 一次性清理: 删除数据库中全部 av4 历史行。确认库里 av4 清零后可移除本函数
+# 一次性清理: 删除数据库中已下线来源的历史行 (av4 / twidouga / twivideo)。
+# 每个条件单独 count -> DELETE -> 复查并检查 HTTP 状态 (旧版合并 or 条件被
+# 接口 500 后计数误读为 0, 清理从未真正执行过)。确认全部清零后可移除本函数
 # (连同 scrape_all 开头那一行调用)。异常只打日志, 绝不中断 full 流程。
-def purge_av4_once():
+_PURGE_JOBS = [
+    ("av4 栏目", {"source_section": "eq.av4"}),
+    ("av4 旧ID", {"video_id": "like.av4_*"}),
+    ("twidouga 栏目", {"source_section": "eq.twidouga"}),
+    ("twivideo 栏目", {"source_section": "eq.twivideo"}),
+    ("td_ 旧ID", {"video_id": "like.td_*"}),
+    ("tv_ 旧ID", {"video_id": "like.tv_*"}),
+]
+
+
+def purge_removed_sources_once():
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
-    flt = "or=(source_section.eq.av4,source_section.ilike.*av4*,video_id.like.av4_*)"
 
-    def _count():
-        r = httpx.head(SUPABASE_URL + "/rest/v1/videos?" + flt,
+    def _count(params):
+        r = httpx.head(SUPABASE_URL + "/rest/v1/videos",
+                       params=params,
                        headers={**sb_headers(), "Prefer": "count=exact"}, timeout=60)
+        if r.status_code != 200:
+            log(f"  [清理] 计数失败 HTTP {r.status_code} ({params})", "WARN")
+            return -1
         cr = r.headers.get("content-range", "")
         tail = cr.rsplit("/", 1)[-1] if "/" in cr else ""
-        return int(tail) if tail.isdigit() else 0
+        return int(tail) if tail.isdigit() else -1
 
-    try:
-        before = _count()
-        if before <= 0:
-            log("  [清理] 数据库中无 av4 行, 跳过一次性清理")
-            return
-        r = httpx.delete(SUPABASE_URL + "/rest/v1/videos?" + flt,
-                         headers={**sb_headers(), "Prefer": "count=exact"}, timeout=300)
-        if r.status_code not in (200, 204):
-            log(f"  [清理] 删除 av4 行失败 HTTP {r.status_code}: {r.text[:120]}", "WARN")
-            return
-        after = _count()
-        log(f"  [清理] av4 行清理完成: 删除前 {before} 条 -> 删除后剩 {after} 条")
-    except Exception as e:
-        log(f"  [清理] av4 清理异常 (忽略, 不影响抓取): {str(e)[:120]}", "WARN")
+    for label, params in _PURGE_JOBS:
+        try:
+            before = _count(params)
+            if before <= 0:
+                continue
+            r = httpx.delete(SUPABASE_URL + "/rest/v1/videos",
+                             params=params, headers=sb_headers(), timeout=300)
+            if r.status_code not in (200, 204):
+                log(f"  [清理] 删除 {label} 失败 HTTP {r.status_code}: {r.text[:120]}", "WARN")
+                continue
+            after = _count(params)
+            log(f"  [清理] {label}: 删除前 {before} 条 -> 剩 {after} 条")
+        except Exception as e:
+            log(f"  [清理] {label} 异常 (忽略, 不影响抓取): {str(e)[:120]}", "WARN")
 
 
 def scrape_all():
-    purge_av4_once()
+    purge_removed_sources_once()
     stats = {
         "started_at": datetime.now(timezone.utc).isoformat(),
         "pages_crawled": 0,
@@ -1797,21 +1705,13 @@ def scrape_all():
         except Exception as e:
             log(f"  详情相关异常: {e}", "WARN")
 
-        log("阶段3d: twidouga 栏目 (新来源, X 视频排行/实时聚合)")
+        log("阶段3d: iwara 栏目 (新来源, 自有 CDN 动画站, 只收 general 分级)")
         try:
-            td_v = crawl_twidouga(fetcher, time.time() + TD_BUDGET, seen)
-            all_v.extend(td_v)
-            log(f"  twidouga 合计 +{len(td_v)} 条")
+            iw_v = crawl_iwara(fetcher, time.time() + IW_BUDGET, seen)
+            all_v.extend(iw_v)
+            log(f"  iwara 合计 +{len(iw_v)} 条")
         except Exception as e:
-            log(f"  twidouga 异常: {e}", "WARN")
-
-        log("阶段3e: twivideo 栏目 (新来源, X 视频排行榜)")
-        try:
-            tv_v = crawl_twivideo(fetcher, time.time() + TV_BUDGET, seen)
-            all_v.extend(tv_v)
-            log(f"  twivideo 合计 +{len(tv_v)} 条")
-        except Exception as e:
-            log(f"  twivideo 异常: {e}", "WARN")
+            log(f"  iwara 异常: {e}", "WARN")
 
         stats["videos_found"] = len(all_v)
         if all_v:

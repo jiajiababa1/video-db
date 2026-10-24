@@ -2337,8 +2337,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
             <div class="sidebar-label">来源栏目</div>
-            <button class="sidebar-item" data-section="twidouga" onclick="selectSidebar('twidouga','🎬 Twidouga 排行')"><span class="ico">🎬</span>Twidouga 排行</button>
-            <button class="sidebar-item" data-section="twivideo" onclick="selectSidebar('twivideo','📺 Twivideo 排行')"><span class="ico">📺</span>Twivideo 排行</button>
+            <button class="sidebar-item" data-section="iwara" onclick="selectSidebar('iwara','🎨 Iwara 动画')"><span class="ico">🎨</span>Iwara 动画</button>
         </div>
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
@@ -2551,8 +2550,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <button class="vid-tab" data-section="3d">📅 3天</button>
             <button class="vid-tab" data-section="7d">📆 7天</button>
             <button class="vid-tab" data-section="ranking">🏆 排行</button>
-            <button class="vid-tab" data-section="twidouga">🎬 Twidouga</button>
-            <button class="vid-tab" data-section="twivideo">📺 Twivideo</button>
+            <button class="vid-tab" data-section="iwara">🎨 Iwara</button>
             <button class="vid-tab" data-section="favs" id="favTab" style="display:none;">⭐ 收藏</button>
             <button class="vid-tab" data-section="history" id="histTab" style="display:none;">🕐 历史</button>
         </div>
@@ -6309,7 +6307,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         }
         if (activeAuthor) p += '&author=ilike.*' + encodeURIComponent(pgSan(activeAuthor.trim())) + '*';
         // av4 专区已移除: 所有列表默认排除 av4 外链视频 (它们仍在库中，可通过直接链接播放)
-        if (p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)';
+        if (p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)&or=(source_section.is.null,source_section.not.in.(twidouga,twivideo))';
         if (playableFilter === 'playable') p += '&or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
         else if (playableFilter === 'unplayable') p += '&not.or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
         p += '&removed=not.is.true';
