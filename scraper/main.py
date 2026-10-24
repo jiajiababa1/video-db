@@ -55,7 +55,7 @@ import threading
 import html as htmlmod
 import hashlib
 from datetime import datetime, timezone, timedelta
-from urllib.parse import urljoin, quote_plus, quote
+from urllib.parse import urljoin, quote_plus, quote, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
@@ -769,6 +769,198 @@ def crawl_iwara(fetcher, deadline, seen):
     return out
 
 
+# ---------------------------------------------------------------- 新来源: hsex (栏目 hsex)
+# hsex.men (好色Tv) 是中文视频站, 服务端渲染:
+#   列表 list-<页>.htm?sort=new|hot, 每页 24 张卡, 卡片自带全部文案:
+#   标题 / 缩略图 (i.hdcdn.store/thumb/<id>.webp) / 时长 / 作者 / 观看数。
+#   详情 video-<id>.htm 里 <source id="video-source"> 是 m3u8 直链
+#   (cdn.hdcdn.store/<过期时间戳>/<签名>/hls/<id>/index.m3u8, 约 1 小时过期)。
+# 入库时存抓取瞬间的 m3u8 (1 小时内可直接播); 过期后前端播放时现抓详情页换新
+# 链接 (resolveVideoSource 的 hx_ 分支), 并回写数据库刷新。出于这个机制,
+# 本爬虫每轮先回访已入库最旧的一批 hx 行刷新链接, 再抓最新/最热列表。
+HX_BASE = "https://hsex.men"
+HX_BUDGET = _env_int("HX_BUDGET", 240)          # hsex 每轮时间预算(秒)
+HX_MAX = _env_int("HX_MAX", 60)                 # hsex 每轮最多处理条数 (含回访)
+HX_REFRESH_MAX = _env_int("HX_REFRESH_MAX", 24)  # 每轮回访刷新多少条已入库行
+
+RE_HX_CARD = re.compile(r'<div class="thumbnail">')
+RE_HX_ID = re.compile(r'href="video-(\d+)\.htm"')
+RE_HX_THUMB = re.compile(r"background-image:\s*url\('([^']+)'\)")
+RE_HX_TITLE_ATTR = re.compile(r'class="image"[^>]*title=\s*"([^"]+)"')
+RE_HX_TITLE_TXT = re.compile(r'<h5><a[^>]*>([^<]+)</a></h5>')
+RE_HX_DUR = re.compile(r'<var class="duration">\s*([\d:]+)\s*</var>')
+RE_HX_AUTHOR = re.compile(r'user\.htm\?author=([^"&]+)')
+RE_HX_VIEWS = re.compile(r'([\d.]+[kK]?|\d+)\s*次观看')
+RE_HX_M3U8 = re.compile(r'https://cdn\.hdcdn\.store/[^"\']+/index\.m3u8')
+RE_HX_PAGE_TITLE = re.compile(r'<title>([^<]+?)\s*-\s*好色')
+RE_HX_PAGE_DUR = re.compile(r'时长：\s*([\d:]+)')
+
+
+def parse_hsex_list(html_text, source_url):
+    """解析 hsex 列表页 -> 元数据记录列表 (不含 m3u8, 由详情补)"""
+    out = []
+    if not html_text:
+        return out
+    for chunk in RE_HX_CARD.split(html_text)[1:]:
+        mid = RE_HX_ID.search(chunk)
+        if not mid:
+            continue
+        hid = mid.group(1)
+        mt = RE_HX_TITLE_ATTR.search(chunk) or RE_HX_TITLE_TXT.search(chunk)
+        title = htmlmod.unescape(mt.group(1)).strip() if mt else ""
+        mth = RE_HX_THUMB.search(chunk)
+        thumb = mth.group(1) if mth else f"https://i.hdcdn.store/thumb/{hid}.webp"
+        md = RE_HX_DUR.search(chunk)
+        ma = RE_HX_AUTHOR.search(chunk)
+        author = unquote(ma.group(1)).strip() if ma else ""
+        mv = RE_HX_VIEWS.search(chunk)
+        out.append({
+            "video_id": "hx_" + hid,
+            "title": title,
+            "thumbnail": thumb,
+            "author": author.lstrip("  "),
+            "url": HX_BASE + "/video-" + hid + ".htm",
+            "source_page": source_url,
+            "source_section": "hsex",
+            "duration": md.group(1) if md else "",
+            "views": mv.group(1) if mv else "",
+            "mp4_url": "",
+            "has_mp4": False,
+            "needs_rescrape": False,
+            "_hx_id": hid,
+        })
+    return out
+
+
+def parse_hsex_detail(html_text, hid):
+    """解析 hsex 详情页 -> (m3u8, 标题, 作者, 时长文本); 取不到返回空串"""
+    if not html_text:
+        return "", "", "", ""
+    mm = RE_HX_M3U8.search(html_text)
+    mt = RE_HX_PAGE_TITLE.search(html_text)
+    ma = RE_HX_AUTHOR.search(html_text)
+    md = RE_HX_PAGE_DUR.search(html_text)
+    return (
+        mm.group(0) if mm else "",
+        htmlmod.unescape(mt.group(1)).strip() if mt else "",
+        unquote(ma.group(1)).strip() if ma else "",
+        md.group(1) if md else "",
+    )
+
+
+def _hsex_stale_ids(limit):
+    """已入库 hsex 行里 scraped_at 最旧的一批原始 ID (刷新将过期的 m3u8 用)"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        r = httpx.get(SUPABASE_URL + "/rest/v1/videos",
+                      params={"source_section": "eq.hsex",
+                              "select": "video_id",
+                              "order": "scraped_at.asc",
+                              "limit": str(limit)},
+                      headers=sb_headers(), timeout=30)
+        if r.status_code != 200:
+            return []
+        return [row["video_id"][3:] for row in r.json()
+                if (row.get("video_id") or "").startswith("hx_")]
+    except Exception:
+        return []
+
+
+def crawl_hsex(fetcher, deadline, seen):
+    """签名与其余 crawl_* 一致 (fetcher 未用: hsex 走 httpx/curl_cffi 两级直连)"""
+    out = []
+    ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+    client = httpx.Client(timeout=30, headers={"User-Agent": ua},
+                          follow_redirects=True)
+    try:
+        def _get_text(url):
+            """先 httpx; 非 200/异常换 curl_cffi 伪装 Chrome 指纹 (与 iwara 同策略)"""
+            try:
+                r = client.get(url)
+                if r.status_code == 200:
+                    return r.text
+                log(f"  [hsex] GET {url} -> HTTP {r.status_code} (httpx), 换 curl_cffi 重试", "WARN")
+            except Exception as e:
+                log(f"  [hsex] GET {url} httpx 异常: {str(e)[:80]}, 换 curl_cffi 重试", "WARN")
+            if creq is not None:
+                try:
+                    rr = creq.get(url, headers={"User-Agent": ua},
+                                  timeout=30, impersonate="chrome")
+                    if rr.status_code == 200:
+                        return rr.text
+                    log(f"  [hsex] GET {url} -> HTTP {rr.status_code} (curl_cffi)", "WARN")
+                except Exception as e:
+                    log(f"  [hsex] GET {url} curl_cffi 异常: {str(e)[:80]}", "WARN")
+            return None
+
+        def fill_detail(rec):
+            """抓详情页补 m3u8 (顺带补齐标题/作者/时长), 返回是否拿到 m3u8"""
+            html_text = _get_text(rec["url"])
+            m3u8, title, author, dur = parse_hsex_detail(html_text, rec["_hx_id"])
+            if title and not rec["title"]:
+                rec["title"] = title
+            if author and not rec["author"]:
+                rec["author"] = author.lstrip("  ")
+            if dur and not rec["duration"]:
+                rec["duration"] = dur
+            if m3u8:
+                rec["mp4_url"] = m3u8
+                rec["has_mp4"] = True
+            return bool(m3u8)
+
+        # 1) 回访已入库最旧的一批, 刷新将过期的 m3u8
+        refreshed = 0
+        for hid in _hsex_stale_ids(HX_REFRESH_MAX):
+            if time.time() > deadline or len(out) >= HX_MAX:
+                break
+            rec = {
+                "video_id": "hx_" + hid, "title": "", "thumbnail": "",
+                "author": "", "url": HX_BASE + "/video-" + hid + ".htm",
+                "source_page": HX_BASE + "/video-" + hid + ".htm",
+                "source_section": "hsex", "duration": "", "views": "",
+                "mp4_url": "", "has_mp4": False, "needs_rescrape": False,
+                "_hx_id": hid,
+            }
+            if fill_detail(rec):
+                rec["thumbnail"] = f"https://i.hdcdn.store/thumb/{hid}.webp"
+                out.append(rec)
+                seen.add(rec["video_id"])
+                refreshed += 1
+        if refreshed:
+            log(f"  [hsex] 回访刷新 {refreshed} 条已入库视频的链接")
+
+        # 2) 最新 + 最热列表 (卡片自带文案, 再逐条抓详情补 m3u8)
+        for sort in ("new", "hot"):
+            for page in (1, 2, 3):
+                if len(out) >= HX_MAX or time.time() > deadline:
+                    break
+                list_url = f"{HX_BASE}/list-{page}.htm?sort={sort}"
+                html_text = _get_text(list_url)
+                if html_text is None:
+                    log(f"  [hsex] 列表获取失败: {list_url}, 跳过", "WARN")
+                    break
+                cards = parse_hsex_list(html_text, list_url)
+                if not cards:
+                    break
+                fresh = 0
+                for rec in cards:
+                    if len(out) >= HX_MAX or time.time() > deadline:
+                        break
+                    if rec["video_id"] in seen:
+                        continue
+                    seen.add(rec["video_id"])
+                    fill_detail(rec)
+                    out.append(rec)
+                    fresh += 1
+                log(f"  [hsex] sort={sort} page={page} -> +{fresh} 条 (累计 {len(out)})")
+    finally:
+        client.close()
+    for rec in out:
+        rec.pop("_hx_id", None)
+    return out
+
+
 def find_more(html_text):
     """返回页面底部 'More' 按钮指向的相对 URL (无则 None)"""
     if not html_text:
@@ -1373,7 +1565,7 @@ def sb_save(videos):
             "author": (v.get("author") or "")[:200],
             "duration": mp4 if mp4 else (v.get("duration") or "")[:50],
             "mp4_url": mp4,
-            "views": "",
+            "views": (v.get("views") or "")[:50],
             "monsnode_video_id": (v.get("monsnode_video_id") or "")[:50],
             "source_page": (v.get("source_page") or "")[:500],
             "source_section": (v.get("source_section") or "")[:100],
@@ -1631,6 +1823,8 @@ _PURGE_JOBS = [
     ("twivideo 栏目", {"source_section": "eq.twivideo"}),
     ("td_ 旧ID", {"video_id": "like.td_*"}),
     ("tv_ 旧ID", {"video_id": "like.tv_*"}),
+    ("iwara 栏目", {"source_section": "eq.iwara"}),
+    ("iw_ 旧ID", {"video_id": "like.iw_*"}),
 ]
 
 
@@ -1720,13 +1914,13 @@ def scrape_all():
         except Exception as e:
             log(f"  详情相关异常: {e}", "WARN")
 
-        log("阶段3d: iwara 栏目 (新来源, 自有 CDN 动画站, 只收 general 分级)")
+        log("阶段3d: hsex 栏目 (新来源, 好色Tv, 列表文案 + 详情 m3u8)")
         try:
-            iw_v = crawl_iwara(fetcher, time.time() + IW_BUDGET, seen)
-            all_v.extend(iw_v)
-            log(f"  iwara 合计 +{len(iw_v)} 条")
+            hx_v = crawl_hsex(fetcher, time.time() + HX_BUDGET, seen)
+            all_v.extend(hx_v)
+            log(f"  hsex 合计 +{len(hx_v)} 条")
         except Exception as e:
-            log(f"  iwara 异常: {e}", "WARN")
+            log(f"  hsex 异常: {e}", "WARN")
 
         stats["videos_found"] = len(all_v)
         if all_v:
@@ -1780,6 +1974,35 @@ def deep_only():
         fetcher.close()
     stats["finished_at"] = datetime.now(timezone.utc).isoformat()
     log(f"HTTP 统计: {fetcher._stats}")
+    sb_save_status(stats)
+    return stats
+
+
+def hsex_only():
+    """只抓 hsex 栏目 (站点 Hsex 专属按钮触发, mode=hsex):
+    回访刷新已入库链接 + 最新/最热列表, 不碰其他栏目, 不做 MP4 解析。"""
+    stats = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "videos_found": 0, "videos_saved": 0, "pages_crawled": 0,
+        "mp4_resolved": 0, "errors": [],
+    }
+    fetcher = Fetcher()
+    try:
+        vids = crawl_hsex(fetcher, time.time() + HX_BUDGET, set())
+        stats["videos_found"] = len(vids)
+        if vids:
+            stats["videos_saved"] = sb_save(vids)
+        else:
+            stats["errors"].append("hsex 本轮抓到 0 条 (原因见运行日志的 [hsex] 行)")
+        log(f"hsex 专属抓取完成: 发现 {stats['videos_found']}, 保存 {stats['videos_saved']}")
+    except Exception as e:
+        import traceback
+        log(f"hsex 抓取异常: {e}", "ERROR")
+        traceback.print_exc()
+        stats["errors"].append(str(e)[:200])
+    finally:
+        fetcher.close()
+    stats["finished_at"] = datetime.now(timezone.utc).isoformat()
     sb_save_status(stats)
     return stats
 
@@ -1927,6 +2150,17 @@ def main():
         stats = deep_only()
         print("\n" + "=" * 60)
         print(f"  深挖发现: {stats['videos_found']}   保存: {stats['videos_saved']}")
+        if stats["errors"]:
+            print(f"  错误 ({len(stats['errors'])}):")
+            for e in stats["errors"][:5]:
+                print(f"    - {e[:120]}")
+        print("=" * 60)
+        return
+
+    if mode == "hsex":
+        stats = hsex_only()
+        print("\n" + "=" * 60)
+        print(f"  hsex 发现: {stats['videos_found']}   保存: {stats['videos_saved']}")
         if stats["errors"]:
             print(f"  错误 ({len(stats['errors'])}):")
             for e in stats["errors"][:5]:

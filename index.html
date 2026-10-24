@@ -2337,7 +2337,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
             <div class="sidebar-label">来源栏目</div>
-            <button class="sidebar-item" data-section="iwara" onclick="selectSidebar('iwara','🎨 Iwara 动画')"><span class="ico">🎨</span>Iwara 动画</button>
+            <button class="sidebar-item" data-section="hsex" onclick="selectSidebar('hsex','🎬 Hsex 视频')"><span class="ico">🎬</span>Hsex 视频</button>
         </div>
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
@@ -2550,10 +2550,10 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
             <button class="vid-tab" data-section="3d">📅 3天</button>
             <button class="vid-tab" data-section="7d">📆 7天</button>
             <button class="vid-tab" data-section="ranking">🏆 排行</button>
-            <button class="vid-tab" data-section="iwara">🎨 Iwara</button>
+            <button class="vid-tab" data-section="hsex">🎬 Hsex</button>
             <button class="vid-tab" data-section="favs" id="favTab" style="display:none;">⭐ 收藏</button>
             <button class="vid-tab" data-section="history" id="histTab" style="display:none;">🕐 历史</button>
-            <button id="iwaraScrapeBtn" onclick="triggerIwaraScraper()" style="display:none;margin-left:auto;align-self:center;padding:6px 12px;border:1px solid var(--vprimary);border-radius:999px;background:transparent;color:var(--vprimary);font-size:12px;cursor:pointer;white-space:nowrap;">🕷️ 抓取 Iwara</button>
+            <button id="hsexScrapeBtn" onclick="triggerHsexScraper()" style="display:none;margin-left:auto;align-self:center;padding:6px 12px;border:1px solid var(--vprimary);border-radius:999px;background:transparent;color:var(--vprimary);font-size:12px;cursor:pointer;white-space:nowrap;">🕷️ 抓取 Hsex</button>
         </div>
         <div class="author-header" id="authorHeader">
             <button class="author-back" onclick="backToMainView()">← 返回全部</button>
@@ -4439,7 +4439,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         else if (section !== 'ghconfig' && section !== 'sbconfig') { _appLastFeed = section; appTabSet('videos'); }
         activeSection = section;
         activeAuthor = '';
-        updateIwaraBtn();
+        updateHsexBtn();
         _friendsPanelOpen = false;
         document.getElementById('authorHeader').classList.remove('on');
         var fb = document.getElementById('authorFollowBtn');
@@ -5591,7 +5591,45 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
     // 一站式解析: 获取 MP4 直链 (永不使用 iframe)
     // 策略: 1) duration 缓存命中 → 2) twjn.php → 3) Twitter API → 4) card 内客户端解析
+    // ========== hsex 解析 → 新鲜 m3u8 (签名链接约 1 小时过期, 每次播放现抓) ==========
+    async function fetchHsexHtml(pageUrl) {
+        if (!pageUrl) return null;
+        var url = pageUrl + (pageUrl.indexOf('?') >= 0 ? '&' : '?') + '_r=' + Math.random().toString(36).slice(2);
+        for (var attempt = 1; attempt <= 4; attempt++) {
+            var proxy = getProxy();
+            try {
+                var opts = { cache: 'no-store' };
+                if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(12000);
+                var resp = await fetch(proxy + encodeURIComponent(url), opts);
+                if (!resp.ok) { markProxyFail(); continue; }
+                var html = await resp.text();
+                if (!html || html.indexOf('hdcdn.store') < 0) { markProxyFail(); continue; }
+                markProxyOk();
+                return html;
+            } catch (e) {
+                markProxyFail();
+                await sleep(300 + 400 * attempt);
+            }
+        }
+        return null;
+    }
+    function extractHsexM3u8(html) {
+        if (!html) return null;
+        var m = html.match(/https:\/\/cdn\.hdcdn\.store\/[^"'\s]+\/index\.m3u8/);
+        return m ? m[0] : null;
+    }
+    async function resolveHsex(v) {
+        var html = await fetchHsexHtml(v.video_url || '');
+        return extractHsexM3u8(html);
+    }
+
     async function resolveVideoSource(v) {
+        // 0. hsex 专属: 存的 m3u8 约 1 小时就过期, 一律现抓详情页换新链接
+        if (v.video_id && v.video_id.indexOf('hx_') === 0) {
+            var hxUrl = await resolveHsex(v);
+            if (hxUrl) return { mp4Url: hxUrl, source: 'hsex' };
+            return { mp4Url: null, source: 'hsex_failed' };
+        }
         var dur = v.duration || '';
         var info = classifyUrl(dur);
         var tid = extractTweetId(v.video_id);
@@ -5634,6 +5672,48 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         try { video.referrerPolicy = 'no-referrer'; } catch (e) {}
     }
 
+    // ============ 视频源挂载 (mp4 直设 src; m3u8 走 HLS: 原生支持直用, 否则懒加载 hls.js) ============
+    var _hlsCbs = null;
+    function ensureHls(cb) {
+        if (window.Hls) { cb(true); return; }
+        if (_hlsCbs) { _hlsCbs.push(cb); return; }
+        _hlsCbs = [cb];
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js';
+        var done = function(ok) { var cbs = _hlsCbs; _hlsCbs = null; if (cbs) cbs.forEach(function(f) { f(ok); }); };
+        s.onload = function() { done(!!window.Hls); };
+        s.onerror = function() { done(false); };
+        document.head.appendChild(s);
+    }
+    function attachStream(video, url) {
+        if (url && url.indexOf('.m3u8') >= 0) {
+            if (video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = url;
+                try { video.load(); } catch (e) {}
+            } else if (window.Hls && Hls.isSupported()) {
+                var hls = new Hls();
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                video._hls = hls;
+            } else {
+                ensureHls(function(ok) {
+                    if (ok && window.Hls && Hls.isSupported()) {
+                        var h2 = new Hls();
+                        h2.loadSource(url);
+                        h2.attachMedia(video);
+                        video._hls = h2;
+                    } else {
+                        video.src = url;
+                        try { video.load(); } catch (e) {}
+                    }
+                });
+            }
+        } else {
+            video.src = url;
+            try { video.load(); } catch (e) {}
+        }
+    }
+
     // 创建 <video> 元素 (自动播放, 绝不跳转, iOS 优化)
     function createVideoPlayer(mp4Url) {
         var video = document.createElement('video');
@@ -5644,8 +5724,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         video.referrerPolicy = 'no-referrer';
         video.style.cssText = 'width:100%;aspect-ratio:16/9;max-height:72vh;max-height:72dvh;object-fit:cover;background:#000;display:block;outline:none;';
         applyVideoAttrs(video);
-        video.src = mp4Url;
-        try { video.load(); } catch (e) {}
+        attachStream(video, mp4Url);
         video.onerror = function() {
             var parent = video.parentElement;
             if (parent) renderVideoError(parent, '视频加载失败', '可能已被删除或设为私密');
@@ -5897,8 +5976,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         wrap.innerHTML = '';
         wrap.appendChild(video);
         // 先挂到 DOM 再设 src 并显式 load(): 偶发(尤其首次)会卡在 networkState=NO_SOURCE, readyState 永远为 0
-        video.src = mp4Url;
-        try { video.load(); } catch (e) {}
+        attachStream(video, mp4Url);
         // 直链失效自动重解析: 先试 twjn / Twitter API 换一条可用直链, 都不行再显示错误卡片 (每个播放器只重试一次)
         video.onerror = function () { _reResolve(); };
         // 恢复上次播放进度
@@ -6309,7 +6387,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         }
         if (activeAuthor) p += '&author=ilike.*' + encodeURIComponent(pgSan(activeAuthor.trim())) + '*';
         // av4 专区已移除: 所有列表默认排除 av4 外链视频 (它们仍在库中，可通过直接链接播放)
-        if (p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)&or=(source_section.is.null,source_section.not.in.(twidouga,twivideo))';
+        if (p.indexOf('video_id=in.') < 0) p += '&or=(source_section.is.null,source_section.not.ilike.*av4*)&or=(source_section.is.null,source_section.not.in.(twidouga,twivideo,iwara))';
         if (playableFilter === 'playable') p += '&or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
         else if (playableFilter === 'unplayable') p += '&not.or=(has_mp4.is.true,duration.ilike.*video.twimg.com*)';
         p += '&removed=not.is.true';
@@ -7177,7 +7255,7 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         e.target.classList.add('active');
         activeSection=e.target.dataset.section;
         activeAuthor='';
-        updateIwaraBtn();
+        updateHsexBtn();
         document.getElementById('authorHeader').classList.remove('on');
         var fb = document.getElementById('authorFollowBtn');
         if (fb) fb.style.display = 'none';
@@ -7678,30 +7756,30 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
         });
     }
 
-    // ============ Iwara 专属抓取 (栏目页按钮 → 只触发 mode=iwara, 不碰其他栏目) ============
-    function updateIwaraBtn(){
-        var b = document.getElementById('iwaraScrapeBtn');
-        if (b) b.style.display = (typeof activeSection !== 'undefined' && activeSection === 'iwara') ? '' : 'none';
+    // ============ Hsex 专属抓取 (栏目页按钮 → 只触发 mode=hsex, 不碰其他栏目) ============
+    function updateHsexBtn(){
+        var b = document.getElementById('hsexScrapeBtn');
+        if (b) b.style.display = (typeof activeSection !== 'undefined' && activeSection === 'hsex') ? '' : 'none';
     }
-    var lastIwaraTrigger = 0;
-    function triggerIwaraScraper(){
+    var lastHsexTrigger = 0;
+    function triggerHsexScraper(){
         // 仅站主可用 (与云端抓取同一闸门)
         if (!(window.isOwner && window.isOwner())) {
-            if (window.showOwnerGate) { try { window.showOwnerGate('Iwara 抓取', '仅站主可触发 Iwara 专属抓取，其他用户请联系站主。'); } catch (e) {} }
+            if (window.showOwnerGate) { try { window.showOwnerGate('Hsex 抓取', '仅站主可触发 Hsex 专属抓取，其他用户请联系站主。'); } catch (e) {} }
             return;
         }
         var now = Date.now();
-        if (now - lastIwaraTrigger < COOLDOWN) {
-            toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastIwaraTrigger))/60000) + ' 分钟后可再触发');
+        if (now - lastHsexTrigger < COOLDOWN) {
+            toast('冷却中，' + Math.ceil((COOLDOWN-(now-lastHsexTrigger))/60000) + ' 分钟后可再触发');
             return;
         }
-        lastIwaraTrigger = now;
-        var btn = document.getElementById('iwaraScrapeBtn');
+        lastHsexTrigger = now;
+        var btn = document.getElementById('hsexScrapeBtn');
         if (btn) { btn.disabled = true; btn.textContent = '🕷️ 抓取中...'; }
-        toast('正在触发 Iwara 专属抓取 (只爬 Iwara 栏目)...');
-        ghDispatch(GH_WORKFLOW, { mode: 'iwara' }, 'scrape').then(function(ok) {
-            if (btn) { btn.disabled = false; btn.textContent = '🕷️ 抓取 Iwara'; }
-            if (!ok) lastIwaraTrigger = 0;
+        toast('正在触发 Hsex 专属抓取 (只爬 Hsex 栏目)...');
+        ghDispatch(GH_WORKFLOW, { mode: 'hsex' }, 'scrape').then(function(ok) {
+            if (btn) { btn.disabled = false; btn.textContent = '🕷️ 抓取 Hsex'; }
+            if (!ok) lastHsexTrigger = 0;
         });
     }
 
