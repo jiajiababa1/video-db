@@ -83,20 +83,29 @@
     }
   }
   function resolveHsexWatch(pageUrl){
-    var proxies=['https://api.allorigins.win/raw?url=','https://api.codetabs.com/v1/proxy?quest=','https://corsproxy.io/?url='];
-    var i=0;
-    function next(){
-      if(i>=proxies.length){ show('视频源解析失败，请回主站观看'); return; }
-      var p=proxies[i++];
-      fetch(p+encodeURIComponent(pageUrl),{cache:'no-store'})
-        .then(function(r){ if(!r.ok) throw new Error('bad'); return r.text(); })
-        .then(function(html){
-          var m=html.match(/https:\/\/cdn\.hdcdn\.store\/[^"'\s]+\/index\.m3u8/);
-          if(m){ playUrl(m[0]); } else { next(); }
-        })
-        .catch(function(){ next(); });
+    function tryHtml(html){
+      var m=html.match(/https:\/\/cdn\.hdcdn\.store\/[^"'\s]+\/index\.m3u8/);
+      if(m){ playUrl(m[0]); return true; }
+      return false;
     }
-    next();
+    /* 先直连: hsex.men 回显任意 Origin 的 CORS 头, 可直读 (公共代理对该站多为 522) */
+    fetch(pageUrl,{cache:'no-store'})
+      .then(function(r){ if(!r.ok) throw new Error('bad'); return r.text(); })
+      .then(function(html){ if(!tryHtml(html)) viaProxy(); })
+      .catch(function(){ viaProxy(); });
+    function viaProxy(){
+      var proxies=['https://api.allorigins.win/raw?url=','https://api.codetabs.com/v1/proxy?quest=','https://corsproxy.io/?url='];
+      var i=0;
+      function next(){
+        if(i>=proxies.length){ show('视频源解析失败，请回主站观看'); return; }
+        var p=proxies[i++];
+        fetch(p+encodeURIComponent(pageUrl),{cache:'no-store'})
+          .then(function(r){ if(!r.ok) throw new Error('bad'); return r.text(); })
+          .then(function(html){ if(!tryHtml(html)) next(); })
+          .catch(function(){ next(); });
+      }
+      next();
+    }
   }
   fetch(SB+'/rest/v1/videos?video_id=eq.'+encodeURIComponent(vid)+'&select=video_id,title,author,views,duration,video_url,has_mp4&limit=1',{headers:H})
     .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
@@ -108,7 +117,10 @@
       document.getElementById('m').textContent=(v.author?'@'+v.author+' · ':'')+(v.views?('▶ '+v.views):'');
       var url=(v.video_url||'');
       if(vid.indexOf('hx_')===0){
-        resolveHsexWatch(url);
+        var dhx=(v.duration||'');
+        var em=dhx.match(/cdn\.hdcdn\.store\/(\d{9,})\//);
+        if(em && (parseInt(em[1],10)*1000 - Date.now() > 120000)){ playUrl(dhx); }
+        else{ resolveHsexWatch(url); }
       /* 优先后端已解析的直链 (#1 解析后端化)；否则提示回主站 */
       }else if(url.indexOf('video.twimg.com')>=0||url.indexOf('.mp4')>=0){
         var vd=document.getElementById('v');

@@ -5594,6 +5594,17 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     // ========== hsex 解析 → 新鲜 m3u8 (签名链接约 1 小时过期, 每次播放现抓) ==========
     async function fetchHsexHtml(pageUrl) {
         if (!pageUrl) return null;
+        // 先直连: hsex.men 会回显任意 Origin 的 CORS 头, 浏览器可直接读详情页
+        // (公共代理 allorigins/codetabs 对该站均返回 522, 不能依赖)
+        try {
+            var dopts = { cache: 'no-store' };
+            if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) dopts.signal = AbortSignal.timeout(10000);
+            var dr = await fetch(pageUrl, dopts);
+            if (dr.ok) {
+                var dh = await dr.text();
+                if (dh && dh.indexOf('hdcdn.store') >= 0) return dh;
+            }
+        } catch (e) {}
         var url = pageUrl + (pageUrl.indexOf('?') >= 0 ? '&' : '?') + '_r=' + Math.random().toString(36).slice(2);
         for (var attempt = 1; attempt <= 4; attempt++) {
             var proxy = getProxy();
@@ -5624,8 +5635,14 @@ body.dark-mode .auth-trust input { width:16px; height:16px; accent-color:#c8a45c
     }
 
     async function resolveVideoSource(v) {
-        // 0. hsex 专属: 存的 m3u8 约 1 小时就过期, 一律现抓详情页换新链接
+        // 0. hsex 专属: 存的 m3u8 约 1 小时过期; 还新鲜 (>2 分钟) 就直接用,
+        //    过期/没存过再现抓详情页换新链接
         if (v.video_id && v.video_id.indexOf('hx_') === 0) {
+            var storedHx = v.duration || '';
+            var expM = storedHx.match(/cdn\.hdcdn\.store\/(\d{9,})\//);
+            if (expM && (parseInt(expM[1], 10) * 1000 - Date.now() > 120000)) {
+                return { mp4Url: storedHx, source: 'hsex_stored' };
+            }
             var hxUrl = await resolveHsex(v);
             if (hxUrl) return { mp4Url: hxUrl, source: 'hsex' };
             return { mp4Url: null, source: 'hsex_failed' };

@@ -779,9 +779,11 @@ def crawl_iwara(fetcher, deadline, seen):
 # 链接 (resolveVideoSource 的 hx_ 分支), 并回写数据库刷新。出于这个机制,
 # 本爬虫每轮先回访已入库最旧的一批 hx 行刷新链接, 再抓最新/最热列表。
 HX_BASE = "https://hsex.men"
-HX_BUDGET = _env_int("HX_BUDGET", 240)          # hsex 每轮时间预算(秒)
-HX_MAX = _env_int("HX_MAX", 60)                 # hsex 每轮最多处理条数 (含回访)
+HX_BUDGET = _env_int("HX_BUDGET", 420)          # hsex 每轮时间预算(秒)
+HX_MAX = _env_int("HX_MAX", 60)                 # 回访刷新阶段的条数上限
 HX_REFRESH_MAX = _env_int("HX_REFRESH_MAX", 24)  # 每轮回访刷新多少条已入库行
+HX_SEED_MAX = _env_int("HX_SEED_MAX", 48)       # 新增里给多少条抓详情页种子直链
+HX_NEW_MAX = _env_int("HX_NEW_MAX", 600)        # 每轮最多新增条数 (列表直收, 不抓详情)
 
 RE_HX_CARD = re.compile(r'<div class="thumbnail">')
 RE_HX_ID = re.compile(r'href="video-(\d+)\.htm"')
@@ -848,6 +850,37 @@ def parse_hsex_detail(html_text, hid):
     )
 
 
+def _hsex_existing_ids():
+    """库里已有的全部 hx_ video_id 集合 (只拉 video_id 列分页拉全, 列表去重用)"""
+    ids = set()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return ids
+    offset = 0
+    try:
+        while True:
+            r = httpx.get(SUPABASE_URL + "/rest/v1/videos",
+                          params={"source_section": "eq.hsex",
+                                  "select": "video_id",
+                                  "order": "video_id.asc",
+                                  "limit": "1000", "offset": str(offset)},
+                          headers=sb_headers(), timeout=30)
+            if r.status_code != 200:
+                break
+            rows = r.json()
+            if not rows:
+                break
+            for row in rows:
+                vid = row.get("video_id") or ""
+                if vid:
+                    ids.add(vid)
+            if len(rows) < 1000:
+                break
+            offset += 1000
+    except Exception:
+        pass
+    return ids
+
+
 def _hsex_stale_ids(limit):
     """已入库 hsex 行里 scraped_at 最旧的一批原始 ID (刷新将过期的 m3u8 用)"""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -909,6 +942,11 @@ def crawl_hsex(fetcher, deadline, seen):
                 rec["has_mp4"] = True
             return bool(m3u8)
 
+        known = _hsex_existing_ids()
+        if known:
+            seen |= known
+            log(f"  [hsex] 库内已有 {len(known)} 条, 列表只收新片")
+
         # 1) 回访已入库最旧的一批, 刷新将过期的 m3u8
         refreshed = 0
         for hid in _hsex_stale_ids(HX_REFRESH_MAX):
@@ -930,10 +968,13 @@ def crawl_hsex(fetcher, deadline, seen):
         if refreshed:
             log(f"  [hsex] 回访刷新 {refreshed} 条已入库视频的链接")
 
-        # 2) 最新 + 最热列表 (卡片自带文案, 再逐条抓详情补 m3u8)
-        for sort in ("new", "hot"):
-            for page in (1, 2, 3):
-                if len(out) >= HX_MAX or time.time() > deadline:
+        # 2) 最新 + 最热列表大批量直收: 卡片自带全部文案, 播放时前端现抓详情页
+        #    换新链接, 入库不必逐条抓详情 (慢且链接 1 小时就过期)。只给最新的一批
+        #    抓详情当种子直链; 其余 has_mp4 标记为真 (hx 播放走现抓解析, 名副其实)。
+        new_recs = []
+        for sort, max_page in (("new", 20), ("hot", 6)):
+            for page in range(1, max_page + 1):
+                if len(new_recs) >= HX_NEW_MAX or time.time() > deadline:
                     break
                 list_url = f"{HX_BASE}/list-{page}.htm?sort={sort}"
                 html_text = _get_text(list_url)
@@ -945,15 +986,28 @@ def crawl_hsex(fetcher, deadline, seen):
                     break
                 fresh = 0
                 for rec in cards:
-                    if len(out) >= HX_MAX or time.time() > deadline:
+                    if len(new_recs) >= HX_NEW_MAX:
                         break
                     if rec["video_id"] in seen:
                         continue
                     seen.add(rec["video_id"])
-                    fill_detail(rec)
-                    out.append(rec)
+                    new_recs.append(rec)
                     fresh += 1
-                log(f"  [hsex] sort={sort} page={page} -> +{fresh} 条 (累计 {len(out)})")
+                log(f"  [hsex] sort={sort} page={page} -> 新片 +{fresh} 条 (累计新片 {len(new_recs)})")
+                if fresh == 0 and page >= 3:
+                    break  # 连续翻到旧片区就停 (new 排序前几页偶有置顶重复)
+        seeded = 0
+        for rec in new_recs:
+            if seeded >= HX_SEED_MAX or time.time() > deadline:
+                break
+            fill_detail(rec)
+            seeded += 1
+        for rec in new_recs:
+            if not rec["mp4_url"]:
+                rec["has_mp4"] = True
+        out.extend(new_recs)
+        if new_recs:
+            log(f"  [hsex] 本轮新增 {len(new_recs)} 条 (其中最新 {seeded} 条已抓详情页)")
     finally:
         client.close()
     for rec in out:
