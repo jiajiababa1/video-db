@@ -16,6 +16,7 @@ final class Library: ObservableObject {
     @Published var badwords: [String] = []               // 屏蔽词 (标题命中即过滤)
     @Published var searchRecent: [String] = []           // 搜索历史 (最近 12)
     @Published var recycle: [RecycleEntry] = []          // 回收站
+    @Published var countedViews: [String] = []           // 已计过观看数的 "账号|video_id" (同一人只计一次)
 
     /// 任一变更后回调 (RootView 挂 ConfigSync 推送)
     var onMutate: (() -> Void)?
@@ -165,6 +166,16 @@ final class Library: ObservableObject {
     /// 供云同步在批量套用远端值后落盘
     func persistNow() { save() }
 
+    // MARK: - 观看计数去重
+    func markCounted(_ key: String) {
+        if !countedViews.contains(key) { countedViews.append(key); save() }
+    }
+
+    func unmarkCounted(_ key: String) {
+        countedViews.removeAll { $0 == key }
+        save()
+    }
+
     // MARK: - 持久化
     private struct Persist: Codable {
         var favorites: [String] = []
@@ -179,6 +190,7 @@ final class Library: ObservableObject {
         var badwords: [String] = []
         var searchRecent: [String] = []
         var recycle: [RecycleEntry] = []
+        var countedViews: [String] = []
     }
 
     private struct PersistV1: Codable {
@@ -198,6 +210,7 @@ final class Library: ObservableObject {
             progress = p.progress; follows = p.follows; blockedAuthors = p.blockedAuthors
             snapshots = p.snapshots; favFolders = p.favFolders; hiddenIds = p.hiddenIds
             badwords = p.badwords; searchRecent = p.searchRecent; recycle = p.recycle
+            countedViews = p.countedViews
             return
         }
         if let p = try? JSONDecoder().decode(PersistV1.self, from: data) {
@@ -211,7 +224,8 @@ final class Library: ObservableObject {
         let p = Persist(favorites: favorites, watchLater: watchLater, history: history,
                         progress: progress, follows: follows, blockedAuthors: blockedAuthors,
                         snapshots: snapshots, favFolders: favFolders, hiddenIds: hiddenIds,
-                        badwords: badwords, searchRecent: searchRecent, recycle: recycle)
+                        badwords: badwords, searchRecent: searchRecent, recycle: recycle,
+                        countedViews: countedViews)
         if let data = try? JSONEncoder().encode(p) {
             try? data.write(to: fileURL, options: .atomic)
         }

@@ -175,7 +175,7 @@ struct LibraryView: View {
                 }
                 ForEach(library.follows, id: \.self) { a in
                     NavigationLink {
-                        FeedView(author: a)
+                        AuthorView(name: a)
                     } label: {
                         HStack(spacing: 12) {
                             ZStack {

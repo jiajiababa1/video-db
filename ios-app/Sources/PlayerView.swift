@@ -107,6 +107,8 @@ final class PlayerVM: ObservableObject {
                 self.library?.recordWatch(self.video, progress: frac)
             }
             p.play()
+            // 真实观看计数 (同一账号只计一次)
+            Task { await ViewCounter.register(video: video, user: Session.shared.username, library: library) }
         }
     }
 
@@ -290,16 +292,26 @@ struct PlayerView: View {
 
     private var authorRow: some View {
         HStack(spacing: 10) {
-            ZStack {
-                Circle().fill(Theme.goldGradient)
-                Text(String(video.displayAuthor.prefix(1)))
-                    .font(.headline).foregroundColor(.black)
-            }
-            .frame(width: 38, height: 38)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("@" + video.displayAuthor).font(.subheadline.weight(.bold))
-                Text((video.viewsText ?? "") + (video.durationText.map { " · " + $0 } ?? ""))
-                    .font(.caption).foregroundColor(Theme.sub)
+            if !video.displayAuthor.isEmpty {
+                NavigationLink {
+                    AuthorView(name: video.displayAuthor)
+                } label: {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            Circle().fill(Theme.goldGradient)
+                            Text(String(video.displayAuthor.prefix(1)))
+                                .font(.headline).foregroundColor(.black)
+                        }
+                        .frame(width: 38, height: 38)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("@" + video.displayAuthor).font(.subheadline.weight(.bold))
+                                .foregroundColor(Theme.text)
+                            Text((video.viewsText ?? "") + (video.durationText.map { " · " + $0 } ?? ""))
+                                .font(.caption).foregroundColor(Theme.sub)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
             }
             Spacer()
             if !video.displayAuthor.isEmpty {

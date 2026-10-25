@@ -7,6 +7,7 @@ struct FeedView: View {
     var search: String? = nil
     var personalIds: [String]? = nil
     var navTitle: String? = nil
+    var showAuthorBar: Bool = true
 
     @EnvironmentObject var session: Session
     @EnvironmentObject var library: Library
@@ -94,17 +95,24 @@ struct FeedView: View {
 
     @ViewBuilder
     private var authorBar: some View {
-        if let a = author {
+        if let a = author, showAuthorBar {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(Theme.goldGradient)
-                    Text(String(a.prefix(1))).font(.headline).foregroundColor(.black)
+                NavigationLink {
+                    AuthorView(name: a)
+                } label: {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle().fill(Theme.goldGradient)
+                            Text(String(a.prefix(1))).font(.headline).foregroundColor(.black)
+                        }
+                        .frame(width: 44, height: 44)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("@" + a).font(.system(size: 16, weight: .bold))
+                            Text("查看作者主页 ›").font(.caption).foregroundColor(Theme.sub)
+                        }
+                    }
                 }
-                .frame(width: 44, height: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("@" + a).font(.system(size: 16, weight: .bold))
-                    Text("作者主页").font(.caption).foregroundColor(Theme.sub)
-                }
+                .buttonStyle(.plain)
                 Spacer()
                 Button(library.isFollowing(a) ? "已关注" : "+ 关注") { library.toggleFollow(a) }
                     .font(.system(size: 13, weight: .bold))

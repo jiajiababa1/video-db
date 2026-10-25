@@ -86,7 +86,7 @@ struct SearchView: View {
                         HStack(spacing: 8) {
                             ForEach(authors, id: \.self) { a in
                                 NavigationLink {
-                                    FeedView(author: a)
+                                    AuthorView(name: a)
                                 } label: {
                                     HStack(spacing: 6) {
                                         Image(systemName: "person.circle.fill")
