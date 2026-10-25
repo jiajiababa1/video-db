@@ -414,7 +414,7 @@ struct WorksView: View {
     @State private var showSubmit = false
 
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 12) {
                 if works.isEmpty {
                     Text(mineOnly ? "你还没有上传的作品" : "作品墙还是空的")

@@ -37,7 +37,7 @@ struct FeedView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
                 }
-                VideoGrid(items: items) { loadMore() }
+                VideoGrid(items: items, onReachEnd: { loadMore() })
                     .padding(.horizontal, 12)
                 if loading { ProgressView().tint(Theme.gold).padding() }
                 if !loading && items.isEmpty {

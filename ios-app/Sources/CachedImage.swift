@@ -1,5 +1,4 @@
 import SwiftUI
-import CommonCrypto
 
 /// 带内存+磁盘缓存的图片 (替代 AsyncImage: 滚动/重进页面不再重新下载)
 struct CachedImage: View {
@@ -39,7 +38,7 @@ actor ImageStore {
     func get(_ url: URL) async -> UIImage? {
         let key = url.absoluteString as NSString
         if let img = mem.object(forKey: key) { return img }
-        let file = dir.appendingPathComponent(md5(url.absoluteString) + ".img")
+        let file = dir.appendingPathComponent(cacheName(url.absoluteString) + ".img")
         if let data = try? Data(contentsOf: file), let img = UIImage(data: data) {
             mem.setObject(img, forKey: key)
             return img
@@ -51,10 +50,13 @@ actor ImageStore {
         return img
     }
 
-    private func md5(_ s: String) -> String {
-        let data = Data(s.utf8)
-        var digest = [UInt8](repeating: 0, count: Int(CC_MD5_DIGEST_LENGTH))
-        data.withUnsafeBytes { CC_MD5($0.baseAddress, CC_LONG(data.count), &digest) }
-        return digest.map { String(format: "%02x", $0) }.joined()
+    private func cacheName(_ s: String) -> String {
+        var h1: UInt64 = 5381
+        var h2: UInt64 = 52711
+        for b in s.utf8 {
+            h1 = (h1 &* 33) &+ UInt64(b)
+            h2 = (h2 &* 31) &+ UInt64(b)
+        }
+        return String(format: "%llx%llx", h1, h2)
     }
 }
