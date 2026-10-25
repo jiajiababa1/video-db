@@ -69,6 +69,11 @@ jobs:
           done
           # 如确实需要公开 TOTP 页面, 把 totp.html 加进上面的列表 (会暴露给所有人, 内含密钥请谨慎)
 
+      - name: 发布热更新包
+        run: |
+          mkdir -p _site/updates
+          cp updates/bundle.json _site/updates/bundle.json
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
