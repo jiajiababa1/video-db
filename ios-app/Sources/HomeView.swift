@@ -3,6 +3,7 @@ import SwiftUI
 /// 首页: 精选大图 + 继续观看 + 栏目货架 + 推荐网格
 struct HomeView: View {
     @EnvironmentObject var library: Library
+    @EnvironmentObject var bridge: Bridge
     @State private var latest: [VideoItem] = []
     @State private var hx: [VideoItem] = []
     @State private var recs: [VideoItem] = []
@@ -18,17 +19,36 @@ struct HomeView: View {
                 if let hero = latest.first {
                     heroView(hero)
                 }
-                if !continueWatching.isEmpty {
-                    shelfHeader("继续观看")
-                    shelf(continueWatching, showProgress: true)
+                if let ann = bridge.announcement, !ann.isEmpty {
+                    Text(ann)
+                        .font(.system(size: 13))
+                        .foregroundColor(Theme.gold2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 13).padding(.vertical, 9)
+                        .background(Theme.surface)
+                        .cornerRadius(12)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
                 }
-                shelfHeader("最新上线", section: FeedService.allSections[2])
-                shelf(latest)
-                shelfHeader("Hsex 专栏", section: FeedService.allSections[8])
-                shelf(hx)
-                shelfHeader("为你推荐")
-                VideoGrid(items: recs)
-                    .padding(.horizontal, 16)
+                ForEach(bridge.shelfOrder, id: \.self) { key in
+                    switch key {
+                    case "continue":
+                        if !continueWatching.isEmpty {
+                            shelfHeader("继续观看")
+                            shelf(continueWatching, showProgress: true)
+                        }
+                    case "latest":
+                        shelfHeader("最新上线", section: FeedService.allSections[2])
+                        shelf(latest)
+                    case "hsex":
+                        shelfHeader("Hsex 专栏", section: FeedService.allSections[8])
+                        shelf(hx)
+                    default:
+                        shelfHeader("为你推荐")
+                        VideoGrid(items: recs)
+                            .padding(.horizontal, 16)
+                    }
+                }
             }
             .padding(.bottom, 16)
         }

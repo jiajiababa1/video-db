@@ -57,6 +57,17 @@ struct VideoItem: Codable, Identifiable, Hashable {
     }
 }
 
+/// 宽容整数解码 (后端有些数字字段以文本形式返回, 如 vip_level 可能为 "")
+struct FlexInt: Decodable {
+    var value: Int
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let i = try? c.decode(Int.self) { value = i }
+        else if let s = try? c.decode(String.self) { value = Int(s) ?? 0 }
+        else { value = 0 }
+    }
+}
+
 /// 列表查询参数
 struct VideoQuery {
     var section: AppSection? = nil

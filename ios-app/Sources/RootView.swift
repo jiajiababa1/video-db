@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject var session: Session
     @EnvironmentObject var library: Library
+    @EnvironmentObject var bridge: Bridge
 
     var body: some View {
         Group {
@@ -14,6 +15,7 @@ struct RootView: View {
         }
         .background(Theme.bg.ignoresSafeArea())
         .task {
+            bridge.bootstrap()
             await session.validateSession()
             if session.isLoggedIn { await CloudSync.pullMerge(into: library, session: session) }
         }

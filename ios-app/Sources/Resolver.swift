@@ -15,6 +15,11 @@ enum Resolver {
         }
         // 存量直链 (mp4 / twimg / m3u8)
         if let u = v.storedURL { return u }
+        // 热更新 JS 解析模块 (命中前缀时优先于内置解析)
+        if let u = Bridge.shared.resolveWithModules(v) {
+            writeback(v, u)
+            return u
+        }
         // twjn 解析
         if let mid = v.monsnode_video_id, !mid.isEmpty, let u = await resolveTwjn(mid) {
             writeback(v, u)

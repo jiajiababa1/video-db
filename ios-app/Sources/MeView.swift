@@ -4,6 +4,7 @@ import SwiftUI
 struct MeView: View {
     @EnvironmentObject var session: Session
     @EnvironmentObject var library: Library
+    @EnvironmentObject var bridge: Bridge
     @State private var totalVideos: Int? = nil
     @State private var lastRun: String? = nil
     @State private var savedLastRun: Int? = nil
@@ -22,6 +23,7 @@ struct MeView: View {
                 if session.isOwner {
                     ownerCard
                 }
+                hotUpdateCard
                 dataCard
                 Text("2048 影院 · 原生版 v1.0")
                     .font(.caption2).foregroundColor(Theme.sub)
@@ -201,6 +203,53 @@ struct MeView: View {
         await loadStats()
     }
 
+    // MARK: 热更新
+    @State private var bridgeOn = true
+
+    private var hotUpdateCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("热更新").font(.system(size: 16, weight: .bold))
+            infoRow("更新包版本", bridge.bundleVersion > 0 ? "v\(bridge.bundleVersion)" : "内置 (无远程包)")
+            infoRow("插件状态", bridge.pluginVersion.map { "LiveContainer 插件 v\($0) ✓" } ?? "未挂插件 (App 自行更新)")
+            infoRow("链路自检", bridge.helloRan ? "JS 模块引擎正常 ✓" : "等待首个模块运行")
+            if !bridge.moduleNames.isEmpty {
+                infoRow("已加载模块", bridge.moduleNames.joined(separator: " · "))
+            }
+            infoRow("状态", bridge.statusText)
+            HStack(spacing: 8) {
+                Button("检查更新") {
+                    Task { await bridge.checkUpdate(manual: true) }
+                }
+                .font(.system(size: 13, weight: .bold))
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(Theme.goldGradient).foregroundColor(.black)
+                .cornerRadius(99)
+                Button("回滚一版") { bridge.rollback() }
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(Theme.surface2).foregroundColor(Theme.text)
+                    .cornerRadius(99)
+            }
+            Toggle("启用远程更新", isOn: $bridgeOn)
+                .font(.system(size: 14))
+                .tint(Theme.gold)
+                .onAppear { bridgeOn = bridge.enabled }
+                .onChange(of: bridgeOn) { bridge.enabled = $0 }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .background(Theme.surface)
+        .cornerRadius(18)
+    }
+
+    private func infoRow(_ k: String, _ v: String) -> some View {
+        HStack(alignment: .top) {
+            Text(k).font(.caption).foregroundColor(Theme.sub).frame(width: 76, alignment: .leading)
+            Text(v).font(.caption).foregroundColor(Theme.text)
+            Spacer()
+        }
+    }
+
     // MARK: 数据管理
     private var dataCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -225,12 +274,12 @@ struct MeView: View {
 
     private func loadStats() async {
         totalVideos = await FeedService.totalCount()
-        struct SR: Decodable { var last_run: String?; var videos_saved: Int? }
+        struct SR: Decodable { var last_run: String?; var videos_saved: FlexInt? }
         let url = SB.base.absoluteString + "/rest/v1/scrape_status?select=last_run,videos_saved&order=last_run.desc&limit=1"
         let (rows, _): ([SR], Int?) = (try? await SB.getRaw(url)) ?? ([], nil)
         if let r = rows.first {
             lastRun = r.last_run.map { String($0.prefix(16)).replacingOccurrences(of: "T", with: " ") }
-            savedLastRun = r.videos_saved
+            savedLastRun = r.videos_saved?.value
         }
     }
 }

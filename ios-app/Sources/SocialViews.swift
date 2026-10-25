@@ -3,6 +3,7 @@ import SwiftUI
 /// 好友页: 申请 / 添加 / 好友列表 + 社交入口 (群聊 / 作品墙)
 struct FriendsView: View {
     @EnvironmentObject var session: Session
+    @EnvironmentObject var bridge: Bridge
     @State private var rows: [FriendRow] = []
     @State private var addName = ""
     @State private var note: String? = nil
@@ -15,10 +16,14 @@ struct FriendsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                entryRow(icon: "bubble.left.and.bubble.right.fill", title: "板块群聊",
-                         sub: "进群聊天、找同好") { BoardsView() }
-                entryRow(icon: "photo.on.rectangle.angled", title: "作品墙",
-                         sub: "大家上传的作品") { WorksView() }
+                if bridge.featureBoards {
+                    entryRow(icon: "bubble.left.and.bubble.right.fill", title: "板块群聊",
+                             sub: "进群聊天、找同好") { BoardsView() }
+                }
+                if bridge.featureWorks {
+                    entryRow(icon: "photo.on.rectangle.angled", title: "作品墙",
+                             sub: "大家上传的作品") { WorksView() }
+                }
 
                 if !session.isLoggedIn {
                     Text("登录后可加好友、收申请 (在「我的」里登录)")

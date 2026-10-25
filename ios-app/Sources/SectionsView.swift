@@ -2,14 +2,17 @@ import SwiftUI
 
 /// 栏目页: 全部栏目磁贴 (带实时计数)
 struct SectionsView: View {
+    @EnvironmentObject var bridge: Bridge
     @State private var counts: [String: Int] = [:]
+
+    private var sections: [AppSection] { FeedService.allSections + bridge.extraSections }
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(FeedService.allSections) { sec in
+                ForEach(sections) { sec in
                     NavigationLink {
                         FeedView(section: sec)
                     } label: {
@@ -44,7 +47,7 @@ struct SectionsView: View {
     }
 
     private func loadCounts() async {
-        for sec in FeedService.allSections where !sec.id.isEmpty {
+        for sec in sections where !sec.id.isEmpty {
             if let c = await FeedService.count(section: sec) {
                 counts[sec.id] = c
             }

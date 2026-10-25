@@ -57,7 +57,7 @@ final class Session: ObservableObject {
 
     // MARK: - 账号
     func login(username u: String, password p: String) async -> String? {
-        struct R: Decodable { var ok: Bool?; var token: String?; var message: String?; var is_admin: Bool?; var vip_level: Int? }
+        struct R: Decodable { var ok: Bool?; var token: String?; var message: String?; var is_admin: Bool?; var vip_level: FlexInt? }
         do {
             let rows: [R] = try await SB.rpc("login_account",
                 params: ["p_username": u, "p_password": p, "p_device_id": deviceId])
@@ -67,8 +67,8 @@ final class Session: ObservableObject {
             d.set(u, forKey: "login_user")
             d.set(t, forKey: "login_token")
             d.set(r.is_admin ?? false, forKey: "login_is_admin")
-            d.set(r.vip_level ?? 0, forKey: "login_vip")
-            username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level ?? 0
+            d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
+            username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
             return nil
         } catch {
             return "网络错误: \(error.localizedDescription)"
@@ -90,11 +90,11 @@ final class Session: ObservableObject {
     /// 启动时校验本地会话 (失败不清 token, 与网站一致)
     func validateSession() async {
         guard isLoggedIn else { return }
-        struct R: Decodable { var valid: Bool?; var username: String?; var is_admin: Bool?; var vip_level: Int? }
+        struct R: Decodable { var valid: Bool?; var username: String?; var is_admin: Bool?; var vip_level: FlexInt? }
         if let rows: [R] = try? await SB.rpc("check_session", params: ["p_token": loginToken]),
            let r = rows.first, r.valid == true {
             isAdmin = r.is_admin ?? isAdmin
-            vipLevel = r.vip_level ?? vipLevel
+            vipLevel = r.vip_level?.value ?? vipLevel
         }
     }
 }
