@@ -23,7 +23,7 @@ struct AdminVideosView: View {
             ForEach(results) { v in
                 Button { editing = v } label: {
                     HStack(spacing: 10) {
-                        CachedImage(url: v.thumbnail_url).frame(width: 64, height: 40).clipped().cornerRadius(4)
+                        CachedImage(urlString: v.thumbnail_url).frame(width: 64, height: 40).clipped().cornerRadius(4)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(v.displayTitle).font(.subheadline).lineLimit(2).foregroundColor(.primary)
                             Text("\(v.author ?? "?") · 观看 \(v.viewsText ?? "0")\(v.hasPlayableLink ? "" : " · 无直链")")
@@ -40,7 +40,7 @@ struct AdminVideosView: View {
 
     private func search() async {
         searching = true
-        let page = await FeedService.fetchPage(offset: 0, search: q)
+        let page = (try? await FeedService.fetchPage(search: q)) ?? (items: [], total: nil)
         results = page.items
         note = page.items.isEmpty ? "没搜到" : "共 \(page.items.count) 条 (点一条编辑)"
         searching = false
@@ -60,7 +60,7 @@ struct AdminVideoEditor: View {
 
     init(video: VideoItem) {
         self.video = video
-        _title = State(initialValue: video.title)
+        _title = State(initialValue: video.title ?? "")
         _author = State(initialValue: video.author ?? "")
         _thumb = State(initialValue: video.thumbnail_url ?? "")
         _dur = State(initialValue: video.duration ?? "")
@@ -68,7 +68,7 @@ struct AdminVideoEditor: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             Form {
                 Section("基本信息") {
                     HStack { Text("ID"); Spacer(); Text(video.video_id).font(.caption).foregroundColor(.secondary) }
@@ -263,7 +263,7 @@ struct AdminPageEditor: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             Form {
                 TextField("slug（英文标识）", text: $slug)
                     .autocorrectionDisabled().textInputAutocapitalization(.never)

@@ -80,7 +80,7 @@ struct AdminUserEditor: View {
     private var verified: Bool { adminBool(user, "verified") }
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             Form {
                 Section("账号信息") {
                     row("用户名", "@" + username)

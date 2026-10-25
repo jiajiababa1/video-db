@@ -14,6 +14,10 @@ enum AdminAPI {
         var code: String?
     }
 
+    private static func call<T: Decodable>(_ name: String, _ params: [String: Any]) async -> [T]? {
+        try? await SB.rpc(name, params: params)
+    }
+
     private static func outcome(_ rows: [Res]) -> (Bool, String) {
         guard let r = rows.first else { return (false, "无返回") }
         return (r.ok ?? false, r.message ?? "")
@@ -21,14 +25,14 @@ enum AdminAPI {
 
     // MARK: - 用户
     static func exec(action: String, target: String, detail: String) async -> (Bool, String) {
-        let rows: [Res] = (try? await SB.rpc("admin_exec", [
+        let rows: [Res] = (await call("admin_exec", [
             "p_token": token, "p_action": action, "p_target": target, "p_detail": detail,
         ])) ?? []
         return outcome(rows)
     }
 
     static func resetPassword(target: String, newPassword: String) async -> (Bool, String) {
-        let rows: [Res] = (try? await SB.rpc("admin_reset_password", [
+        let rows: [Res] = (await call("admin_reset_password", [
             "p_token": token, "p_target": target, "p_new_password": newPassword,
         ])) ?? []
         return outcome(rows)
@@ -56,7 +60,7 @@ enum AdminAPI {
 
     // MARK: - 视频
     static func deleteVideos(ids: [String]) async -> Int {
-        let rows: [Res] = (try? await SB.rpc("admin_delete_videos", [
+        let rows: [Res] = (await call("admin_delete_videos", [
             "p_token": token, "p_ids": ids,
         ])) ?? []
         return rows.first?.deleted?.value ?? 0
@@ -64,21 +68,21 @@ enum AdminAPI {
 
     // MARK: - 公告
     static func announcePublish(title: String, content: String) async -> (Bool, String) {
-        let rows: [Res] = (try? await SB.rpc("admin_announce_publish", [
+        let rows: [Res] = (await call("admin_announce_publish", [
             "p_token": token, "p_title": title, "p_content": content, "p_only": false,
         ])) ?? []
         return outcome(rows)
     }
 
     static func announceDelete(id: Int) async -> Bool {
-        let rows: [Res] = (try? await SB.rpc("admin_announce_delete", [
+        let rows: [Res] = (await call("admin_announce_delete", [
             "p_token": token, "p_id": id,
         ])) ?? []
         return rows.first?.ok ?? false
     }
 
     static func announceClear() async -> Bool {
-        let rows: [Res] = (try? await SB.rpc("admin_announce_clear", [
+        let rows: [Res] = (await call("admin_announce_clear", [
             "p_token": token,
         ])) ?? []
         return rows.first?.ok ?? false
@@ -100,7 +104,7 @@ enum AdminAPI {
             recipients = result.0.compactMap { $0.username }.filter { $0 != Session.shared.username }
         }
         guard !recipients.isEmpty else { return 0 }
-        let rows: [Res] = (try? await SB.rpc("admin_broadcast_dm", [
+        let rows: [Res] = (await call("admin_broadcast_dm", [
             "p_token": token, "p_recipients": recipients, "p_content": content,
         ])) ?? []
         return rows.first?.sent?.value ?? 0
@@ -108,21 +112,21 @@ enum AdminAPI {
 
     // MARK: - 站内页 / 配置
     static func sitepageSave(slug: String, title: String, content: String) async -> (Bool, String) {
-        let rows: [Res] = (try? await SB.rpc("admin_sitepage_save", [
+        let rows: [Res] = (await call("admin_sitepage_save", [
             "p_token": token, "p_slug": slug, "p_title": title, "p_content": content,
         ])) ?? []
         return outcome(rows)
     }
 
     static func sitepageDelete(slug: String) async -> Bool {
-        let rows: [Res] = (try? await SB.rpc("admin_sitepage_delete", [
+        let rows: [Res] = (await call("admin_sitepage_delete", [
             "p_token": token, "p_slug": slug,
         ])) ?? []
         return rows.first?.ok ?? false
     }
 
     static func configSet(key: String, value: String) async -> Bool {
-        let rows: [Res] = (try? await SB.rpc("admin_config", [
+        let rows: [Res] = (await call("admin_config", [
             "p_token": token, "p_key": key, "p_value": value,
         ])) ?? []
         return rows.first?.ok ?? false
@@ -140,11 +144,11 @@ enum AdminAPI {
     }
 
     static func listCodes() async -> [CodeRow] {
-        (try? await SB.rpc("admin_list_codes", ["p_token": token])) ?? []
+        (await call("admin_list_codes", ["p_token": token])) ?? []
     }
 
     static func generateCode(level: String, uses: Int, minutes: Int, permanent: Bool) async -> String? {
-        let rows: [Res] = (try? await SB.rpc("admin_generate_code", [
+        let rows: [Res] = (await call("admin_generate_code", [
             "p_token": token, "p_level": level, "p_uses": uses,
             "p_duration_minutes": minutes, "p_permanent": permanent,
         ])) ?? []
@@ -169,7 +173,7 @@ enum AdminAPI {
     }
 
     static func recentMessages(limit: Int = 100) async -> [RecentMsg] {
-        (try? await SB.rpc("admin_recent_messages", ["p_token": token, "p_limit": limit])) ?? []
+        (await call("admin_recent_messages", ["p_token": token, "p_limit": limit])) ?? []
     }
 
     struct BanRow: Decodable, Identifiable {
@@ -181,7 +185,7 @@ enum AdminAPI {
     }
 
     static func recentBans() async -> [BanRow] {
-        (try? await SB.rpc("admin_recent_bans", ["p_token": token])) ?? []
+        (await call("admin_recent_bans", ["p_token": token])) ?? []
     }
 
     // MARK: - 灵活读取 (管理列表字段不一, 用字典兜底)
