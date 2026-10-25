@@ -1,0 +1,32 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Prepare app icon
+        run: sips -z 1024 1024 icon-512.png --out ios-app/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+      - name: Build unsigned app
+        working-directory: ios-app
+        run: |
+          xcodebuild -project VideoDB.xcodeproj -scheme VideoDB -sdk iphoneos -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -derivedDataPath build
+      - name: Package IPA
+        working-directory: ios-app
+        run: |
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/VideoDB.app Payload/
+          zip -r VideoDB-unsigned.ipa Payload
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoDB-IPA
+          path: ios-app/VideoDB-unsigned.ipa
