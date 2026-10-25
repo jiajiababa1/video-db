@@ -19,11 +19,13 @@ struct MeView: View {
                 statsCard
                 if session.isLoggedIn {
                     syncCard
+                    accountSettingsCard
                 }
                 if session.isOwner {
                     ownerCard
                 }
                 hotUpdateCard
+                moreCard
                 dataCard
                 Text("2048 影院 · 原生版 v1.0")
                     .font(.caption2).foregroundColor(Theme.sub)
@@ -126,6 +128,63 @@ struct MeView: View {
             .padding(.vertical, 11)
             .background(Theme.goldGradient).foregroundColor(.black)
             .cornerRadius(12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .background(Theme.surface)
+        .cornerRadius(18)
+    }
+
+    // MARK: 账号设置 (改密码 / 兑换码)
+    @State private var oldPass = ""
+    @State private var newPass = ""
+    @State private var redeemInput = ""
+    @State private var accountNote: String? = nil
+
+    private var accountSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("账号设置").font(.system(size: 16, weight: .bold))
+            SecureField("旧密码", text: $oldPass)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Theme.surface2).cornerRadius(10)
+            SecureField("新密码", text: $newPass)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Theme.surface2).cornerRadius(10)
+            Button("修改密码") {
+                Task {
+                    guard let me = session.username else { return }
+                    let r = await AccountAPI.changePassword(user: me, old: oldPass, new: newPass)
+                    if r.ok {
+                        accountNote = "密码已修改, 请重新登录"
+                        session.logout()
+                    } else {
+                        accountNote = r.msg
+                    }
+                }
+            }
+            .font(.system(size: 13.5, weight: .bold))
+            .disabled(oldPass.isEmpty || newPass.count < 4)
+            Divider().background(Theme.line)
+            HStack(spacing: 8) {
+                TextField("VIP 兑换码", text: $redeemInput)
+                    .autocapitalization(.allCharacters)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .background(Theme.surface2).cornerRadius(10)
+                Button("兑换") {
+                    Task {
+                        guard let me = session.username else { return }
+                        let r = await AccountAPI.redeem(user: me, code: redeemInput)
+                        accountNote = r.msg
+                        if r.ok { redeemInput = "" }
+                    }
+                }
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundColor(Theme.gold2)
+                .disabled(redeemInput.isEmpty)
+            }
+            if let n = accountNote {
+                Text(n).font(.caption).foregroundColor(Theme.gold2)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
@@ -247,6 +306,49 @@ struct MeView: View {
             Text(k).font(.caption).foregroundColor(Theme.sub).frame(width: 76, alignment: .leading)
             Text(v).font(.caption).foregroundColor(Theme.text)
             Spacer()
+        }
+    }
+
+    // MARK: 更多 (站内页面 / 屏蔽管理)
+    private var moreCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("更多").font(.system(size: 16, weight: .bold))
+            NavigationLink {
+                SitePageView(slug: "about", fallbackTitle: "关于")
+            } label: {
+                moreRow("关于本站", icon: "info.circle")
+            }
+            Divider().background(Theme.line)
+            NavigationLink {
+                SitePageView(slug: "contact", fallbackTitle: "联系站主")
+            } label: {
+                moreRow("联系站主", icon: "envelope")
+            }
+            if !library.blockedAuthors.isEmpty {
+                Divider().background(Theme.line)
+                Text("已屏蔽的作者").font(.caption).foregroundColor(Theme.sub)
+                ForEach(library.blockedAuthors, id: \.self) { a in
+                    HStack {
+                        Text("@" + a).font(.system(size: 14))
+                        Spacer()
+                        Button("取消屏蔽") { library.toggleBlock(a) }
+                            .font(.system(size: 12.5)).foregroundColor(Theme.gold2)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .background(Theme.surface)
+        .cornerRadius(18)
+    }
+
+    private func moreRow(_ title: String, icon: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).foregroundColor(Theme.gold2)
+            Text(title).font(.system(size: 14.5)).foregroundColor(Theme.text)
+            Spacer()
+            Image(systemName: "chevron.right").font(.caption).foregroundColor(Theme.sub)
         }
     }
 

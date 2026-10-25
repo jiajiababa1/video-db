@@ -151,6 +151,39 @@ enum SocialAPI {
         } catch { return false }
     }
 
+    struct JoinReq: Codable {
+        var group_id: Int?
+        var applicant: String?
+        var answer: String?
+        var status: String?
+        var created_at: String?
+    }
+
+    static func pendingJoinRequests(groupId: Int) async -> [JoinReq] {
+        let (rows, _): ([JoinReq], Int?) = (try? await SB.get("rest/v1/board_join_reqs", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "status", value: "eq.pending"),
+            URLQueryItem(name: "order", value: "created_at.asc"),
+            URLQueryItem(name: "limit", value: "50"),
+        ])) ?? ([], nil)
+        return rows
+    }
+
+    static func approveJoin(groupId: Int, applicant: String) async {
+        try? await SB.patch("rest/v1/board_join_reqs", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "applicant", value: "eq." + applicant),
+        ], body: ["status": "approved"])
+        _ = await joinOpen(groupId: groupId, me: applicant)
+    }
+
+    static func rejectJoin(groupId: Int, applicant: String) async {
+        try? await SB.patch("rest/v1/board_join_reqs", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "applicant", value: "eq." + applicant),
+        ], body: ["status": "rejected"])
+    }
+
     static func works() async -> [WorkItem] {
         let (rows, _): ([WorkItem], Int?) = (try? await SB.get("rest/v1/works", query: [
             URLQueryItem(name: "select", value: "*"),

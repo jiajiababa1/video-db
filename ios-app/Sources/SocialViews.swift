@@ -7,6 +7,7 @@ struct FriendsView: View {
     @State private var rows: [FriendRow] = []
     @State private var addName = ""
     @State private var note: String? = nil
+    @State private var unread = 0
 
     private var me: String { session.username ?? "" }
     private var incoming: [FriendRow] { rows.filter { $0.status == "pending" && $0.user2 == me } }
@@ -23,6 +24,12 @@ struct FriendsView: View {
                 if bridge.featureWorks {
                     entryRow(icon: "photo.on.rectangle.angled", title: "作品墙",
                              sub: "大家上传的作品") { WorksView() }
+                }
+                if session.isLoggedIn {
+                    entryRow(icon: "envelope.fill", title: "联系站主",
+                             sub: unread > 0 ? "私信 · \(unread) 条未读" : "有问题直接私信站主") {
+                        ChatView(peer: "kuo")
+                    }
                 }
 
                 if !session.isLoggedIn {
@@ -60,8 +67,19 @@ struct FriendsView: View {
                     ForEach(friends, id: \.created_at) { r in
                         let other = r.user1 == me ? r.user2 : r.user1
                         personRow(name: other, sub: "已是好友") {
-                            Button("删除") { Task { await SocialAPI.removeRow(a: me, b: other); await load() } }
-                                .font(.system(size: 13)).foregroundColor(.red)
+                            HStack(spacing: 10) {
+                                NavigationLink {
+                                    ChatView(peer: other)
+                                } label: {
+                                    Text("私信")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .padding(.horizontal, 12).padding(.vertical, 6)
+                                        .background(Theme.goldGradient).foregroundColor(.black)
+                                        .cornerRadius(99)
+                                }
+                                Button("删除") { Task { await SocialAPI.removeRow(a: me, b: other); await load() } }
+                                    .font(.system(size: 13)).foregroundColor(.red)
+                            }
                         }
                     }
                     if !outgoing.isEmpty {
@@ -112,6 +130,7 @@ struct FriendsView: View {
     private func load() async {
         guard session.isLoggedIn else { return }
         rows = await SocialAPI.myFriendRows(me: me)
+        unread = await DMAPI.unread(token: session.loginToken)
     }
 
     private func sectionTitle(_ t: String) -> some View {
@@ -226,9 +245,17 @@ struct BoardChatView: View {
     @State private var draft = ""
     @State private var answer = ""
     @State private var note: String? = nil
+    @State private var joinReqs: [SocialAPI.JoinReq] = []
+
+    private var iAmGroupOwner: Bool {
+        session.username != nil && group.owner == session.username
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            if iAmGroupOwner && !joinReqs.isEmpty {
+                joinApprovalBar
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
@@ -319,8 +346,52 @@ struct BoardChatView: View {
         }
     }
 
+    private var joinApprovalBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("入群申请 (\(joinReqs.count))")
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundColor(Theme.gold2)
+            ForEach(Array(joinReqs.enumerated()), id: \.offset) { _, r in
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("@" + (r.applicant ?? "?")).font(.system(size: 13.5, weight: .bold))
+                        if let a = r.answer, !a.isEmpty {
+                            Text("答案: " + a).font(.caption).foregroundColor(Theme.sub)
+                        }
+                    }
+                    Spacer()
+                    Button("通过") {
+                        Task {
+                            await SocialAPI.approveJoin(groupId: group.id, applicant: r.applicant ?? "")
+                            await reload()
+                        }
+                    }
+                    .font(.system(size: 12.5, weight: .bold))
+                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .background(Theme.goldGradient).foregroundColor(.black)
+                    .cornerRadius(99)
+                    Button("拒绝") {
+                        Task {
+                            await SocialAPI.rejectJoin(groupId: group.id, applicant: r.applicant ?? "")
+                            await reload()
+                        }
+                    }
+                    .font(.system(size: 12.5))
+                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .background(Theme.surface2).foregroundColor(Theme.sub)
+                    .cornerRadius(99)
+                }
+            }
+        }
+        .padding(12)
+        .background(Theme.surface)
+    }
+
     private func reload() async {
         msgs = await SocialAPI.messages(groupId: group.id)
+        if iAmGroupOwner {
+            joinReqs = await SocialAPI.pendingJoinRequests(groupId: group.id)
+        }
     }
 
     private func send() async {
@@ -340,6 +411,7 @@ struct WorksView: View {
     var embedded: Bool = false
     @EnvironmentObject var session: Session
     @State private var works: [WorkItem] = []
+    @State private var showSubmit = false
 
     var body: some View {
         ScrollView {
@@ -357,19 +429,23 @@ struct WorksView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(embedded ? "" : "作品墙")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if session.isLoggedIn && !embedded {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("投稿") { showSubmit = true }
+                }
+            }
+        }
+        .sheet(isPresented: $showSubmit, onDismiss: { Task { await load() } }) {
+            WorkSubmitView()
+        }
         .task { await load() }
     }
 
     private func workCard(_ w: WorkItem) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            AsyncImage(url: URL(string: w.cover_url ?? "")) { phase in
-                switch phase {
-                case .success(let img): img.resizable().scaledToFill()
-                default: Rectangle().fill(Theme.surface2)
-                }
-            }
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .clipped()
+            CachedImage(urlString: w.cover_url)
+                .aspectRatio(16 / 9, contentMode: .fit)
             VStack(alignment: .leading, spacing: 4) {
                 Text(w.title ?? "无标题").font(.system(size: 15, weight: .bold)).lineLimit(2)
                 if let d = w.description, !d.isEmpty {

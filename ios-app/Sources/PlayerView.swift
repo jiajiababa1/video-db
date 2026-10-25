@@ -217,13 +217,8 @@ struct PlayerView: View {
 
     private func nextRow(_ v: VideoItem) -> some View {
         HStack(spacing: 11) {
-            AsyncImage(url: URL(string: v.thumbnail_url ?? "")) { phase in
-                switch phase {
-                case .success(let img): img.resizable().scaledToFill()
-                default: Rectangle().fill(Theme.surface2)
-                }
-            }
-            .frame(width: 120)
+            CachedImage(urlString: v.thumbnail_url)
+                .frame(width: 120)
             .aspectRatio(16 / 9, contentMode: .fit)
             .clipped()
             .cornerRadius(10)

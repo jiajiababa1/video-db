@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var hx: [VideoItem] = []
     @State private var recs: [VideoItem] = []
     @State private var loading = true
+    @State private var notices: [Announcement] = []
 
     private var continueWatching: [VideoItem] {
         library.history.prefix(10).compactMap { library.snapshots[$0] }
@@ -16,6 +17,22 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
+                if !notices.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(notices) { n in
+                            Text("📢 " + [n.title, n.content].compactMap { $0 }.joined(separator: ": "))
+                                .font(.system(size: 12.5))
+                                .foregroundColor(Theme.text.opacity(0.9))
+                                .lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Theme.surface)
+                    .cornerRadius(10)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                }
                 if let hero = latest.first {
                     heroView(hero)
                 }
@@ -73,14 +90,8 @@ struct HomeView: View {
             PlayerView(video: v)
         } label: {
             ZStack(alignment: .bottomLeading) {
-                AsyncImage(url: URL(string: v.thumbnail_url ?? "")) { phase in
-                    switch phase {
-                    case .success(let img): img.resizable().scaledToFill()
-                    default: Rectangle().fill(Theme.surface2)
-                    }
-                }
-                .aspectRatio(16 / 10, contentMode: .fit)
-                .clipped()
+                CachedImage(urlString: v.thumbnail_url)
+                    .aspectRatio(16 / 10, contentMode: .fit)
                 LinearGradient(colors: [.clear, .black.opacity(0.88)],
                                startPoint: .center, endPoint: .bottom)
                 VStack(alignment: .leading, spacing: 8) {
@@ -147,13 +158,31 @@ struct HomeView: View {
     }
 
     private func load() async {
-        loading = true
+        // 先显缓存 (秒开), 再拉新数据替换
+        if latest.isEmpty, let c = FeedCache.read(FeedCache.homeKey("latest")) { latest = visible(c.items) }
+        if hx.isEmpty, let c = FeedCache.read(FeedCache.homeKey("hsex")) { hx = visible(c.items) }
+        if recs.isEmpty, let c = FeedCache.read(FeedCache.homeKey("recs")) { recs = visible(c.items) }
+        loading = latest.isEmpty
         async let a = FeedService.fetchPage(section: FeedService.allSections[2], page: 1)
         async let b = FeedService.fetchPage(section: FeedService.allSections[8], page: 1)
         async let c = FeedService.fetchPage(section: FeedService.allSections[1], page: 1)
-        latest = (try? await a.items) ?? []
-        hx = (try? await b.items) ?? []
-        recs = (try? await c.items) ?? []
+        if let r = try? await a {
+            latest = visible(r.items)
+            FeedCache.write(FeedCache.homeKey("latest"), items: r.items, total: r.total)
+        }
+        if let r = try? await b {
+            hx = visible(r.items)
+            FeedCache.write(FeedCache.homeKey("hsex"), items: r.items, total: r.total)
+        }
+        if let r = try? await c {
+            recs = visible(r.items)
+            FeedCache.write(FeedCache.homeKey("recs"), items: r.items, total: r.total)
+        }
         loading = false
+        notices = await ExtrasAPI.announcements()
+    }
+
+    private func visible(_ rows: [VideoItem]) -> [VideoItem] {
+        rows.filter { !library.blockedAuthors.contains($0.displayAuthor) }
     }
 }

@@ -9,14 +9,8 @@ struct VideoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
-                AsyncImage(url: URL(string: video.thumbnail_url ?? "")) { phase in
-                    switch phase {
-                    case .success(let img): img.resizable().scaledToFill()
-                    default: Rectangle().fill(Theme.surface2)
-                    }
-                }
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipped()
+                CachedImage(urlString: video.thumbnail_url)
+                    .aspectRatio(16 / 9, contentMode: .fit)
                 HStack {
                     if let vt = video.viewsText {
                         Text(vt).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
@@ -37,20 +31,26 @@ struct VideoCard: View {
                     .background(Theme.line)
                     .scaleEffect(x: 1, y: 0.7, anchor: .center)
             }
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(video.displayTitle)
-                    .font(.system(size: 13.5))
+                    .font(.system(size: 13))
                     .lineLimit(2)
-                    .frame(minHeight: 34, alignment: .topLeading)
-                if !video.displayAuthor.isEmpty {
-                    Text("@" + video.displayAuthor)
-                        .font(.caption)
-                        .foregroundColor(Theme.sub)
-                        .lineLimit(1)
+                    .frame(minHeight: 32, alignment: .topLeading)
+                HStack(spacing: 5) {
+                    if !video.displayAuthor.isEmpty {
+                        Text("@" + video.displayAuthor)
+                            .lineLimit(1)
+                    }
+                    if let vt = video.viewsText {
+                        Text("· " + vt.replacingOccurrences(of: "▶ ", with: ""))
+                            .lineLimit(1)
+                    }
                 }
+                .font(.caption2)
+                .foregroundColor(Theme.sub)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
         }
         .background(Theme.surface)
         .cornerRadius(Theme.cardRadius)
@@ -74,6 +74,22 @@ struct VideoCard: View {
                     Label(library.isFollowing(video.displayAuthor) ? "取消关注作者" : "关注作者",
                           systemImage: "person.badge.plus")
                 }
+                Button(role: .destructive) {
+                    library.toggleBlock(video.displayAuthor)
+                } label: {
+                    Label(library.isBlocked(video.displayAuthor) ? "取消屏蔽作者" : "屏蔽作者",
+                          systemImage: "eye.slash")
+                }
+            }
+            Button {
+                Task {
+                    // 与网站一致: 先现场解析一次, 成功直接回写, 失败才进重爬队列
+                    if await Resolver.resolve(video) == nil {
+                        Resolver.markRescrape(video)
+                    }
+                }
+            } label: {
+                Label("标记重爬", systemImage: "arrow.triangle.2.circlepath")
             }
         }
     }
@@ -86,7 +102,7 @@ struct VideoGrid: View {
     var onReachEnd: (() -> Void)? = nil
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             ForEach(items) { v in
                 NavigationLink {
                     PlayerView(video: v)

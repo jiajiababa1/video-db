@@ -53,6 +53,15 @@ final class Library: ObservableObject {
         save()
     }
 
+    func isBlocked(_ author: String) -> Bool { blockedAuthors.contains(author) }
+
+    func toggleBlock(_ author: String) {
+        guard !author.isEmpty else { return }
+        if isBlocked(author) { blockedAuthors.removeAll { $0 == author } }
+        else { blockedAuthors.append(author) }
+        save()
+    }
+
     func clearHistory() { history.removeAll(); progress.removeAll(); save() }
     func clearAll() {
         favorites.removeAll(); watchLater.removeAll(); history.removeAll()

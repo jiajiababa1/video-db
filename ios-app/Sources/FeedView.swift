@@ -9,6 +9,7 @@ struct FeedView: View {
     var navTitle: String? = nil
 
     @EnvironmentObject var session: Session
+    @EnvironmentObject var library: Library
     @State private var items: [VideoItem] = []
     @State private var page = 1
     @State private var hasMore = true
@@ -37,7 +38,7 @@ struct FeedView: View {
                         .padding(.horizontal, 16)
                 }
                 VideoGrid(items: items) { loadMore() }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 12)
                 if loading { ProgressView().tint(Theme.gold).padding() }
                 if !loading && items.isEmpty {
                     Text("这里还没有视频")
@@ -50,7 +51,7 @@ struct FeedView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await reload() }
+        .task { await initialLoad() }
         .refreshable { await reload() }
     }
 
@@ -77,11 +78,43 @@ struct FeedView: View {
         }
     }
 
+    private var cacheKey: String {
+        FeedCache.key(section: section, author: author, search: search,
+                      personal: personalIds != nil, playableOnly: playableOnly, hot: hotSort)
+    }
+
+    private func visible(_ rows: [VideoItem]) -> [VideoItem] {
+        rows.filter { !library.blockedAuthors.contains($0.displayAuthor) }
+    }
+
+    /// 首次进入: 先显缓存, 再静默刷新第一页
+    private func initialLoad() async {
+        if personalIds == nil, let c = FeedCache.read(cacheKey), !c.items.isEmpty {
+            items = visible(c.items)
+            total = c.total
+            page = 2
+            hasMore = c.items.count >= FeedService.pageSize
+        }
+        await reload()
+    }
+
     private func reload() async {
         page = 1
         hasMore = true
-        items = []
-        await loadMore()
+        loading = true
+        let r = try? await FeedService.fetchPage(
+            section: section, playableOnly: playableOnly, author: author,
+            search: search, personalIds: personalIds, page: 1, hotSort: hotSort)
+        if let r = r {
+            items = visible(r.items)
+            if let t = r.total { total = t }
+            hasMore = r.items.count >= FeedService.pageSize
+            page = 2
+            if personalIds == nil {
+                FeedCache.write(cacheKey, items: r.items, total: r.total)
+            }
+        }
+        loading = false
     }
 
     private func loadMore() {
@@ -93,7 +126,7 @@ struct FeedView: View {
                 search: search, personalIds: personalIds, page: page, hotSort: hotSort)
             if let r = r {
                 let seen = Set(items.map { $0.video_id })
-                items.append(contentsOf: r.items.filter { !seen.contains($0.video_id) })
+                items.append(contentsOf: visible(r.items).filter { !seen.contains($0.video_id) })
                 if let t = r.total { total = t }
                 hasMore = r.items.count >= FeedService.pageSize
                 page += 1
