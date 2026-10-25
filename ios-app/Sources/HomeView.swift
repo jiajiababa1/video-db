@@ -183,6 +183,10 @@ struct HomeView: View {
     }
 
     private func visible(_ rows: [VideoItem]) -> [VideoItem] {
-        rows.filter { !library.blockedAuthors.contains($0.displayAuthor) }
+        rows.filter {
+            !library.blockedAuthors.contains($0.displayAuthor)
+                && !library.isHidden($0.video_id)
+                && !library.titleBlocked($0.title)
+        }
     }
 }

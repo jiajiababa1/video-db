@@ -2,6 +2,7 @@ import SwiftUI
 
 /// 搜索页 (标题/作者 ilike 回退式, 与网站回退口径一致)
 struct SearchView: View {
+    @EnvironmentObject var library: Library
     @State private var query = ""
     @State private var submitted = ""
     @State private var authors: [String] = []
@@ -29,6 +30,7 @@ struct SearchView: View {
                     .submitLabel(.search)
                     .onSubmit {
                         submitted = query
+                        library.pushSearchRecent(query)
                         Task { await searchAuthors(query) }
                     }
                 if !query.isEmpty {
@@ -45,10 +47,38 @@ struct SearchView: View {
             .padding(16)
 
             if submitted.isEmpty {
-                Text("输入关键词搜全站视频\n支持标题和作者名")
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(Theme.sub)
-                    .padding(.top, 50)
+                if library.searchRecent.isEmpty {
+                    Text("输入关键词搜全站视频\n支持标题和作者名")
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(Theme.sub)
+                        .padding(.top, 50)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("最近搜索").font(.system(size: 14, weight: .bold))
+                            Spacer()
+                            Button("清空") { library.clearSearchRecent() }
+                                .font(.caption).foregroundColor(Theme.sub)
+                        }
+                        ForEach(library.searchRecent, id: \.self) { r in
+                            Button {
+                                query = r
+                                submitted = r
+                                Task { await searchAuthors(r) }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                        .foregroundColor(Theme.sub)
+                                    Text(r).foregroundColor(Theme.text).lineLimit(1)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
                 Spacer()
             } else {
                 if !authors.isEmpty {

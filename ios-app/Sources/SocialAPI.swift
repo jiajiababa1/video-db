@@ -192,4 +192,112 @@ enum SocialAPI {
         ])) ?? ([], nil)
         return rows
     }
+
+    // MARK: - 群管理 / 建群 (与网站 refreshBoardRoom 的管理语义一致)
+    static func groupMembers(groupId: Int) async -> [BoardMember] {
+        let (rows, _): ([BoardMember], Int?) = (try? await SB.get("rest/v1/board_members", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "select", value: "group_id,username,role,muted_until"),
+            URLQueryItem(name: "limit", value: "200"),
+        ])) ?? ([], nil)
+        return rows
+    }
+
+    static func memberDetail(groupId: Int, me: String) async -> BoardMember? {
+        let (rows, _): ([BoardMember], Int?) = (try? await SB.get("rest/v1/board_members", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "username", value: "eq." + me),
+            URLQueryItem(name: "select", value: "group_id,username,role,muted_until"),
+            URLQueryItem(name: "limit", value: "1"),
+        ])) ?? ([], nil)
+        return rows.first
+    }
+
+    static func setMuted(groupId: Int, user: String, until: String?) async {
+        var body: [String: Any] = [:]
+        if let u = until { body["muted_until"] = u } else { body["muted_until"] = NSNull() }
+        try? await SB.patch("rest/v1/board_members", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "username", value: "eq." + user),
+        ], body: body)
+    }
+
+    static func kick(groupId: Int, user: String) async {
+        try? await SB.delete("rest/v1/board_members", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "username", value: "eq." + user),
+        ])
+    }
+
+    static func setRole(groupId: Int, user: String, role: String) async {
+        try? await SB.patch("rest/v1/board_members", query: [
+            URLQueryItem(name: "group_id", value: "eq." + String(groupId)),
+            URLQueryItem(name: "username", value: "eq." + user),
+        ], body: ["role": role])
+    }
+
+    static func setMuteAll(groupId: Int, on: Bool) async {
+        try? await SB.patch("rest/v1/board_groups", query: [
+            URLQueryItem(name: "id", value: "eq." + String(groupId)),
+        ], body: ["mute_all": on])
+    }
+
+    static func dissolve(groupId: Int) async {
+        try? await SB.patch("rest/v1/board_groups", query: [
+            URLQueryItem(name: "id", value: "eq." + String(groupId)),
+        ], body: ["status": "dissolved"])
+    }
+
+    static func createGroup(name: String, owner: String, mode: String, question: String) async -> Bool {
+        do {
+            let rows: [BoardGroup] = try await SB.post("rest/v1/board_groups", body: [
+                "name": name, "owner": owner, "entry_mode": mode,
+                "entry_question": mode == "question" ? question : "",
+                "status": "active",
+            ])
+            guard let g = rows.first else { return false }
+            try await SB.insert("rest/v1/board_members",
+                body: ["group_id": g.id, "username": owner, "role": "owner"])
+            return true
+        } catch { return false }
+    }
+
+    // MARK: - 作品审核 (站长; 与网站 approveWork/rejectWork 语义一致)
+    struct WorkRequest: Codable, Identifiable {
+        var id: Int
+        var title: String?
+        var file_url: String?
+        var cover_url: String?
+        var description: String?
+        var submitter: String?
+        var status: String?
+        var created_at: String?
+    }
+
+    static func pendingWorks() async -> [WorkRequest] {
+        let (rows, _): ([WorkRequest], Int?) = (try? await SB.get("rest/v1/work_requests", query: [
+            URLQueryItem(name: "status", value: "eq.pending"),
+            URLQueryItem(name: "select", value: "*"),
+            URLQueryItem(name: "order", value: "created_at.desc"),
+            URLQueryItem(name: "limit", value: "100"),
+        ])) ?? ([], nil)
+        return rows
+    }
+
+    static func approveWork(_ w: WorkRequest) async {
+        _ = try? await SB.insert("rest/v1/works", body: [
+            "title": w.title ?? "", "file_url": w.file_url ?? "",
+            "cover_url": w.cover_url ?? "", "description": w.description ?? "",
+            "author": w.submitter ?? "",
+        ])
+        try? await SB.patch("rest/v1/work_requests", query: [
+            URLQueryItem(name: "id", value: "eq." + String(w.id)),
+        ], body: ["status": "approved"])
+    }
+
+    static func rejectWork(id: Int) async {
+        try? await SB.patch("rest/v1/work_requests", query: [
+            URLQueryItem(name: "id", value: "eq." + String(id)),
+        ], body: ["status": "rejected"])
+    }
 }

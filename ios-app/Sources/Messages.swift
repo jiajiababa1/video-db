@@ -50,12 +50,11 @@ enum DMAPI {
     }
 }
 
-/// 私信会话窗
+/// 私信会话窗 (文字/表情/语音/位置/图片/视频/文件, 与网站消息格式互通)
 struct ChatView: View {
     let peer: String
     @EnvironmentObject var session: Session
     @State private var msgs: [DMMessage] = []
-    @State private var draft = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,18 +73,9 @@ struct ChatView: View {
                 }
             }
             Divider().background(Theme.line)
-            HStack(spacing: 8) {
-                TextField("发消息…", text: $draft)
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(Theme.surface2).cornerRadius(99)
-                Button("发送") {
-                    Task { await send() }
-                }
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(Theme.gold2)
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+            ChatSendBar { content in
+                Task { await send(content) }
             }
-            .padding(12)
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("@" + peer)
@@ -104,18 +94,13 @@ struct ChatView: View {
     private func bubble(_ m: DMMessage) -> some View {
         let mine = m.from_user == session.username
         return HStack {
-            if mine { Spacer(minLength: 60) }
+            if mine { Spacer(minLength: 48) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 3) {
-                Text(m.displayText)
-                    .font(.system(size: 14.5))
-                    .padding(.horizontal, 11).padding(.vertical, 8)
-                    .background(mine ? Theme.gold : Theme.surface)
-                    .foregroundColor(mine ? .black : Theme.text)
-                    .cornerRadius(14)
+                MessageBubble(content: MsgContent.parse(m.content ?? ""), isMe: mine)
                 Text(m.timeText)
                     .font(.caption2).foregroundColor(Theme.sub)
             }
-            if !mine { Spacer(minLength: 60) }
+            if !mine { Spacer(minLength: 48) }
         }
     }
 
@@ -124,11 +109,8 @@ struct ChatView: View {
         msgs = await DMAPI.conversation(token: session.loginToken, with: peer)
     }
 
-    private func send() async {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        draft = ""
-        if await DMAPI.send(token: session.loginToken, to: peer, content: text) {
+    private func send(_ content: MsgContent) async {
+        if await DMAPI.send(token: session.loginToken, to: peer, content: content.serialized) {
             await reload()
         }
     }

@@ -81,6 +81,37 @@ struct VideoCard: View {
                           systemImage: "eye.slash")
                 }
             }
+            if !library.favFolders.isEmpty {
+                Menu {
+                    ForEach(Array(library.favFolders.keys.sorted()), id: \.self) { f in
+                        Button {
+                            library.toggleInFolder(f, video)
+                        } label: {
+                            Label((library.favFolders[f]?.contains(video.video_id) ?? false) ? "移出「\(f)」" : "加入「\(f)」",
+                                  systemImage: "folder")
+                        }
+                    }
+                } label: {
+                    Label("收藏到分组", systemImage: "folder.badge.plus")
+                }
+            }
+            Button {
+                library.toggleHidden(video)
+            } label: {
+                Label(library.isHidden(video.video_id) ? "取消隐藏" : "隐藏此视频",
+                      systemImage: "eye.slash")
+            }
+            Button {
+                Task {
+                    if let u = await Resolver.resolve(video),
+                       u.pathExtension.lowercased() != "m3u8" {
+                        Downloader.shared.enqueue(video, url: u)
+                    }
+                }
+            } label: {
+                Label(Downloader.shared.isDownloaded(video.video_id) ? "已下载" : "下载到本地",
+                      systemImage: "arrow.down.circle")
+            }
             Button {
                 Task {
                     // 与网站一致: 先现场解析一次, 成功直接回写, 失败才进重爬队列

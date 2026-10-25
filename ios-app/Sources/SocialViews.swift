@@ -188,9 +188,26 @@ struct BoardsView: View {
     @State private var groups: [BoardGroup] = []
     @State private var myGroups: Set<Int> = []
 
+    @State private var showCreate = false
+
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
+                if session.isLoggedIn {
+                    Button {
+                        showCreate = true
+                    } label: {
+                        HStack {
+                            Text("＋ 创建群聊").font(.system(size: 14, weight: .bold))
+                            Spacer()
+                            Text("建自己的群").font(.caption).foregroundColor(Theme.sub)
+                        }
+                        .padding(13)
+                        .background(Theme.surface)
+                        .cornerRadius(14)
+                    }
+                    .buttonStyle(.plain)
+                }
                 if groups.isEmpty {
                     Text("暂时没有开放的群")
                         .foregroundColor(Theme.sub).padding(.top, 60)
@@ -225,6 +242,9 @@ struct BoardsView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("板块群聊")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCreate, onDismiss: { Task { await load() } }) {
+            CreateGroupView()
+        }
         .task { await load() }
     }
 
@@ -242,13 +262,25 @@ struct BoardChatView: View {
     @State var isMember: Bool
     @EnvironmentObject var session: Session
     @State private var msgs: [BoardMessage] = []
-    @State private var draft = ""
     @State private var answer = ""
     @State private var note: String? = nil
     @State private var joinReqs: [SocialAPI.JoinReq] = []
+    @State private var myRole: String = "member"
+    @State private var myMutedUntil: String? = nil
+    @State private var showManage = false
 
     private var iAmGroupOwner: Bool {
         session.username != nil && group.owner == session.username
+    }
+
+    private var canManage: Bool {
+        session.isOwner || iAmGroupOwner || myRole == "owner" || myRole == "admin"
+    }
+
+    private var mutedNow: Bool {
+        if let u = myMutedUntil, let d = ISO8601.date(u), d > Date() { return true }
+        if group.mute_all == true && myRole == "member" && !iAmGroupOwner && !session.isOwner { return true }
+        return false
     }
 
     var body: some View {
@@ -256,24 +288,26 @@ struct BoardChatView: View {
             if iAmGroupOwner && !joinReqs.isEmpty {
                 joinApprovalBar
             }
+            if isMember && session.isLoggedIn {
+                HStack(spacing: 10) {
+                    if canManage {
+                        Button("👥 群管理") { showManage = true }
+                            .font(.system(size: 12.5, weight: .bold)).foregroundColor(Theme.gold2)
+                    }
+                    Spacer()
+                    if group.mute_all == true {
+                        Text("🔇 全员禁言中").font(.caption2).foregroundColor(Theme.sub)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(Theme.surface)
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(msgs) { m in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text("@" + (m.sender ?? "?"))
-                                        .font(.caption.weight(.bold))
-                                        .foregroundColor((m.sender ?? "") == session.username ? Theme.gold2 : Theme.sub)
-                                    Text(m.timeText).font(.caption2).foregroundColor(Theme.sub)
-                                }
-                                Text(m.content ?? "")
-                                    .font(.system(size: 14.5))
-                                    .padding(.horizontal, 11).padding(.vertical, 8)
-                                    .background((m.sender ?? "") == session.username ? Theme.surface2 : Theme.surface)
-                                    .cornerRadius(12)
-                            }
-                            .id(m.id ?? 0)
+                            boardBubble(m)
+                                .id(m.id ?? 0)
                         }
                     }
                     .padding(14)
@@ -288,7 +322,28 @@ struct BoardChatView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(group.name ?? "群聊")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showManage) {
+            GroupManageView(group: group, myRole: myRole)
+        }
         .task { await reload() }
+    }
+
+    private func boardBubble(_ m: BoardMessage) -> some View {
+        let mine = (m.sender ?? "") == session.username
+        return HStack {
+            if mine { Spacer(minLength: 48) }
+            VStack(alignment: mine ? .trailing : .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if !mine {
+                        Text("@" + (m.sender ?? "?"))
+                            .font(.caption.weight(.bold)).foregroundColor(Theme.sub)
+                    }
+                    Text(m.timeText).font(.caption2).foregroundColor(Theme.sub)
+                }
+                MessageBubble(content: MsgContent.parse(m.content ?? ""), isMe: mine)
+            }
+            if !mine { Spacer(minLength: 48) }
+        }
     }
 
     @ViewBuilder
@@ -296,18 +351,14 @@ struct BoardChatView: View {
         if !session.isLoggedIn {
             Text("登录后可进群聊天").font(.footnote).foregroundColor(Theme.sub).padding(14)
         } else if isMember {
-            HStack(spacing: 8) {
-                TextField("说点什么…", text: $draft)
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(Theme.surface2).cornerRadius(99)
-                Button("发送") {
-                    Task { await send() }
+            if mutedNow {
+                Text("🔇 你已被禁言, 暂时不能发言")
+                    .font(.footnote).foregroundColor(Theme.sub).padding(14)
+            } else {
+                ChatSendBar { content in
+                    Task { await send(content) }
                 }
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(Theme.gold2)
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(12)
         } else if group.entry_mode == "question" {
             VStack(alignment: .leading, spacing: 8) {
                 Text("入群问题: " + (group.entry_question ?? ""))
@@ -392,14 +443,16 @@ struct BoardChatView: View {
         if iAmGroupOwner {
             joinReqs = await SocialAPI.pendingJoinRequests(groupId: group.id)
         }
+        if let me = session.username, isMember,
+           let detail = await SocialAPI.memberDetail(groupId: group.id, me: me) {
+            myRole = detail.role ?? "member"
+            myMutedUntil = detail.muted_until
+        }
     }
 
-    private func send() async {
+    private func send(_ content: MsgContent) async {
         guard let me = session.username else { return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        draft = ""
-        if await SocialAPI.sendMessage(groupId: group.id, sender: me, content: text) {
+        if await SocialAPI.sendMessage(groupId: group.id, sender: me, content: content.serialized) {
             await reload()
         }
     }
@@ -412,6 +465,8 @@ struct WorksView: View {
     @EnvironmentObject var session: Session
     @State private var works: [WorkItem] = []
     @State private var showSubmit = false
+    @State private var playURL: IdentifiedString? = nil
+    @State private var viewImage: IdentifiedString? = nil
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -443,13 +498,55 @@ struct WorksView: View {
         .sheet(isPresented: $showSubmit, onDismiss: { Task { await load() } }) {
             WorkSubmitView()
         }
+        .sheet(item: $playURL) { w in
+            SimpleVideoPlayer(urlString: w.value)
+        }
+        .sheet(item: $viewImage) { w in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                CachedImage(urlString: w.value).scaledToFit()
+            }
+        }
         .task { await load() }
     }
 
+    private enum WorkKind { case video, image, other }
+
+    private func kind(of url: String) -> WorkKind {
+        let u = url.lowercased()
+        if u.contains(".mp4") || u.contains(".mov") || u.contains(".m4v") || u.contains(".webm") || u.contains("video.twimg.com") {
+            return .video
+        }
+        if u.contains(".jpg") || u.contains(".jpeg") || u.contains(".png") || u.contains(".webp") || u.contains(".gif") {
+            return .image
+        }
+        return .other
+    }
+
+    private func openWork(_ w: WorkItem) {
+        guard let f = w.file_url, !f.isEmpty else { return }
+        switch kind(of: f) {
+        case .video: playURL = IdentifiedString(value: f)
+        case .image: viewImage = IdentifiedString(value: f)
+        case .other:
+            if let u = URL(string: f) { UIApplication.shared.open(u) }
+        }
+    }
+
     private func workCard(_ w: WorkItem) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            CachedImage(urlString: w.cover_url)
-                .aspectRatio(16 / 9, contentMode: .fit)
+        let k = kind(of: w.file_url ?? "")
+        return VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                CachedImage(urlString: w.cover_url)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                if k == .video {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 40)).foregroundColor(.white.opacity(0.92))
+                        .shadow(radius: 4)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { openWork(w) }
             VStack(alignment: .leading, spacing: 4) {
                 Text(w.title ?? "无标题").font(.system(size: 15, weight: .bold)).lineLimit(2)
                 if let d = w.description, !d.isEmpty {
@@ -458,10 +555,10 @@ struct WorksView: View {
                 HStack {
                     Text("@" + (w.author ?? "")).font(.caption).foregroundColor(Theme.gold2)
                     Spacer()
-                    if let f = w.file_url, let u = URL(string: f) {
-                        Link("打开作品 ›", destination: u)
-                            .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)
+                    Button(k == .video ? "▶ 播放" : (k == .image ? "查看图片" : "打开作品 ›")) {
+                        openWork(w)
                     }
+                    .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)
                 }
             }
             .padding(12)
@@ -477,5 +574,176 @@ struct WorksView: View {
             all = all.filter { $0.author == me }
         }
         works = all
+    }
+}
+
+/// 建群
+struct CreateGroupView: View {
+    @EnvironmentObject var session: Session
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var mode = "open"
+    @State private var question = ""
+    @State private var note: String? = nil
+    @State private var busy = false
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("群名称") {
+                    TextField("给群起个名字", text: $name)
+                }
+                Section("入群方式") {
+                    Picker("方式", selection: $mode) {
+                        Text("开放加入").tag("open")
+                        Text("答题入群").tag("question")
+                    }
+                    .pickerStyle(.segmented)
+                    if mode == "question" {
+                        TextField("入群问题 (如: 群规是什么?)", text: $question)
+                    }
+                }
+                if let n = note {
+                    Text(n).font(.caption).foregroundColor(Theme.gold2)
+                }
+                Button(busy ? "创建中…" : "创建群聊") {
+                    Task { await create() }
+                }
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+            }
+            .navigationTitle("创建群聊")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func create() async {
+        guard let me = session.username else { return }
+        busy = true
+        let ok = await SocialAPI.createGroup(
+            name: name.trimmingCharacters(in: .whitespaces), owner: me,
+            mode: mode, question: question.trimmingCharacters(in: .whitespaces))
+        busy = false
+        if ok { dismiss() } else { note = "创建失败, 稍后再试" }
+    }
+}
+
+/// 群管理 (群主/管理员/站长): 成员禁言/踢人/设管理员 + 全员禁言 + 解散
+struct GroupManageView: View {
+    let group: BoardGroup
+    var myRole: String
+    @EnvironmentObject var session: Session
+    @Environment(\.dismiss) private var dismiss
+    @State private var members: [BoardMember] = []
+    @State private var muteAll: Bool = false
+    @State private var confirmDissolve = false
+
+    private var iAmOwner: Bool {
+        session.isOwner || group.owner == session.username || myRole == "owner"
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                if iAmOwner {
+                    Section("群设置") {
+                        Toggle("全员禁言", isOn: $muteAll)
+                            .onChange(of: muteAll) { v in
+                                Task { await SocialAPI.setMuteAll(groupId: group.id, on: v) }
+                            }
+                        Button("解散群聊", role: .destructive) { confirmDissolve = true }
+                    }
+                }
+                Section("成员 (\(members.count))") {
+                    ForEach(Array(members.enumerated()), id: \.offset) { _, m in
+                        memberRow(m)
+                    }
+                }
+            }
+            .navigationTitle("群管理")
+            .navigationBarTitleDisplayMode(.inline)
+            .alert("解散群聊?", isPresented: $confirmDissolve) {
+                Button("解散", role: .destructive) {
+                    Task {
+                        await SocialAPI.dissolve(groupId: group.id)
+                        dismiss()
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("解散后群将从列表消失, 成员无法继续聊天。")
+            }
+            .task {
+                muteAll = group.mute_all ?? false
+                await load()
+            }
+        }
+    }
+
+    private func memberRow(_ m: BoardMember) -> some View {
+        let isSelf = m.username == session.username
+        let muted = m.muted_until.flatMap { ISO8601.date($0) }.map { $0 > Date() } ?? false
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("@" + m.username).font(.system(size: 14, weight: .bold))
+                    if m.role == "owner" {
+                        Text("群主").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Theme.gold).foregroundColor(.black).cornerRadius(6)
+                    } else if m.role == "admin" {
+                        Text("管理员").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Theme.surface2).foregroundColor(Theme.sub).cornerRadius(6)
+                    }
+                    if muted { Text("禁言中").font(.caption2).foregroundColor(.red) }
+                }
+                if let u = m.muted_until, muted {
+                    Text("解禁: " + String(u.prefix(16)).replacingOccurrences(of: "T", with: " "))
+                        .font(.caption2).foregroundColor(Theme.sub)
+                }
+            }
+            Spacer()
+            if !isSelf && m.role != "owner" {
+                Menu {
+                    Button("禁言 1 小时") { Task { await mute(m, hours: 1) } }
+                    Button("禁言 24 小时") { Task { await mute(m, hours: 24) } }
+                    if muted { Button("解除禁言") { Task { await unmute(m) } } }
+                    if iAmOwner {
+                        if m.role == "admin" {
+                            Button("取消管理员") { Task { await setRole(m, "member") } }
+                        } else {
+                            Button("设为管理员") { Task { await setRole(m, "admin") } }
+                        }
+                    }
+                    Button("踢出群聊", role: .destructive) { Task { await kick(m) } }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 20)).foregroundColor(Theme.gold2)
+                }
+            }
+        }
+    }
+
+    private func load() async {
+        members = await SocialAPI.groupMembers(groupId: group.id)
+    }
+
+    private func mute(_ m: BoardMember, hours: Double) async {
+        let until = ISO8601DateFormatter().string(from: Date().addingTimeInterval(hours * 3600))
+        await SocialAPI.setMuted(groupId: group.id, user: m.username, until: until)
+        await load()
+    }
+
+    private func unmute(_ m: BoardMember) async {
+        await SocialAPI.setMuted(groupId: group.id, user: m.username, until: nil)
+        await load()
+    }
+
+    private func kick(_ m: BoardMember) async {
+        await SocialAPI.kick(groupId: group.id, user: m.username)
+        await load()
+    }
+
+    private func setRole(_ m: BoardMember, _ role: String) async {
+        await SocialAPI.setRole(groupId: group.id, user: m.username, role: role)
+        await load()
     }
 }

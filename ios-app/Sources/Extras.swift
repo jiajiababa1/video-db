@@ -117,12 +117,28 @@ struct WorkSubmitView: View {
     @State private var desc = ""
     @State private var note: String? = nil
     @State private var busy = false
+    @State private var showPicker = false
+    @State private var uploading = false
 
     var body: some View {
         NavigationView {
             VStack(spacing: 12) {
                 field("作品标题", text: $title)
                 field("文件链接 (视频直链)", text: $fileUrl)
+                HStack(spacing: 8) {
+                    Button {
+                        showPicker = true
+                    } label: {
+                        Label(uploading ? "上传中…" : "从相册选视频上传", systemImage: "square.and.arrow.up")
+                            .font(.system(size: 13, weight: .bold))
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(Theme.surface2).cornerRadius(99)
+                    }
+                    .disabled(uploading)
+                    Text("或直接粘贴直链")
+                        .font(.caption).foregroundColor(Theme.sub)
+                    Spacer()
+                }
                 field("封面链接 (可空)", text: $coverUrl)
                 field("简介 (可空)", text: $desc)
                 if let n = note {
@@ -151,6 +167,25 @@ struct WorkSubmitView: View {
                     Button("关闭") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showPicker) {
+                MediaPicker { url, isVideo in
+                    Task { await uploadPicked(url: url, isVideo: isVideo) }
+                }
+            }
+        }
+    }
+
+    private func uploadPicked(url: URL, isVideo: Bool) async {
+        guard isVideo else { note = "作品请选择视频文件"; return }
+        uploading = true
+        note = "视频上传中, 请稍等…"
+        let link = await Uploader.upload(fileURL: url, mime: "video/mp4")
+        uploading = false
+        if let link = link {
+            fileUrl = link
+            note = "✅ 上传成功, 已自动填入链接"
+        } else {
+            note = "上传失败, 换个小一点的视频或改贴直链"
         }
     }
 

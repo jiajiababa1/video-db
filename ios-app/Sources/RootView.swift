@@ -19,7 +19,20 @@ struct RootView: View {
             await session.validateSession()
             if session.isLoggedIn {
                 await TokenVault.pullTokens(session: session)
+                await ConfigSync.pull(session: session, library: library)
                 await CloudSync.pullMerge(into: library, session: session)
+            }
+        }
+        .onAppear {
+            library.onMutate = { ConfigSync.schedulePush(session: session, library: library) }
+        }
+        .onChange(of: session.isLoggedIn) { logged in
+            if logged {
+                Task {
+                    await TokenVault.pullTokens(session: session)
+                    await ConfigSync.pull(session: session, library: library)
+                    await CloudSync.pullMerge(into: library, session: session)
+                }
             }
         }
     }

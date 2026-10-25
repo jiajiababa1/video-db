@@ -25,6 +25,7 @@ struct FeedView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
+                authorBar
                 if section?.id == "hsex", session.isOwner {
                     HsexScrapeBar()
                         .padding(.horizontal, 16)
@@ -84,7 +85,45 @@ struct FeedView: View {
     }
 
     private func visible(_ rows: [VideoItem]) -> [VideoItem] {
-        rows.filter { !library.blockedAuthors.contains($0.displayAuthor) }
+        rows.filter {
+            !library.blockedAuthors.contains($0.displayAuthor)
+                && !library.isHidden($0.video_id)
+                && !library.titleBlocked($0.title)
+        }
+    }
+
+    @ViewBuilder
+    private var authorBar: some View {
+        if let a = author {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Theme.goldGradient)
+                    Text(String(a.prefix(1))).font(.headline).foregroundColor(.black)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("@" + a).font(.system(size: 16, weight: .bold))
+                    Text("作者主页").font(.caption).foregroundColor(Theme.sub)
+                }
+                Spacer()
+                Button(library.isFollowing(a) ? "已关注" : "+ 关注") { library.toggleFollow(a) }
+                    .font(.system(size: 13, weight: .bold))
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .background(library.isFollowing(a) ? Theme.surface2 : Theme.gold)
+                    .foregroundColor(library.isFollowing(a) ? Theme.text : .black)
+                    .cornerRadius(99)
+                Button(library.isBlocked(a) ? "已屏蔽" : "屏蔽") { library.toggleBlock(a) }
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(Theme.surface2)
+                    .foregroundColor(Theme.sub)
+                    .cornerRadius(99)
+            }
+            .padding(12)
+            .background(Theme.surface)
+            .cornerRadius(14)
+            .padding(.horizontal, 16)
+        }
     }
 
     /// 首次进入: 先显缓存, 再静默刷新第一页

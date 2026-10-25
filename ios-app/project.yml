@@ -25,6 +25,10 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        NSMicrophoneUsageDescription: "用于在聊天中发送语音消息"
+        NSLocationWhenInUseUsageDescription: "用于在聊天中分享你的位置"
+        UIBackgroundModes:
+          - audio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jiajiababa1.videodb

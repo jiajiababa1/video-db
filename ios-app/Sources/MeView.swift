@@ -25,9 +25,10 @@ struct MeView: View {
                     ownerCard
                 }
                 hotUpdateCard
+                filterCard
                 moreCard
                 dataCard
-                Text("2048 影院 · 原生版 v1.0")
+                Text("2048 影院 · 原生版 v1.3")
                     .font(.caption2).foregroundColor(Theme.sub)
                     .padding(.top, 6)
             }
@@ -192,6 +193,66 @@ struct MeView: View {
         .cornerRadius(18)
     }
 
+    // MARK: 内容过滤 (屏蔽词 / 隐藏 / 屏蔽作者, 与账号云同步)
+    @State private var badwordDraft = ""
+
+    private var filterCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("内容过滤").font(.system(size: 16, weight: .bold))
+            Text("屏蔽词 (标题含这些词的视频不显示)")
+                .font(.caption).foregroundColor(Theme.sub)
+            HStack(spacing: 8) {
+                TextField("输入屏蔽词", text: $badwordDraft)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(Theme.surface2).cornerRadius(9)
+                Button("添加") {
+                    library.addBadword(badwordDraft)
+                    badwordDraft = ""
+                }
+                .font(.system(size: 13, weight: .bold)).foregroundColor(Theme.gold2)
+                .disabled(badwordDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if !library.badwords.isEmpty {
+                FlowChips(items: library.badwords) { w in library.removeBadword(w) }
+            }
+            if !library.hiddenIds.isEmpty {
+                Text("已隐藏视频 (\(library.hiddenIds.count))")
+                    .font(.caption).foregroundColor(Theme.sub)
+                ForEach(library.hiddenIds, id: \.self) { id in
+                    HStack(spacing: 8) {
+                        Text(library.snapshots[id]?.displayTitle ?? id)
+                            .font(.caption).lineLimit(1)
+                        Spacer()
+                        Button("取消隐藏") {
+                            if let v = library.snapshots[id] { library.toggleHidden(v) }
+                        }
+                        .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)
+                    }
+                }
+            }
+            if !library.blockedAuthors.isEmpty {
+                Text("已屏蔽作者 (\(library.blockedAuthors.count))")
+                    .font(.caption).foregroundColor(Theme.sub)
+                ForEach(library.blockedAuthors, id: \.self) { a in
+                    HStack(spacing: 8) {
+                        Text("@" + a).font(.caption).lineLimit(1)
+                        Spacer()
+                        Button("解除屏蔽") { library.toggleBlock(a) }
+                            .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)
+                    }
+                }
+            }
+            if library.badwords.isEmpty && library.hiddenIds.isEmpty && library.blockedAuthors.isEmpty {
+                Text("暂无过滤项。在视频卡片上长按可以屏蔽作者、隐藏视频。")
+                    .font(.caption).foregroundColor(Theme.sub)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .background(Theme.surface)
+        .cornerRadius(18)
+    }
+
     // MARK: 站长工具
     @State private var ghDraft = ""
     @State private var sbDraft = ""
@@ -231,11 +292,70 @@ struct MeView: View {
             if let n = scrapeNote {
                 Text(n).font(.caption).foregroundColor(Theme.sub)
             }
+            Divider().background(Theme.line)
+            HStack {
+                Text("待审作品 (\(pendingWorks.count))")
+                    .font(.system(size: 14, weight: .bold))
+                Spacer()
+                Button("刷新") { Task { await loadPendingWorks() } }
+                    .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)
+            }
+            if pendingWorks.isEmpty {
+                Text("暂无待审核投稿")
+                    .font(.caption).foregroundColor(Theme.sub)
+            }
+            ForEach(pendingWorks) { w in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(w.title ?? "无标题")
+                            .font(.system(size: 13.5, weight: .bold)).lineLimit(1)
+                        Spacer()
+                        Text("@" + (w.submitter ?? ""))
+                            .font(.caption2).foregroundColor(Theme.sub)
+                    }
+                    if let d = w.description, !d.isEmpty {
+                        Text(d).font(.caption).foregroundColor(Theme.sub).lineLimit(2)
+                    }
+                    HStack(spacing: 8) {
+                        Button("✅ 通过入库") {
+                            Task {
+                                await SocialAPI.approveWork(w)
+                                await loadPendingWorks()
+                            }
+                        }
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Theme.goldGradient).foregroundColor(.black)
+                        .cornerRadius(99)
+                        Button("拒绝") {
+                            Task {
+                                await SocialAPI.rejectWork(id: w.id)
+                                await loadPendingWorks()
+                            }
+                        }
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Theme.surface2).foregroundColor(Theme.sub)
+                        .cornerRadius(99)
+                    }
+                }
+                .padding(10)
+                .background(Theme.surface2)
+                .cornerRadius(10)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
         .background(Theme.surface)
         .cornerRadius(18)
+        .task { await loadPendingWorks() }
+    }
+
+    @State private var pendingWorks: [SocialAPI.WorkRequest] = []
+
+    private func loadPendingWorks() async {
+        guard session.isOwner else { return }
+        pendingWorks = await SocialAPI.pendingWorks()
     }
 
     private func ownerBtn(_ title: String, mode: String) -> some View {
@@ -458,5 +578,32 @@ struct AuthView: View {
         error = await session.login(username: user, password: pass)
         busy = false
         if error == nil { dismiss() }
+    }
+}
+
+/// 可删除的词条 chips (单行横滑)
+struct FlowChips: View {
+    let items: [String]
+    var onRemove: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                ForEach(items, id: \.self) { w in
+                    HStack(spacing: 5) {
+                        Text(w).font(.system(size: 12.5))
+                        Button {
+                            onRemove(w)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12)).foregroundColor(Theme.sub)
+                        }
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Theme.surface2)
+                    .cornerRadius(99)
+                }
+            }
+        }
     }
 }
