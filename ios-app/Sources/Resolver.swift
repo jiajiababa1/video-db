@@ -38,6 +38,7 @@ enum Resolver {
         guard let (data, _) = try? await URLSession.shared.data(for: req),
               let html = String(data: data, encoding: .utf8) else { return nil }
         return extract(pattern: #"https://cdn\.hdcdn\.store/[^"'\s]+/index\.m3u8"#, in: html)
+            .flatMap { URL(string: $0) }
     }
 
     // MARK: - twjn (原生直连, 无 CORS 限制)

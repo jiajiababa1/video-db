@@ -153,7 +153,7 @@ struct PlayerView: View {
                 }
                 .font(.system(size: 13, weight: .bold))
                 .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(library.isFollowing(video.displayAuthor) ? Theme.surface2 : Theme.goldGradient)
+                .background(library.isFollowing(video.displayAuthor) ? Theme.surface2 : Theme.gold)
                 .foregroundColor(library.isFollowing(video.displayAuthor) ? Theme.text : .black)
                 .cornerRadius(99)
             }
