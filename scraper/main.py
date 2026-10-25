@@ -1611,6 +1611,14 @@ def sb_save(videos):
         # 带 mp4_url 的记录 (新来源抓取时直给): 按 resolve 写回的口径存 ——
         # duration 与 mp4_url 都写完整 mp4 直链; 不带的记录保持原有行为。
         mp4 = (v.get("mp4_url") or "").strip()
+        # 入库闸门: 深挖扫段/详情相关这类扩增来源的新行不再自动挂「待重爬」旗 —
+        # 它们照样进解析池 (sb_pending 按 has_mp4 取数), 但不会把展示计数撑爆;
+        # 正经栏目的行维持原样挂旗。
+        _flag = bool(v.get("needs_rescrape", True))
+        if _flag:
+            _secs = {s for s in (v.get("source_section") or "").split("|") if s}
+            if _secs and _secs <= {"sweep", "detail_related"}:
+                _flag = False
         records.append({
             "video_id": vid,
             "title": (v.get("title") or "")[:500],
@@ -1627,7 +1635,7 @@ def sb_save(videos):
             "vote_down": 0,
             "scraped_at": now,
             "has_mp4": bool(v.get("has_mp4", False)),
-            "needs_rescrape": bool(v.get("needs_rescrape", True)),
+            "needs_rescrape": _flag,
         })
 
     saved = 0
@@ -1661,6 +1669,61 @@ def _sb_patch_one(video_id, patch):
         return r.status_code in (200, 204)
     except Exception:
         return False
+
+
+def _park_chunk(video_ids, now):
+    """整批解析内容失效时把这批行轮转到队尾: 只更新 mp4_checked_at,
+    不写失败结果 (不动 needs_rescrape / retry_count), 避免传输层假死
+    把成批视频误钉成解析失败。"""
+    with ThreadPoolExecutor(max_workers=SB_WORKERS) as ex:
+        futs = [ex.submit(_sb_patch_one, vid, {
+            "mp4_checked_at": now, "updated_at": now,
+        }) for vid in video_ids]
+        for f in futs:
+            try:
+                f.result()
+            except Exception:
+                pass
+
+
+def _count_where(params):
+    try:
+        r = httpx.head(SUPABASE_URL + "/rest/v1/videos", params=params,
+                       headers={**sb_headers(), "Prefer": "count=exact"}, timeout=60)
+        if r.status_code != 200:
+            return -1
+        cr = r.headers.get("content-range", "")
+        tail = cr.rsplit("/", 1)[-1] if "/" in cr else ""
+        return int(tail) if tail.isdigit() else -1
+    except Exception:
+        return -1
+
+
+def reconcile_needs_rescrape():
+    """待重爬对账自愈: 两类逻辑上不该挂旗的行自动清标, 前后计数打日志。
+    1) 已有直链 (has_mp4=true) 却挂 needs_rescrape — 全量复爬经 upsert 带入的脏标;
+    2) monsnode_video_id 为空 — 永远进不了解析队列的假排队行。
+    解析队列 (sb_pending) 按 has_mp4/monsnode_id 取数, 不受本对账影响。"""
+    jobs = [
+        ("已有直链却挂旗", {"has_mp4": "eq.true", "needs_rescrape": "eq.true"}),
+        ("无解析ID却挂旗", {"needs_rescrape": "eq.true", "monsnode_video_id": "is.null"}),
+        ("空解析ID却挂旗", {"needs_rescrape": "eq.true", "monsnode_video_id": "eq."}),
+    ]
+    for label, params in jobs:
+        try:
+            before = _count_where(params)
+            if before <= 0:
+                continue
+            r = httpx.patch(SUPABASE_URL + "/rest/v1/videos", params=params,
+                            headers=sb_headers(True), json={"needs_rescrape": False},
+                            timeout=120)
+            if r.status_code not in (200, 204):
+                log(f"  [对账] {label} 清标失败 HTTP {r.status_code}", "WARN")
+                continue
+            after = _count_where(params)
+            log(f"  [对账] {label}: {before} → {after}")
+        except Exception as e:
+            log(f"  [对账] {label} 异常 (忽略): {str(e)[:120]}", "WARN")
 
 
 _RPC_BULK = {"state": None}  # None=未探测, True=可用, False=不可用
@@ -1857,6 +1920,14 @@ def resolve_pending(fetcher, limit, budget, tag="解析"):
             log(f"[{tag}] 首批 {len(chunk)} 条全部抓取失败 — 传输层已失效, 提前结束"
                 f" (未写入无效结果, 队列保持不变)", "ERROR")
             break
+        deleted_n = sum(1 for _, mp in results.values() if mp == DELETED_MARK)
+        if hit == 0 and deleted_n == 0 and len(results) >= 40:
+            log(f"[{tag}] 本批 {len(results)} 条零命中且无删除标记 — 疑似整批内容失效 "
+                f"(被拦/错误页), 不计失败, 仅轮转到队尾并结束本轮", "WARN")
+            _park_chunk([vid for _, vid in results.values()],
+                        datetime.now(timezone.utc).isoformat())
+            done += len(chunk)
+            break
         sb_write_results(results)
         hit_total += hit
         done += len(chunk)
@@ -1988,6 +2059,7 @@ def scrape_all():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, FULL_RESOLVE_LIMIT, FULL_RESOLVE_BUDGET, tag="解析"
         )
+        reconcile_needs_rescrape()
     except Exception as e:
         import traceback
         log(f"抓取流程异常: {e}", "ERROR")
@@ -2101,6 +2173,7 @@ def resolve_only():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, RESOLVE_LIMIT, RESOLVE_BUDGET, tag="解析"
         )
+        reconcile_needs_rescrape()
     except Exception as e:
         import traceback
         log(f"解析流程异常: {e}", "ERROR")
