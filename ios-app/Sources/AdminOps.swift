@@ -202,7 +202,7 @@ struct AdminMessagesView: View {
     @State private var msgs: [AdminAPI.RecentMsg] = []
     var body: some View {
         List {
-            ForEach(msgs) { m in
+            ForEach(Array(msgs.enumerated()), id: \.offset) { _, m in
                 VStack(alignment: .leading, spacing: 3) {
                     Text("@\(m.from_user ?? "?") → @\(m.to_user ?? "?")").font(.subheadline).bold()
                     Text(MsgContent.parse(m.content ?? "").plainText).font(.callout).lineLimit(3)

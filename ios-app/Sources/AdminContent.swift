@@ -20,22 +20,29 @@ struct AdminVideosView: View {
                 }
                 if !note.isEmpty { Text(note).font(.caption).foregroundColor(.secondary) }
             }
-            ForEach(results) { v in
-                Button { editing = v } label: {
-                    HStack(spacing: 10) {
-                        CachedImage(urlString: v.thumbnail_url).frame(width: 64, height: 40).clipped().cornerRadius(4)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(v.displayTitle).font(.subheadline).lineLimit(2).foregroundColor(.primary)
-                            Text("\(v.author ?? "?") · 观看 \(v.viewsText ?? "0")\(v.hasPlayableLink ? "" : " · 无直链")")
-                                .font(.caption2).foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
+            ForEach(results) { v in videoRow(v) }
         }
         .navigationTitle("视频管理")
         .sheet(item: $editing) { v in AdminVideoEditor(video: v) }
+    }
+
+    private func videoRow(_ v: VideoItem) -> some View {
+        Button { editing = v } label: {
+            HStack(spacing: 10) {
+                CachedImage(urlString: v.thumbnail_url).frame(width: 64, height: 40).clipped().cornerRadius(4)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(v.displayTitle).font(.subheadline).lineLimit(2).foregroundColor(.primary)
+                    Text(rowSubtitle(v)).font(.caption2).foregroundColor(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func rowSubtitle(_ v: VideoItem) -> String {
+        var s = (v.author ?? "?") + " · 观看 " + (v.viewsText ?? "0")
+        if !v.hasPlayableLink { s += " · 无直链" }
+        return s
     }
 
     private func search() async {

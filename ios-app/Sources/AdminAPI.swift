@@ -156,20 +156,11 @@ enum AdminAPI {
     }
 
     // MARK: - 总览类
-    struct RecentMsg: Decodable, Identifiable {
+    struct RecentMsg: Decodable {
         var from_user: String?
         var to_user: String?
         var content: String?
         var created_at: String?
-        var id: String { (from_user ?? "") + (to_user ?? "") + (created_at ?? "") + (content ?? "") }
-        enum CodingKeys: String, CodingKey { case from_user, to_user, content, created_at }
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            from_user = try? c.decode(String.self, forKey: .from_user)
-            to_user = try? c.decode(String.self, forKey: .to_user)
-            content = try? c.decode(String.self, forKey: .content)
-            created_at = try? c.decode(String.self, forKey: .created_at)
-        }
     }
 
     static func recentMessages(limit: Int = 100) async -> [RecentMsg] {
