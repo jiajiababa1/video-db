@@ -1,0 +1,20 @@
+name: Build Plugin
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dylib
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -arch arm64 -isysroot "$SDK" -mios-version-min=15.0 -fobjc-arc -dynamiclib -framework Foundation -framework UIKit -framework JavaScriptCore -framework Security -framework CoreGraphics -o VDBPlugin.dylib plugin/VDBPlugin.m
+          ls -la VDBPlugin.dylib
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: VDBPlugin
+          path: VDBPlugin.dylib
