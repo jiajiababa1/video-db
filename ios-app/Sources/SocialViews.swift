@@ -416,6 +416,17 @@ struct WorksView: View {
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 12) {
+                if session.isLoggedIn && !embedded {
+                    HStack {
+                        Spacer()
+                        Button { showSubmit = true } label: {
+                            Text("＋ 投稿").font(.caption.weight(.bold))
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(Theme.goldGradient).foregroundColor(.black)
+                                .cornerRadius(14)
+                        }
+                    }
+                }
                 if works.isEmpty {
                     Text(mineOnly ? "你还没有上传的作品" : "作品墙还是空的")
                         .foregroundColor(Theme.sub).padding(.top, 60)
@@ -429,13 +440,6 @@ struct WorksView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(embedded ? "" : "作品墙")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if session.isLoggedIn && !embedded {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("投稿") { showSubmit = true }
-                }
-            }
-        }
         .sheet(isPresented: $showSubmit, onDismiss: { Task { await load() } }) {
             WorkSubmitView()
         }
