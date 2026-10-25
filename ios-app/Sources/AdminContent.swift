@@ -41,7 +41,7 @@ struct AdminVideosView: View {
 
     private func rowSubtitle(_ v: VideoItem) -> String {
         var s = (v.author ?? "?") + " · 观看 " + (v.viewsText ?? "0")
-        if !v.hasPlayableLink { s += " · 无直链" }
+        if v.storedURL == nil && !(v.has_mp4 ?? false) { s += " · 无直链" }
         return s
     }
 

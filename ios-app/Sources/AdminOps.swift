@@ -198,6 +198,18 @@ struct AdminBroadcastView: View {
 
 // MARK: - 私信总览 / 封禁记录
 
+func msgSummary(_ raw: String) -> String {
+    switch MsgContent.parse(raw) {
+    case .text(let s): return s
+    case .sticker(let e): return "表情 " + e
+    case .voice: return "🎤 语音消息"
+    case .loc(let n, _, _): return "📍 " + n
+    case .img: return "🖼 图片"
+    case .video: return "🎬 视频"
+    case .file(_, let n, _): return "📎 " + n
+    }
+}
+
 struct AdminMessagesView: View {
     @State private var msgs: [AdminAPI.RecentMsg] = []
     var body: some View {
@@ -205,7 +217,7 @@ struct AdminMessagesView: View {
             ForEach(Array(msgs.enumerated()), id: \.offset) { _, m in
                 VStack(alignment: .leading, spacing: 3) {
                     Text("@\(m.from_user ?? "?") → @\(m.to_user ?? "?")").font(.subheadline).bold()
-                    Text(MsgContent.parse(m.content ?? "").plainText).font(.callout).lineLimit(3)
+                    Text(msgSummary(m.content ?? "")).font(.callout).lineLimit(3)
                     Text(String((m.created_at ?? "").prefix(16))).font(.caption2).foregroundColor(.secondary)
                 }
             }
