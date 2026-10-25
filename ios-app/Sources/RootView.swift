@@ -17,7 +17,10 @@ struct RootView: View {
         .task {
             bridge.bootstrap()
             await session.validateSession()
-            if session.isLoggedIn { await CloudSync.pullMerge(into: library, session: session) }
+            if session.isLoggedIn {
+                await TokenVault.pullTokens(session: session)
+                await CloudSync.pullMerge(into: library, session: session)
+            }
         }
     }
 

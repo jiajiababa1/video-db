@@ -194,6 +194,7 @@ struct MeView: View {
 
     // MARK: 站长工具
     @State private var ghDraft = ""
+    @State private var sbDraft = ""
     @State private var scrapeNote: String? = nil
     @State private var scrapeBusy = false
     @State private var scrapeProgress: Double? = nil
@@ -205,7 +206,20 @@ struct MeView: View {
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .background(Theme.surface2).cornerRadius(10)
                 .onAppear { ghDraft = session.ghToken }
-                .onChange(of: ghDraft) { session.ghToken = $0 }
+                .onChange(of: ghDraft) {
+                    session.ghToken = $0
+                    Task { await TokenVault.pushTokens(session: session) }
+                }
+            SecureField("数据库令牌 (sb_token)", text: $sbDraft)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Theme.surface2).cornerRadius(10)
+                .onAppear { sbDraft = session.sbToken }
+                .onChange(of: sbDraft) {
+                    session.sbToken = $0
+                    Task { await TokenVault.pushTokens(session: session) }
+                }
+            Text("令牌加密后跟账号云同步, 登录自动取回, 与网站互通")
+                .font(.caption2).foregroundColor(Theme.sub)
             HStack(spacing: 8) {
                 ownerBtn("全量抓取", mode: "full")
                 ownerBtn("解析补链", mode: "resolve")

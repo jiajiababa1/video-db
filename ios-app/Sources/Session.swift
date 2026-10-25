@@ -38,6 +38,12 @@ final class Session: ObservableObject {
         set { d.set(newValue, forKey: "gh_token") }
     }
 
+    /// Supabase 管理令牌 (与网站 sb_token 同物, 跟账号云同步)
+    var sbToken: String {
+        get { d.string(forKey: "sb_token") ?? "" }
+        set { d.set(newValue, forKey: "sb_token") }
+    }
+
     // MARK: - 门禁
     func verifyPasscode(_ code: String) async -> String? {
         struct R: Decodable { var ok: Bool?; var token: String?; var message: String? }
@@ -69,6 +75,11 @@ final class Session: ObservableObject {
             d.set(r.is_admin ?? false, forKey: "login_is_admin")
             d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
             username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
+            // 派生云端配置解密密钥并取回跟账号走的令牌 (gh/sb token)
+            if let key = TokenVault.deriveKey(password: p) {
+                TokenVault.saveKey(key)
+            }
+            await TokenVault.pullTokens(session: self)
             return nil
         } catch {
             return "网络错误: \(error.localizedDescription)"
@@ -84,6 +95,8 @@ final class Session: ObservableObject {
         d.removeObject(forKey: "login_token")
         d.removeObject(forKey: "login_is_admin")
         d.removeObject(forKey: "login_vip")
+        d.removeObject(forKey: "sb_token")
+        TokenVault.clearKey()
         username = nil; isAdmin = false; vipLevel = 0
     }
 
