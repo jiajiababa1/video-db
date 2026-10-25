@@ -1,3 +1,6 @@
+import SwiftUI
+import Foundation
+import UniformTypeIdentifiers
 
 // MARK: - 聊天输入条 (文字 + 表情/语音/位置/照片/视频/文件, 单聊与群聊共用)
 struct ChatSendBar: View {

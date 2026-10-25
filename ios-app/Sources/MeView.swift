@@ -428,6 +428,46 @@ struct MeView: View {
                 .tint(Theme.gold)
                 .onAppear { bridgeOn = bridge.enabled }
                 .onChange(of: bridgeOn) { bridge.enabled = $0 }
+            if session.isOwner {
+                Divider().background(Theme.line)
+                Text("管理动作 (热更新下发)")
+                    .font(.system(size: 14, weight: .bold))
+                if bridge.actions.isEmpty {
+                    Text("暂无动作。新的管理功能会以更新包形式下发到这里, 不用重装 App。")
+                        .font(.caption).foregroundColor(Theme.sub)
+                }
+                ForEach(bridge.actions) { a in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(a.title).font(.system(size: 14, weight: .bold))
+                            if let d = a.desc {
+                                Text(d).font(.caption2).foregroundColor(Theme.sub)
+                            }
+                        }
+                        Spacer()
+                        Button(bridge.actionRunning == a.id ? "运行中…" : "运行") {
+                            bridge.runAction(a)
+                        }
+                        .font(.system(size: 12.5, weight: .bold))
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(Theme.goldGradient).foregroundColor(.black)
+                        .cornerRadius(99)
+                        .disabled(bridge.actionRunning != nil)
+                    }
+                    .padding(10)
+                    .background(Theme.surface2)
+                    .cornerRadius(10)
+                }
+                if !bridge.actionLog.isEmpty {
+                    Text(bridge.actionLog)
+                        .font(.caption)
+                        .foregroundColor(Theme.text.opacity(0.85))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Theme.surface2)
+                        .cornerRadius(10)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)

@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// ISO8601 时间解析 (带/不带小数秒都吃)
+enum ISODate {
+    static func parse(_ s: String?) -> Date? {
+        guard let s = s else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
+    }
+}
+
 /// 好友页: 申请 / 添加 / 好友列表 + 社交入口 (群聊 / 作品墙)
 struct FriendsView: View {
     @EnvironmentObject var session: Session
@@ -278,7 +290,7 @@ struct BoardChatView: View {
     }
 
     private var mutedNow: Bool {
-        if let u = myMutedUntil, let d = ISO8601.date(u), d > Date() { return true }
+        if let u = myMutedUntil, let d = ISODate.parse(u), d > Date() { return true }
         if group.mute_all == true && myRole == "member" && !iAmGroupOwner && !session.isOwner { return true }
         return false
     }
@@ -681,7 +693,7 @@ struct GroupManageView: View {
 
     private func memberRow(_ m: BoardMember) -> some View {
         let isSelf = m.username == session.username
-        let muted = m.muted_until.flatMap { ISO8601.date($0) }.map { $0 > Date() } ?? false
+        let muted = m.muted_until.flatMap { ISODate.parse($0) }.map { $0 > Date() } ?? false
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

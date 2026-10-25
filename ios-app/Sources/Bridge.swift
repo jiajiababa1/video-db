@@ -2,6 +2,7 @@ import Foundation
 import JavaScriptCore
 import Security
 import Combine
+import UIKit
 
 /// 热更新桥: 拉取签名更新包 (GitHub Pages 上的 updates/bundle.json) → 验签 → 应用配置与 JS 模块。
 /// 插件 (LiveContainer tweak) 也写同一目录, 谁先跑谁生效; App 自身也能独立完成全流程。
@@ -30,6 +31,19 @@ final class Bridge: ObservableObject {
         var prefix: String?
         var js: String
     }
+
+    /// 热更新管理动作 (v1.4): 签名包下发的 JS, 站长在「我的」里点运行;
+    /// 动作可调 rest/rpc/input/confirm/toast (原生把关, 仅站长会话可用)。
+    struct ActionItem: Identifiable {
+        var id: String
+        var title: String
+        var desc: String?
+        var js: String
+    }
+
+    @Published var actions: [ActionItem] = []
+    @Published var actionLog: String = ""
+    @Published var actionRunning: String? = nil
 
     private var modules: [Module] = []
     private var store: [String: String] = [:]
@@ -162,6 +176,14 @@ final class Bridge: ObservableObject {
                                    js: js))
             }
         }
+        var acts: [ActionItem] = []
+        if let arr = payload["actions"] as? [[String: Any]] {
+            for a in arr {
+                guard let id = a["id"] as? String, let title = a["title"] as? String,
+                      let js = a["js"] as? String else { continue }
+                acts.append(ActionItem(id: id, title: title, desc: a["desc"] as? String, js: js))
+            }
+        }
         DispatchQueue.main.async {
             self.bundleVersion = version
             self.announcement = config["announcement"] as? String
@@ -181,6 +203,7 @@ final class Bridge: ObservableObject {
             }
             self.modules = mods
             self.moduleNames = mods.map { "\($0.name) v\($0.version)" }
+            self.actions = acts
         }
     }
 
@@ -269,6 +292,128 @@ final class Bridge: ObservableObject {
         }
         return nil
     }
+
+    // MARK: - 管理动作 (v1.4): 仅站长可运行, JS 经原生桥调数据库
+    func runAction(_ a: ActionItem) {
+        guard enabled else { actionLog = "远程更新已关闭"; return }
+        guard Session.shared.isOwner else { actionLog = "仅站长可运行管理动作"; return }
+        guard actionRunning == nil else { return }
+        actionRunning = a.id
+        actionLog = "▶ 运行「\(a.title)」…"
+        let js = a.js
+        jsQueue.async { [weak self] in
+            guard let self = self else { return }
+            var logs: [String] = []
+            guard let ctx = JSContext() else {
+                DispatchQueue.main.async { self.actionRunning = nil; self.actionLog = "JS 引擎不可用" }
+                return
+            }
+            var jsError: String? = nil
+            ctx.exceptionHandler = { _, exc in jsError = exc?.toString() }
+            let bridge = AdminJSBridge(
+                fetch: { [weak self] url in self?.syncFetch(url) },
+                storeGet: { [weak self] k in self?.store[k] },
+                storeSet: { [weak self] k, v in self?.store[k] = v; self?.saveStore() },
+                rest: { [weak self] m, p, b in self?.syncRest(method: m, path: p, bodyJson: b) },
+                rpc: { [weak self] n, p in self?.syncRPC(name: n, paramsJson: p) },
+                input: { [weak self] t, ph in self?.promptInput(title: t, placeholder: ph) },
+                confirm: { [weak self] t, m in self?.promptConfirm(title: t, message: m) ?? false },
+                toast: { msg in logs.append(msg) },
+                log: { msg in logs.append(msg) }
+            )
+            ctx.setObject(bridge, forKeyedSubscript: "vdb" as NSString)
+            ctx.evaluateScript(js)
+            if jsError == nil {
+                ctx.evaluateScript("if (typeof run === 'function') run();")
+            }
+            let err = jsError
+            DispatchQueue.main.async {
+                self.actionRunning = nil
+                var out = logs.joined(separator: "\n")
+                if let err = err { out += (out.isEmpty ? "" : "\n") + "❌ " + err }
+                self.actionLog = out.isEmpty ? "已运行 (无输出)" : out
+            }
+        }
+    }
+
+    private func syncRest(method: String, path: String, bodyJson: String?) -> String? {
+        let clean = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        guard let url = URL(string: SB.base.absoluteString + "/" + clean) else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = method.uppercased()
+        req.timeoutInterval = 25
+        var hdrs = SB.headers()
+        if let b = bodyJson, !b.isEmpty {
+            req.httpBody = b.data(using: .utf8)
+            if req.httpMethod != "GET" { hdrs["Prefer"] = "return=representation" }
+        }
+        for (k, v) in hdrs { req.setValue(v, forHTTPHeaderField: k) }
+        return syncRequest(req)
+    }
+
+    private func syncRPC(name: String, paramsJson: String) -> String? {
+        guard let url = URL(string: SB.base.absoluteString + "/rest/v1/rpc/" + name) else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 25
+        for (k, v) in SB.headers() { req.setValue(v, forHTTPHeaderField: k) }
+        req.httpBody = paramsJson.data(using: .utf8)
+        return syncRequest(req)
+    }
+
+    private func syncRequest(_ req: URLRequest) -> String? {
+        let sem = DispatchSemaphore(value: 0)
+        var out: String? = nil
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            if let data = data { out = String(data: data, encoding: .utf8) }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 26)
+        return out
+    }
+
+    private static func topVC() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first
+        var vc = scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+        while let p = vc?.presentedViewController { vc = p }
+        return vc
+    }
+
+    private func promptInput(title: String, placeholder: String) -> String? {
+        let sem = DispatchSemaphore(value: 0)
+        var result: String? = nil
+        DispatchQueue.main.async {
+            guard let vc = Bridge.topVC() else { sem.signal(); return }
+            let ac = UIAlertController(title: title, message: nil, preferredStyle: .alert)
+            ac.addTextField { $0.placeholder = placeholder }
+            ac.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in sem.signal() })
+            ac.addAction(UIAlertAction(title: "确定", style: .default) { _ in
+                result = ac.textFields?.first?.text
+                sem.signal()
+            })
+            vc.present(ac, animated: true)
+        }
+        _ = sem.wait(timeout: .now() + 180)
+        return result
+    }
+
+    private func promptConfirm(title: String, message: String) -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        var result = false
+        DispatchQueue.main.async {
+            guard let vc = Bridge.topVC() else { sem.signal(); return }
+            let ac = UIAlertController(title: title, message: message, preferredStyle: .alert)
+            ac.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in sem.signal() })
+            ac.addAction(UIAlertAction(title: "确定", style: .default) { _ in
+                result = true
+                sem.signal()
+            })
+            vc.present(ac, animated: true)
+        }
+        _ = sem.wait(timeout: .now() + 180)
+        return result
+    }
 }
 
 /// 暴露给 JS 的白名单桥 (仅 fetchText / log / store)
@@ -296,4 +441,69 @@ final class JSBridge: NSObject, VDBJSExport {
     func log(_ s: String) { print("[vdb-module] \(s)") }
     func store(_ k: String, _ v: String) { storeSet(k, v) }
     func getStore(_ k: String) -> String? { storeGet(k) }
+}
+
+/// 管理动作用的扩展桥: 在基础白名单之上加 rest / rpc / input / confirm / toast。
+/// 只在 runAction (已验站长身份) 时构造, 普通模块拿不到。
+@objc protocol VDBAdminJSExport: JSExport {
+    func fetchText(_ url: String) -> String?
+    func log(_ s: String)
+    func toast(_ s: String)
+    func store(_ k: String, _ v: String)
+    func getStore(_ k: String) -> String?
+    func rest(_ method: String, _ path: String, _ bodyJson: String?) -> String?
+    func rpc(_ name: String, _ paramsJson: String) -> String?
+    func input(_ title: String, _ placeholder: String) -> String?
+    func confirm(_ title: String, _ message: String) -> Bool
+    func session() -> String
+}
+
+final class AdminJSBridge: NSObject, VDBAdminJSExport {
+    let fetchFn: (String) -> String?
+    let storeGetFn: (String) -> String?
+    let storeSetFn: (String, String) -> Void
+    let restFn: (String, String, String?) -> String?
+    let rpcFn: (String, String) -> String?
+    let inputFn: (String, String) -> String?
+    let confirmFn: (String, String) -> Bool
+    let toastFn: (String) -> Void
+    let logFn: (String) -> Void
+
+    init(fetch: @escaping (String) -> String?,
+         storeGet: @escaping (String) -> String?,
+         storeSet: @escaping (String, String) -> Void,
+         rest: @escaping (String, String, String?) -> String?,
+         rpc: @escaping (String, String) -> String?,
+         input: @escaping (String, String) -> String?,
+         confirm: @escaping (String, String) -> Bool,
+         toast: @escaping (String) -> Void,
+         log: @escaping (String) -> Void) {
+        self.fetchFn = fetch
+        self.storeGetFn = storeGet
+        self.storeSetFn = storeSet
+        self.restFn = rest
+        self.rpcFn = rpc
+        self.inputFn = input
+        self.confirmFn = confirm
+        self.toastFn = toast
+        self.logFn = log
+    }
+
+    func fetchText(_ url: String) -> String? { fetchFn(url) }
+    func log(_ s: String) { logFn(s) }
+    func toast(_ s: String) { toastFn(s) }
+    func store(_ k: String, _ v: String) { storeSetFn(k, v) }
+    func getStore(_ k: String) -> String? { storeGetFn(k) }
+    func rest(_ method: String, _ path: String, _ bodyJson: String?) -> String? { restFn(method, path, bodyJson) }
+    func rpc(_ name: String, _ paramsJson: String) -> String? { rpcFn(name, paramsJson) }
+    func input(_ title: String, _ placeholder: String) -> String? { inputFn(title, placeholder) }
+    func confirm(_ title: String, _ message: String) -> Bool { confirmFn(title, message) }
+
+    func session() -> String {
+        let s = Session.shared
+        let obj: [String: Any] = ["username": s.username ?? "", "isOwner": s.isOwner]
+        if let d = try? JSONSerialization.data(withJSONObject: obj),
+           let str = String(data: d, encoding: .utf8) { return str }
+        return "{}"
+    }
 }
