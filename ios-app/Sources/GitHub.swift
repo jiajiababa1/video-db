@@ -7,13 +7,18 @@ enum GitHub {
     static let workflow = "scraper.yml"
 
     static func dispatch(mode: String, token: String) async -> Bool {
-        let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/actions/workflows/\(workflow)/dispatches")!
+        await dispatchWorkflow(workflow, inputs: ["mode": mode], token: token)
+    }
+
+    /// 通用 workflow_dispatch (作者抓 / 补文案 / 补MP4 等都走这里)
+    static func dispatchWorkflow(_ file: String, inputs: [String: String], token: String) async -> Bool {
+        let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/actions/workflows/\(file)/dispatches")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         req.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["ref": "main", "inputs": ["mode": mode]])
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["ref": "main", "inputs": inputs])
         guard let (_, resp) = try? await URLSession.shared.data(for: req),
               let http = resp as? HTTPURLResponse else { return false }
         return http.statusCode == 204

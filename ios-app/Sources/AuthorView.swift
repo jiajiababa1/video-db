@@ -10,6 +10,7 @@ struct AuthorView: View {
     @State private var viewsTotal: Int? = nil
     @State private var works: [WorkItem] = []
     @State private var playURL: IdentifiedString? = nil
+    @State private var scrapeNote: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,10 +58,26 @@ struct AuthorView: View {
                 }
                 .font(.system(size: 11.5))
                 .foregroundColor(Theme.sub)
+                if session.isOwner {
+                    Button(scrapeNote ?? "🎯 作者抓") { Task { await scrapeAuthor() } }
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundColor(Theme.gold)
+                }
             }
         }
         .padding(14)
         .background(Theme.surface)
+    }
+
+    /// 站主专属: 按当前作者云端抓取 (与网站「🎯 作者抓」同通道)
+    private func scrapeAuthor() async {
+        let token = session.ghToken
+        guard !token.isEmpty else { scrapeNote = "无令牌"; return }
+        scrapeNote = "触发中…"
+        let ok = await GitHub.dispatchWorkflow("author-scrape.yml", inputs: [
+            "authors": name, "max_pages": "5", "resolve": "300",
+        ], token: token)
+        scrapeNote = ok ? "已触发抓取 ✓" : "触发失败"
     }
 
     private var statsText: String {

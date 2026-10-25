@@ -28,7 +28,7 @@ struct MeView: View {
                 filterCard
                 moreCard
                 dataCard
-                Text("2048 影院 · 原生版 v1.3")
+                Text("2048 影院 · 原生版 v1.5")
                     .font(.caption2).foregroundColor(Theme.sub)
                     .padding(.top, 6)
             }
@@ -263,6 +263,21 @@ struct MeView: View {
     private var ownerCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("站长工具").font(.system(size: 16, weight: .bold))
+            NavigationLink {
+                AdminView()
+            } label: {
+                HStack {
+                    Image(systemName: "crown.fill").foregroundColor(Theme.gold)
+                    Text("管理面板（全功能 · 最高权限）")
+                        .font(.system(size: 15, weight: .bold)).foregroundColor(Theme.text)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption).foregroundColor(Theme.sub)
+                }
+                .padding(12)
+                .background(Theme.gold.opacity(0.15))
+                .cornerRadius(10)
+            }
+            .buttonStyle(.plain)
             SecureField("GitHub 令牌 (gh_token)", text: $ghDraft)
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .background(Theme.surface2).cornerRadius(10)

@@ -47,6 +47,10 @@ final class PlayerVM: ObservableObject {
     @Published var rate: Float = 1
     @Published var sleepNote: String? = nil
     @Published var resolvedURL: URL? = nil
+    @Published var currentTime: Double = 0
+    @Published var durationTime: Double = 0
+    var scrubbing = false
+    private var tickCount = 0
     var video: VideoItem
     private var token: Any? = nil
     private var seekDone = false
@@ -65,6 +69,13 @@ final class PlayerVM: ObservableObject {
         let target = max(0, p.currentTime().seconds + seconds)
         let dur = item.duration.seconds
         p.seek(to: CMTime(seconds: dur.isFinite ? min(target, dur - 0.5) : target, preferredTimescale: 600))
+    }
+
+    func scrub(to seconds: Double) {
+        guard let p = player else { return }
+        currentTime = seconds
+        p.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
+               toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     func setSleep(minutes: Int) {
@@ -93,18 +104,24 @@ final class PlayerVM: ObservableObject {
             let p = AVPlayer(playerItem: item)
             player = p
             state = "ready"
-            token = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 5, preferredTimescale: 1), queue: .main) { [weak self] t in
+            token = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] t in
                 guard let self = self, let item = p.currentItem else { return }
                 let dur = item.duration.seconds
                 guard dur.isFinite, dur > 0 else { return }
-                let frac = t.seconds / dur
+                if !self.scrubbing {
+                    self.currentTime = t.seconds
+                    self.durationTime = dur
+                }
+                self.tickCount += 1
+                if self.tickCount % 10 == 0 {
+                    self.library?.recordWatch(self.video, progress: t.seconds / dur)
+                }
                 if !self.seekDone {
                     self.seekDone = true
                     if let saved = self.library?.progress[self.video.video_id], saved > 0.02, saved < 0.95 {
                         p.seek(to: CMTime(seconds: saved * dur, preferredTimescale: 600))
                     }
                 }
-                self.library?.recordWatch(self.video, progress: frac)
             }
             p.play()
             // 真实观看计数 (同一账号只计一次)
@@ -140,6 +157,7 @@ struct PlayerView: View {
     var body: some View {
         VStack(spacing: 0) {
             playerArea
+            progressRow
             controlsRow
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -256,6 +274,36 @@ struct PlayerView: View {
     }
 
     @ViewBuilder
+    /// 常驻进度条 (可拖动)
+    private var progressRow: some View {
+        HStack(spacing: 8) {
+            Text(timeText(vm.currentTime))
+                .font(.caption2).monospacedDigit().foregroundColor(.secondary)
+                .frame(width: 40, alignment: .trailing)
+            Slider(value: Binding(
+                get: { vm.currentTime },
+                set: { vm.currentTime = $0 }
+            ), in: 0...max(vm.durationTime, 1), onEditingChanged: { editing in
+                vm.scrubbing = editing
+                if !editing { vm.scrub(to: vm.currentTime) }
+            })
+            .tint(Color(red: 0.78, green: 0.64, blue: 0.36))
+            .disabled(vm.durationTime <= 0)
+            Text(timeText(vm.durationTime))
+                .font(.caption2).monospacedDigit().foregroundColor(.secondary)
+                .frame(width: 40, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+        .background(Color.black.opacity(0.85))
+    }
+
+    private func timeText(_ s: Double) -> String {
+        guard s.isFinite, s > 0 else { return "0:00" }
+        let t = Int(s)
+        return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60)
+                         : String(format: "%d:%02d", t / 60, t % 60)
+    }
+
     private var playerArea: some View {
         ZStack {
             Color.black
