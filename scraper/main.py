@@ -1726,6 +1726,104 @@ def reconcile_needs_rescrape():
             log(f"  [对账] {label} 异常 (忽略): {str(e)[:120]}", "WARN")
 
 
+LINK_PATROL_LIMIT = _env_int("LINK_PATROL_LIMIT", 800)  # 每轮断链巡检条数
+
+
+def _link_verdict(client, link):
+    """判定存量直链死活: 返回 True=活, False=确认死 (两次 404/410),
+    None=说不准 (网络失败/403/5xx) — 说不准一律不降级, 防整网假死误杀。"""
+    for _ in range(2):
+        try:
+            r = client.get(link, headers={
+                "User-Agent": "Mozilla/5.0",
+                "Range": "bytes=0-1",
+                "Referer": "https://x.com/",
+            }, timeout=15)
+            if r.status_code in (200, 206):
+                return True
+            if r.status_code in (404, 410):
+                continue  # 再试一次确认才判死
+            return None
+        except Exception:
+            continue
+    return False
+
+
+def link_patrol(limit=None):
+    """断链巡检: 抽查 has_mp4 的存量直链 (按 mp4_checked_at 最久没查优先;
+    hx_ 除外 — hsex 是播放时现抓的签名 m3u8, 查存量没意义)。
+    确认失效 → has_mp4=false + needs_rescrape=true + 清掉死链, 回到解析队列
+    重新解析; 源站已删的会在重解析时被标 removed 彻底下线。
+    活链只盖检查时间戳轮转; 整批都测不准 (网络全断) 时整轮跳过不降级。"""
+    limit = limit or LINK_PATROL_LIMIT
+    url = (SUPABASE_URL + "/rest/v1/videos"
+           + "?select=video_id,mp4_url,duration"
+           + "&has_mp4=is.true"
+           + "&video_id=not.like.hx_*"
+           + "&removed=not.is.true"
+           + "&order=mp4_checked_at.asc.nullsfirst,video_id.asc"
+           + "&limit=" + str(limit))
+    try:
+        r = httpx.get(url, headers=sb_headers(), timeout=60)
+        if r.status_code != 200:
+            log(f"  [巡检] 取待查失败 HTTP {r.status_code}", "WARN")
+            return 0, 0
+        rows = r.json()
+    except Exception as e:
+        log(f"  [巡检] 取待查异常: {str(e)[:120]}", "WARN")
+        return 0, 0
+    if not rows:
+        return 0, 0
+
+    def link_of(row):
+        for col in ("mp4_url", "duration"):
+            v = (row.get(col) or "").strip()
+            if v.startswith("http"):
+                return v
+        return None
+
+    now = datetime.now(timezone.utc).isoformat()
+    client = httpx.Client(timeout=20, follow_redirects=True)
+
+    # 预检: 先测前 8 条, 若全都说不准 (网络层不通), 整轮跳过 — 一条都不降级
+    pre = [link_of(x) for x in rows[:8]]
+    pre = [x for x in pre if x]
+    if pre and all(_link_verdict(client, x) is None for x in pre):
+        log("  [巡检] 预检全测不准 (网络层不通), 本轮跳过, 不降级任何视频", "WARN")
+        client.close()
+        return 0, 0
+
+    def process(row):
+        vid = row["video_id"]
+        link = link_of(row)
+        if not link:
+            # has_mp4 却没存任何链接: 本来就播不了, 直接降级回解析队列
+            _sb_patch_one(vid, {"has_mp4": False, "needs_rescrape": True,
+                                "mp4_checked_at": now, "updated_at": now})
+            return "dead"
+        verdict = _link_verdict(client, link)
+        if verdict is None:
+            return "skip"
+        if verdict:
+            _sb_patch_one(vid, {"mp4_checked_at": now})
+            return "alive"
+        patch = {"has_mp4": False, "needs_rescrape": True, "mp4_url": "",
+                 "mp4_checked_at": now, "updated_at": now}
+        if (row.get("duration") or "").strip().startswith("http"):
+            patch["duration"] = ""
+        _sb_patch_one(vid, patch)
+        return "dead"
+
+    dead = 0
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        for res in ex.map(process, rows):
+            if res == "dead":
+                dead += 1
+    client.close()
+    log(f"  [巡检] 本轮检查 {len(rows)} 条存量直链, 确认失效 {dead} 条已降级回重爬队列")
+    return len(rows), dead
+
+
 _RPC_BULK = {"state": None}  # None=未探测, True=可用, False=不可用
 
 
@@ -2060,6 +2158,7 @@ def scrape_all():
             fetcher, FULL_RESOLVE_LIMIT, FULL_RESOLVE_BUDGET, tag="解析"
         )
         reconcile_needs_rescrape()
+        link_patrol()
     except Exception as e:
         import traceback
         log(f"抓取流程异常: {e}", "ERROR")
@@ -2174,6 +2273,7 @@ def resolve_only():
             fetcher, RESOLVE_LIMIT, RESOLVE_BUDGET, tag="解析"
         )
         reconcile_needs_rescrape()
+        link_patrol()
     except Exception as e:
         import traceback
         log(f"解析流程异常: {e}", "ERROR")

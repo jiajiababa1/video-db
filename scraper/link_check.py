@@ -56,8 +56,8 @@ def main():
         sys.exit(1)
 
     rows = sb_get(
-        "/rest/v1/videos?select=video_id,video_url,duration"
-        "&has_mp4=is.true"
+        "/rest/v1/videos?select=video_id,mp4_url,duration"
+        "&has_mp4=is.true&video_id=not.like.hx_*"
         f"&order=updated_at.asc&limit={args.sample}"
     )
     log(f"抽查: {len(rows)} 条")
@@ -65,7 +65,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = {}
         for r in rows:
-            url = r.get("video_url") or r.get("duration") or ""
+            url = r.get("mp4_url") or r.get("duration") or ""
             if "video.twimg.com" in url or ".mp4" in url:
                 futs[ex.submit(check_url, url)] = r
         for fut in as_completed(futs):
