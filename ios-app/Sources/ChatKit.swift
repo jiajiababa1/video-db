@@ -6,7 +6,9 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 /// 聊天消息内容: 与网站 parseMsg 完全同构 (text / sticker / voice / loc),
-/// img / video / file 为 App 增强 (网站端会降级显示为可点链接)。
+/// img / video / file 为 App 增强。
+/// v1.6: 板块群网站端只渲染纯文本, 群发送改用 boardText 约定格式 (网页可读),
+/// parse 识别该约定渲染回富气泡 — 双端都不再出现 JSON 乱码。
 enum MsgContent {
     case text(String)
     case sticker(String)
@@ -38,7 +40,50 @@ enum MsgContent {
             default: break
             }
         }
+        // 群聊纯文本约定 (boardText 的逆向解析)
+        if let c = parseBoardText(raw) { return c }
         return .text(raw)
+    }
+
+    /// 识别 "🖼 图片 <url>" / "🎬 视频 <url>" / "🎤 语音 <url>" /
+    /// "📎 文件 <名> <url>" / "📍 <名> (lat,lng)" 约定格式
+    private static func parseBoardText(_ raw: String) -> MsgContent? {
+        func urlTail(_ s: String) -> String? {
+            guard let r = s.range(of: "https://", options: .backwards) else { return nil }
+            let u = String(s[r.lowerBound...]).trimmingCharacters(in: .whitespaces)
+            return u.contains(" ") ? nil : u
+        }
+        if raw.hasPrefix("🖼 图片 "), let u = urlTail(raw) { return .img(u) }
+        if raw.hasPrefix("🎬 视频 "), let u = urlTail(raw) { return .video(u) }
+        if raw.hasPrefix("🎤 语音 "), let u = urlTail(raw) { return .voice(u) }
+        if raw.hasPrefix("📎 文件 "), let u = urlTail(raw) {
+            let name = String(raw.dropFirst("📎 文件 ".count).dropLast(u.count))
+                .trimmingCharacters(in: .whitespaces)
+            return .file(url: u, name: name.isEmpty ? "文件" : name, size: 0)
+        }
+        if raw.hasPrefix("📍 "), let open = raw.lastIndex(of: "("), raw.hasSuffix(")") {
+            let coords = raw[raw.index(after: open)..<raw.index(before: raw.endIndex)]
+                .split(separator: ",")
+            if coords.count == 2, let lat = Double(coords[0]), let lng = Double(coords[1]) {
+                let name = String(raw.dropFirst(2).prefix(upTo: open)).trimmingCharacters(in: .whitespaces)
+                return .loc(name: name.isEmpty ? "位置" : name, lat: lat, lng: lng)
+            }
+        }
+        return nil
+    }
+
+    /// 板块群专用发送格式: 纯文本约定, 网页版直接可读 (链接可点开)
+    var boardText: String {
+        switch self {
+        case .text(let s): return s
+        case .sticker(let e): return e
+        case .voice(let u): return "🎤 语音 " + u
+        case .loc(let n, let lat, let lng):
+            return "📍 \(n) (\(String(format: "%.6f", lat)),\(String(format: "%.6f", lng)))"
+        case .img(let u): return "🖼 图片 " + u
+        case .video(let u): return "🎬 视频 " + u
+        case .file(let u, let n, _): return "📎 文件 \(n) " + u
+        }
     }
 
     var serialized: String {

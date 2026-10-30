@@ -41,6 +41,12 @@ enum ConfigSync {
             if let h = ext["vid_hidden"] as? [String] { library.hiddenIds = h }
             if let b = ext["vid_badwords"] as? [String] { library.badwords = b }
             if let r = ext["ss_recent"] as? [String] { library.searchRecent = Array(r.prefix(12)) }
+            if let c = ext["vid_counted"] as? [String] {
+                // 观看计数去重标记跨设备合并 (#6): 云端 ∪ 本地, 换设备/重装不再重复 +1
+                var merged = library.countedViews
+                for k in c where !merged.contains(k) { merged.append(k) }
+                library.countedViews = Array(merged.suffix(3000))
+            }
             if let prog = ext["vid_progress"] as? [String: Any] {
                 for (id, v) in prog {
                     guard let sec = (v as? NSNumber)?.doubleValue,
@@ -72,6 +78,7 @@ enum ConfigSync {
             }
         }
         ext["vid_progress"] = prog
+        ext["vid_counted"] = Array(library.countedViews.suffix(3000))
         data["ext"] = ext
         let body: [String: Any] = [
             "username": user,

@@ -86,6 +86,32 @@ final class Session: ObservableObject {
         }
     }
 
+    /// 注册新账号 (#8): 验证码由 xxapi 生成图片, 服务端在 register_account 内校验;
+    /// 成功直接返回 token (与网站一致, 注册即登录)。
+    func register(username u: String, password p: String, captchaId: String, captchaKey: String) async -> String? {
+        struct R: Decodable { var ok: Bool?; var token: String?; var message: String?; var is_admin: Bool?; var vip_level: FlexInt? }
+        do {
+            let rows: [R] = try await SB.rpc("register_account",
+                params: ["p_username": u, "p_password": p, "p_device_id": deviceId,
+                         "p_captcha_id": captchaId, "p_captcha_key": captchaKey])
+            guard let r = rows.first, r.ok == true, let t = r.token else {
+                return rows.first?.message ?? "注册失败"
+            }
+            d.set(u, forKey: "login_user")
+            d.set(t, forKey: "login_token")
+            d.set(r.is_admin ?? false, forKey: "login_is_admin")
+            d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
+            username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
+            if let key = TokenVault.deriveKey(password: p) {
+                TokenVault.saveKey(key)
+            }
+            await TokenVault.pullTokens(session: self)
+            return nil
+        } catch {
+            return "网络错误: \(error.localizedDescription)"
+        }
+    }
+
     func logout() {
         let t = loginToken
         if !t.isEmpty {

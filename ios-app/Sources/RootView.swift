@@ -4,6 +4,8 @@ struct RootView: View {
     @EnvironmentObject var session: Session
     @EnvironmentObject var library: Library
     @EnvironmentObject var bridge: Bridge
+    @ObservedObject private var notices = NoticeCenter.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -22,6 +24,7 @@ struct RootView: View {
                 await ConfigSync.pull(session: session, library: library)
                 await CloudSync.pullMerge(into: library, session: session)
             }
+            await notices.refresh(session: session)
         }
         .onAppear {
             library.onMutate = { ConfigSync.schedulePush(session: session, library: library) }
@@ -33,6 +36,11 @@ struct RootView: View {
                     await ConfigSync.pull(session: session, library: library)
                     await CloudSync.pullMerge(into: library, session: session)
                 }
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                Task { await notices.refresh(session: session) }
             }
         }
     }
@@ -48,12 +56,14 @@ struct RootView: View {
             NavigationView { FriendsView() }
                 .navigationViewStyle(.stack)
                 .tabItem { Label("好友", systemImage: "person.2.fill") }
+                .badge(notices.socialBadge)
             NavigationView { LibraryView() }
                 .navigationViewStyle(.stack)
                 .tabItem { Label("片库", systemImage: "books.vertical.fill") }
             NavigationView { MeView() }
                 .navigationViewStyle(.stack)
                 .tabItem { Label("我的", systemImage: "person.crop.circle.fill") }
+                .badge(notices.meBadge)
         }
         .accentColor(Theme.gold2)
     }

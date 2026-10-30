@@ -464,7 +464,8 @@ struct BoardChatView: View {
 
     private func send(_ content: MsgContent) async {
         guard let me = session.username else { return }
-        if await SocialAPI.sendMessage(groupId: group.id, sender: me, content: content.serialized) {
+        // 板块群走纯文本约定格式: 网页版只渲染纯文本, 发 JSON 会变乱码 (#4)
+        if await SocialAPI.sendMessage(groupId: group.id, sender: me, content: content.boardText) {
             await reload()
         }
     }

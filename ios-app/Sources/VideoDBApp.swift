@@ -6,6 +6,10 @@ struct VideoDBApp: App {
     @StateObject private var session = Session.shared
     @StateObject private var bridge = Bridge.shared
 
+    init() {
+        ErrLog.install()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

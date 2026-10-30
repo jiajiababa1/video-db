@@ -96,6 +96,7 @@ final class PlayerVM: ObservableObject {
         await MainActor.run {
             guard let url = url else {
                 state = "failed"
+                ErrLog.log("resolve", "解链失败 \(video.video_id) \(video.displayTitle)")
                 Resolver.markRescrape(video)
                 return
             }
