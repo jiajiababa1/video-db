@@ -11,6 +11,34 @@ struct SectionsView: View {
 
     var body: some View {
         ScrollView {
+            NavigationLink {
+                SwipeFeedView()
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "play.rectangle.on.rectangle")
+                        .font(.system(size: 26))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("📱 刷视频")
+                            .font(.system(size: 18, weight: .heavy))
+                        Text("上下滑切换 · 自动连播 · 支持随机刷")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.8))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.subheadline.bold())
+                }
+                .foregroundColor(.white)
+                .padding(18)
+                .background(
+                    LinearGradient(colors: [Color(red: 0.72, green: 0.45, blue: 0.16),
+                                            Color(red: 0.45, green: 0.24, blue: 0.35)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+                .cornerRadius(Theme.cardRadius)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(sections) { sec in
                     NavigationLink {

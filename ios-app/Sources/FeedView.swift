@@ -39,9 +39,12 @@ struct FeedView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
                 }
+                if loading && items.isEmpty {
+                    SkeletonGrid().padding(.horizontal, 12)
+                }
                 VideoGrid(items: items, onReachEnd: { loadMore() })
                     .padding(.horizontal, 12)
-                if loading { ProgressView().tint(Theme.gold).padding() }
+                if loading && !items.isEmpty { ProgressView().tint(Theme.gold).padding() }
                 if !loading && items.isEmpty {
                     Text("这里还没有视频")
                         .foregroundColor(Theme.sub)

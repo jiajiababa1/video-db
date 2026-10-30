@@ -35,6 +35,14 @@ actor ImageStore {
         return c
     }()
 
+    /// 预热: 提前把一批图片拉进缓存 (列表滚动时不再闪白)
+    func prefetch(_ urlStrings: [String]) {
+        for s in urlStrings {
+            guard let url = URL(string: s) else { continue }
+            Task.detached(priority: .utility) { _ = await self.get(url) }
+        }
+    }
+
     func get(_ url: URL) async -> UIImage? {
         let key = url.absoluteString as NSString
         if let img = mem.object(forKey: key) { return img }

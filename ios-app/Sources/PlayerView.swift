@@ -64,6 +64,23 @@ final class PlayerVM: ObservableObject {
         if let p = player, p.timeControlStatus == .playing { p.rate = r }
     }
 
+    // 长按临时加速 (松手恢复原速)
+    @Published var boosting = false
+    private var rateBeforeBoost: Float = 1
+
+    func beginBoost() {
+        guard !boosting, player != nil else { return }
+        boosting = true
+        rateBeforeBoost = rate
+        if let p = player, p.timeControlStatus == .playing { p.rate = 2 }
+    }
+
+    func endBoost() {
+        guard boosting else { return }
+        boosting = false
+        if let p = player, p.timeControlStatus == .playing { p.rate = rateBeforeBoost }
+    }
+
     func seek(by seconds: Double) {
         guard let p = player, let item = p.currentItem else { return }
         let target = max(0, p.currentTime().seconds + seconds)
@@ -315,6 +332,16 @@ struct PlayerView: View {
                     gestureStrip(left: true)
                     gestureStrip(left: false)
                     VolumeAnchor().frame(width: 1, height: 1)
+                    if vm.boosting {
+                        Text("⚡ 2x 快进中")
+                            .font(.system(size: 13, weight: .bold))
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Color.black.opacity(0.65))
+                            .foregroundColor(.yellow)
+                            .cornerRadius(99)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .padding(.top, 10)
+                    }
                     if let h = gestureHint {
                         Text(h)
                             .font(.system(size: 15, weight: .bold))
@@ -337,6 +364,9 @@ struct PlayerView: View {
             }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
+        .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 40, pressing: { pressing in
+            if pressing { vm.beginBoost() } else { vm.endBoost() }
+        }, perform: {})
     }
 
     private var authorRow: some View {

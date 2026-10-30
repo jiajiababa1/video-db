@@ -43,21 +43,21 @@ final class Library: ObservableObject {
 
     // MARK: - 变更
     func toggleFav(_ v: VideoItem) {
-        if isFav(v.video_id) { favorites.removeAll { $0 == v.video_id } }
-        else { favorites.insert(v.video_id, at: 0); snapshots[v.video_id] = v }
+        if isFav(v.video_id) { favorites.removeAll { $0 == v.video_id }; Haptics.light() }
+        else { favorites.insert(v.video_id, at: 0); snapshots[v.video_id] = v; Haptics.success() }
         save()
     }
 
     func toggleWatchLater(_ v: VideoItem) {
-        if isWatchLater(v.video_id) { watchLater.removeAll { $0 == v.video_id } }
-        else { watchLater.insert(v.video_id, at: 0); snapshots[v.video_id] = v }
+        if isWatchLater(v.video_id) { watchLater.removeAll { $0 == v.video_id }; Haptics.light() }
+        else { watchLater.insert(v.video_id, at: 0); snapshots[v.video_id] = v; Haptics.success() }
         save()
     }
 
     func toggleFollow(_ author: String) {
         guard !author.isEmpty else { return }
-        if isFollowing(author) { follows.removeAll { $0 == author } }
-        else { follows.insert(author, at: 0) }
+        if isFollowing(author) { follows.removeAll { $0 == author }; Haptics.light() }
+        else { follows.insert(author, at: 0); Haptics.success() }
         save()
     }
 
@@ -76,6 +76,7 @@ final class Library: ObservableObject {
         guard !author.isEmpty else { return }
         if isBlocked(author) { blockedAuthors.removeAll { $0 == author } }
         else { blockedAuthors.append(author) }
+        Haptics.light()
         save()
     }
 

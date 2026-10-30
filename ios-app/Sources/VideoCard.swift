@@ -126,6 +126,32 @@ struct VideoCard: View {
     }
 }
 
+/// 骨架屏: 首屏加载时的占位卡片 (带呼吸感, 比空白转圈感知快)
+struct SkeletonGrid: View {
+    @State private var pulse = false
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            ForEach(0..<6, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 7) {
+                    RoundedRectangle(cornerRadius: 10).fill(Theme.surface2)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.surface2)
+                        .frame(height: 11)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.surface2)
+                        .frame(width: 80, height: 9)
+                }
+                .padding(6)
+                .background(Theme.surface)
+                .cornerRadius(Theme.cardRadius)
+            }
+        }
+        .opacity(pulse ? 0.55 : 1)
+        .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+        .onAppear { pulse = true }
+    }
+}
+
 /// 双列网格 (带分页触发)
 struct VideoGrid: View {
     let items: [VideoItem]
@@ -143,6 +169,13 @@ struct VideoGrid: View {
                 .buttonStyle(.plain)
                 .onAppear {
                     if v.id == items.last?.id { onReachEnd?() }
+                    // 预热后面几张封面, 快滑不闪白
+                    if let idx = items.firstIndex(where: { $0.id == v.id }) {
+                        let next = items.dropFirst(idx + 1).prefix(6).compactMap { $0.thumbnail_url }
+                        if !next.isEmpty {
+                            Task { await ImageStore.shared.prefetch(Array(next)) }
+                        }
+                    }
                 }
             }
         }
