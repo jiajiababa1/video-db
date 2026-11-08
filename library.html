@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>🎬 我的片库</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #101014; color: #eee; }
+  header { position: sticky; top: 0; z-index: 20; background: rgba(16,16,20,.96); padding: 10px 12px 8px; border-bottom: 1px solid #26262e; }
+  .title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .title small { font-size: 12px; color: #999; font-weight: 400; }
+  .searchrow { display: flex; gap: 8px; }
+  #kw { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid #33333d; background: #1a1a21; color: #eee; font-size: 15px; }
+  button { border: 0; border-radius: 10px; padding: 10px 14px; font-size: 14px; background: #2b2b35; color: #eee; cursor: pointer; }
+  button:active { opacity: .7; }
+  .primary { background: #e5484d; color: #fff; font-weight: 600; }
+  .toolbar { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .toolbar .spacer { flex: 1; }
+  #count { font-size: 12px; color: #888; }
+  main { padding: 10px; }
+  #grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .card { background: #1a1a21; border-radius: 12px; overflow: hidden; cursor: pointer; }
+  .thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #000; }
+  .meta { padding: 7px 9px 9px; }
+  .ctitle { font-size: 13px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 37px; }
+  .csub { font-size: 11px; color: #999; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #more { width: 100%; margin-top: 12px; padding: 13px; font-size: 15px; display: none; }
+  #status { text-align: center; color: #999; font-size: 14px; padding: 26px 10px; }
+  #player { position: fixed; inset: 0; z-index: 50; background: #000; display: none; flex-direction: column; }
+  #player.open { display: flex; }
+  #pvideo { width: 100%; max-height: 62vh; background: #000; }
+  .pinfo { padding: 14px; overflow-y: auto; }
+  .ptitle { font-size: 16px; line-height: 1.5; }
+  .psub { color: #999; font-size: 13px; margin-top: 6px; }
+  .prow { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .prow a { text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">🎬 我的片库 <small>打开就能搜 · 点开就能播</small></div>
+  <div class="searchrow">
+    <input id="kw" type="search" placeholder="搜标题或作者…" enterkeyhint="search">
+    <button class="primary" id="btn-search">搜索</button>
+  </div>
+  <div class="toolbar">
+    <button id="btn-latest">🆕 最新</button>
+    <button id="btn-random">🎲 随机一部</button>
+    <div class="spacer"></div>
+    <span id="count"></span>
+  </div>
+</header>
+<main>
+  <div id="grid"></div>
+  <div id="status">正在拉取片库…</div>
+  <button id="more">加载更多</button>
+</main>
+
+<div id="player">
+  <video id="pvideo" controls autoplay playsinline></video>
+  <div class="pinfo">
+    <div class="ptitle" id="ptitle"></div>
+    <div class="psub" id="psub"></div>
+    <div class="prow">
+      <button class="primary" id="btn-close">✖ 关闭</button>
+      <button id="btn-next">⏭ 换一部</button>
+      <a id="plink" href="#" target="_blank" rel="noopener"><button>🔗 原页面</button></a>
+    </div>
+    <div class="psub" id="perr" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<script>
+var API = "https://fejspvbckgkbmfyoxiub.supabase.co/rest/v1/videos";
+var KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlanNwdmJja2drYm1meW94aXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODczNzcsImV4cCI6MjA5NjA2MzM3N30.L1jV0XWpE69nQVgZWmAxjOGTALpfmD7xflcO2Yb5Z14";
+var PAGE = 24, offset = 0, keyword = "", loading = false, currentList = [];
+
+function esc(t) { return String(t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function mp4Of(doc) {
+  if (!doc) return "";
+  if (doc.mp4_url && /^https?:/i.test(doc.mp4_url)) return doc.mp4_url;
+  var d = String(doc.duration || "");
+  if (/^https?:/i.test(d) && (d.indexOf(".mp4") >= 0 || d.indexOf("video.twimg.com") >= 0)) return d;
+  if (doc.video_url && /\.mp4(\?|$)/i.test(doc.video_url)) return doc.video_url;
+  return "";
+}
+function sectionLabel(v) {
+  if (String(v.video_id || "").indexOf("hx_") === 0) return "hsex";
+  var s = String(v.source_section || "");
+  if (s.indexOf("detail") >= 0) return "相关推荐";
+  if (s.indexOf("author") >= 0) return "作者页";
+  if (s.indexOf("search") >= 0) return "搜索";
+  return s.split("|")[0] || "";
+}
+function displayTitle(v) {
+  var t = String(v.title || "").trim();
+  if (t) return t;
+  return (v.author ? "@" + v.author : "无标题") + " 的视频";
+}
+async function fetchVideos(off, kw) {
+  var cols = "select=video_id,title,author,thumbnail_url,duration,source_section,source_page,views,has_mp4,video_url,mp4_url";
+  var q = cols + "&removed=not.is.true&has_mp4=is.true&order=created_at.desc&limit=" + PAGE + "&offset=" + off;
+  if (kw) {
+    var safe = kw.replace(/[,()*]/g, " ").trim();
+    if (safe) q += "&or=(title.ilike.*" + encodeURIComponent(safe) + "*,author.ilike.*" + encodeURIComponent(safe) + "*)";
+  }
+  var r = await fetch(API + "?" + q, { headers: { apikey: KEY, Authorization: "Bearer " + KEY } });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return { rows: await r.json(), total: null };
+}
+function renderCards(rows) {
+  var grid = document.getElementById("grid");
+  rows.forEach(function (v) {
+    var idx = currentList.push(v) - 1;
+    var d = document.createElement("div");
+    d.className = "card";
+    d.innerHTML = '<img class="thumb" loading="lazy" src="' + esc(v.thumbnail_url) + '" alt="">' +
+      '<div class="meta"><div class="ctitle">' + esc(displayTitle(v)) + '</div>' +
+      '<div class="csub">' + esc(v.author || "") + (sectionLabel(v) ? " · " + esc(sectionLabel(v)) : "") + '</div></div>';
+    d.onclick = function () { play(idx); };
+    grid.appendChild(d);
+  });
+}
+async function load(reset) {
+  if (loading) return;
+  loading = true;
+  var status = document.getElementById("status"), more = document.getElementById("more");
+  if (reset) {
+    offset = 0; currentList = [];
+    document.getElementById("grid").innerHTML = "";
+    status.style.display = "block"; status.textContent = "正在拉取片库…";
+    more.style.display = "none";
+  }
+  try {
+    var res = await fetchVideos(offset, keyword);
+    renderCards(res.rows);
+    document.getElementById("count").textContent = "已加载 " + (offset + res.rows.length) + " 部";
+    offset += res.rows.length;
+    if (!currentList.length) { status.style.display = "block"; status.textContent = "没找到，换个关键词试试。"; }
+    else status.style.display = "none";
+    more.style.display = res.rows.length === PAGE ? "block" : "none";
+    if (res.rows.length < PAGE && currentList.length) status.style.display = "block", status.textContent = "已经到底啦";
+  } catch (e) {
+    status.style.display = "block";
+    status.textContent = "拉取失败：" + e.message + "（检查网络后点“最新”重试）";
+  }
+  loading = false;
+}
+async function fetchFullRow(videoId) {
+  var r = await fetch(API + "?select=*&video_id=eq." + encodeURIComponent(videoId) + "&limit=1", { headers: { apikey: KEY, Authorization: "Bearer " + KEY } });
+  if (!r.ok) return null;
+  var rows = await r.json();
+  return rows && rows[0] ? rows[0] : null;
+}
+var currentIdx = -1;
+async function play(idx) {
+  var v = currentList[idx]; if (!v) return;
+  currentIdx = idx;
+  var box = document.getElementById("player"), vid = document.getElementById("pvideo");
+  document.getElementById("ptitle").textContent = displayTitle(v);
+  document.getElementById("psub").textContent = (v.author || "") + (sectionLabel(v) ? " · " + sectionLabel(v) : "");
+  document.getElementById("perr").textContent = "";
+  var link = document.getElementById("plink");
+  var srcPage = v.source_page || v.video_url || "";
+  if (srcPage) { link.style.display = ""; link.href = srcPage; } else link.style.display = "none";
+  box.classList.add("open");
+  var src = mp4Of(v);
+  if (!src) {
+    document.getElementById("perr").textContent = "正在解析播放地址…";
+    var full = await fetchFullRow(v.video_id);
+    if (full) src = mp4Of(full);
+    document.getElementById("perr").textContent = src ? "" : "这条暂时没有直链（需要在主站里解析一次），点“换一部”试试。";
+  }
+  if (src) { vid.src = src; var p = vid.play(); if (p) p.catch(function () {}); }
+  window.scrollTo(0, 0);
+}
+function closePlayer() {
+  var vid = document.getElementById("pvideo");
+  vid.pause(); vid.removeAttribute("src"); vid.load();
+  document.getElementById("player").classList.remove("open");
+}
+document.getElementById("btn-close").onclick = closePlayer;
+document.getElementById("btn-next").onclick = function () {
+  if (currentList.length > 1) {
+    var n = Math.floor(Math.random() * currentList.length);
+    if (n === currentIdx) n = (n + 1) % currentList.length;
+    play(n);
+  }
+};
+document.getElementById("more").onclick = function () { load(false); };
+document.getElementById("btn-latest").onclick = function () { keyword = ""; document.getElementById("kw").value = ""; load(true); };
+document.getElementById("btn-search").onclick = function () { keyword = document.getElementById("kw").value.trim(); load(true); };
+document.getElementById("kw").addEventListener("keydown", function (e) { if (e.key === "Enter") { keyword = e.target.value.trim(); load(true); } });
+document.getElementById("btn-random").onclick = async function () {
+  var status = document.getElementById("status");
+  try {
+    var off = Math.floor(Math.random() * 500);
+    var res = await fetchVideos(off, "");
+    if (res.rows.length) {
+      var idx = currentList.push(res.rows[0]) - 1;
+      play(idx);
+    } else { status.style.display = "block"; status.textContent = "没抽到，再点一次试试。"; }
+  } catch (e) { status.style.display = "block"; status.textContent = "拉取失败：" + e.message; }
+};
+load(true);
+</script>
+</body>
+</html>
