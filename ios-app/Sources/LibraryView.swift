@@ -9,6 +9,14 @@ struct LibraryView: View {
 
     private let tabs = ["收藏", "分组", "关注", "稍后看", "历史", "下载", "回收站", "上传"]
     @State private var showNewFolder = false
+    @State private var manage = false
+    @State private var selected: Set<String> = []
+
+    private var managable: Bool { tab == 0 || tab == 3 || tab == 4 }
+    private var batchKind: String { tab == 0 ? "fav" : (tab == 3 ? "wl" : "hist") }
+    private var currentIds: [String] {
+        tab == 0 ? library.favorites : (tab == 3 ? library.watchLater : library.history)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,11 +38,63 @@ struct LibraryView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
             }
+            if managable {
+                HStack {
+                    Text(manage ? "点卡片勾选 · 已选 \(selected.count) 条" : "批量删除 / 移动分组")
+                        .font(.caption).foregroundColor(Theme.sub)
+                    Spacer()
+                    Button(manage ? "完成" : "管理") {
+                        manage.toggle()
+                        selected.removeAll()
+                    }
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(Theme.gold2)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
             content
+            if manage && !selected.isEmpty {
+                batchBar
+            }
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("我的片库")
         .task { await refreshSnapshots() }
+        .onChange(of: tab) { _ in
+            manage = false
+            selected.removeAll()
+        }
+    }
+
+    private var batchBar: some View {
+        HStack(spacing: 10) {
+            Button("全选") { selected = Set(currentIds) }
+                .font(.system(size: 13.5, weight: .bold))
+            if tab == 0 && !library.favFolders.isEmpty {
+                Menu {
+                    ForEach(Array(library.favFolders.keys.sorted()), id: \.self) { f in
+                        Button("移到「\(f)」") {
+                            library.batchMoveToFolder(selected, folder: f)
+                            selected.removeAll()
+                            manage = false
+                        }
+                    }
+                } label: {
+                    Text("移到分组").font(.system(size: 13.5, weight: .bold))
+                }
+            }
+            Spacer()
+            Button("删除 \(selected.count) 条", role: .destructive) {
+                library.batchDelete(ids: selected, from: batchKind)
+                selected.removeAll()
+                manage = false
+            }
+            .font(.system(size: 13.5, weight: .bold))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Theme.surface)
     }
 
     @ViewBuilder
@@ -159,7 +219,10 @@ struct LibraryView: View {
                     .foregroundColor(Theme.sub)
                     .padding(.top, 60)
             } else {
-                VideoGrid(items: items, progressOf: showProgress ? { library.progress[$0.video_id] } : nil)
+                VideoGrid(items: items,
+                          progressOf: showProgress ? { library.progress[$0.video_id] } : nil,
+                          selectMode: manage && managable,
+                          selected: $selected)
                     .padding(16)
             }
         }

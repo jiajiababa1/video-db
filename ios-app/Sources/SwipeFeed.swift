@@ -283,7 +283,9 @@ final class SwipeController: ObservableObject {
 
     func syncWindow(items: [VideoItem], index: Int) {
         guard items.indices.contains(index) else { return }
-        let windowIdx = [index - 1, index, index + 1].filter { items.indices.contains($0) }
+        // 省流量生效 (开关开+蜂窝): 只备当前一条, 不预加载邻居
+        let windowIdx = (AppSettings.saverActive ? [index] : [index - 1, index, index + 1])
+            .filter { items.indices.contains($0) }
         let keep = Set(windowIdx.map { items[$0].video_id })
         for (id, p) in pool where !keep.contains(id) {
             p.pause()

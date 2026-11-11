@@ -18,10 +18,22 @@ struct CachedImage: View {
     }
 
     private func load() async {
-        guard let s = urlString, let url = URL(string: s) else { return }
+        guard let s0 = urlString else { return }
+        let s = CachedImage.effective(s0)
+        guard let url = URL(string: s) else { return }
         if let hit = await ImageStore.shared.get(url) {
             image = hit
         }
+    }
+
+    /// 省流量生效时, Twitter 封面改拉小图 (name=small), 省一半以上流量
+    static func effective(_ s: String) -> String {
+        guard AppSettings.saverActive, s.contains("pbs.twimg.com") else { return s }
+        if s.contains("name=") {
+            return s.replacingOccurrences(of: "name=[A-Za-z0-9_]+", with: "name=small",
+                                          options: .regularExpression)
+        }
+        return s + (s.contains("?") ? "&name=small" : "?name=small")
     }
 }
 

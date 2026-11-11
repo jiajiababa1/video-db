@@ -9,6 +9,7 @@ struct MeView: View {
     @State private var lastRun: String? = nil
     @State private var savedLastRun: Int? = nil
     @State private var showAuth = false
+    @AppStorage("vdb_data_saver") private var dataSaver = false
     @State private var showClearConfirm = false
     @State private var syncNote: String? = nil
 
@@ -28,7 +29,7 @@ struct MeView: View {
                 filterCard
                 moreCard
                 dataCard
-                Text("2048 影院 · 原生版 v1.7.2")
+                Text("2048 影院 · 原生版 v1.8")
                     .font(.caption2).foregroundColor(Theme.sub)
                     .padding(.top, 6)
             }
@@ -572,6 +573,15 @@ struct MeView: View {
                 }
             }
             .buttonStyle(.plain)
+            Divider().background(Theme.line)
+            Toggle(isOn: $dataSaver) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("省流量模式").font(.system(size: 14)).foregroundColor(Theme.text)
+                    Text("用流量时: 刷视频不预加载、封面拉小图")
+                        .font(.caption2).foregroundColor(Theme.sub)
+                }
+            }
+            .tint(Theme.gold2)
             Divider().background(Theme.line)
             Button("清空观看历史") { library.clearHistory() }
                 .font(.system(size: 14))

@@ -21,6 +21,62 @@ final class Library: ObservableObject {
     /// 任一变更后回调 (RootView 挂 ConfigSync 推送)
     var onMutate: (() -> Void)?
 
+    // MARK: - 撤销 (误删 5 秒内可反悔, RootView 底部弹条)
+    @Published var undoNote: String? = nil
+    private var undoAction: (() -> Void)? = nil
+    private var undoGen = 0
+
+    func offerUndo(_ note: String, action: @escaping () -> Void) {
+        undoNote = note
+        undoAction = action
+        undoGen += 1
+        let g = undoGen
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await MainActor.run {
+                guard let self = self, self.undoGen == g else { return }
+                self.undoNote = nil
+                self.undoAction = nil
+            }
+        }
+    }
+
+    func performUndo() {
+        let a = undoAction
+        undoNote = nil
+        undoAction = nil
+        undoGen += 1
+        a?()
+    }
+
+    // MARK: - 批量操作 (片库管理模式)
+    /// 批量删除: 从对应列表移出并进回收站 (可恢复)
+    func batchDelete(ids: Set<String>, from kind: String) {
+        for id in ids {
+            guard let v = snapshots[id] else { continue }
+            switch kind {
+            case "fav": favorites.removeAll { $0 == id }
+            case "wl": watchLater.removeAll { $0 == id }
+            default: history.removeAll { $0 == id }
+            }
+            recycle.insert(RecycleEntry(item: v, kind: kind, at: Date().timeIntervalSince1970), at: 0)
+        }
+        Haptics.light()
+        save()
+    }
+
+    /// 批量把收藏移入分组 (不在收藏里的顺带收藏)
+    func batchMoveToFolder(_ ids: Set<String>, folder: String) {
+        var arr = favFolders[folder] ?? []
+        for id in ids {
+            if !arr.contains(id) { arr.insert(id, at: 0) }
+            if !isFav(id), snapshots[id] != nil { favorites.insert(id, at: 0) }
+        }
+        favFolders[folder] = arr
+        Haptics.success()
+        save()
+    }
+
     struct RecycleEntry: Codable, Identifiable {
         var item: VideoItem
         var kind: String   // fav / hist / wl
@@ -43,13 +99,31 @@ final class Library: ObservableObject {
 
     // MARK: - 变更
     func toggleFav(_ v: VideoItem) {
-        if isFav(v.video_id) { favorites.removeAll { $0 == v.video_id }; Haptics.light() }
+        if isFav(v.video_id) {
+            favorites.removeAll { $0 == v.video_id }
+            Haptics.light()
+            let id = v.video_id
+            offerUndo("已取消收藏") { [weak self] in
+                guard let self = self, !self.isFav(id) else { return }
+                self.favorites.insert(id, at: 0)
+                self.save()
+            }
+        }
         else { favorites.insert(v.video_id, at: 0); snapshots[v.video_id] = v; Haptics.success() }
         save()
     }
 
     func toggleWatchLater(_ v: VideoItem) {
-        if isWatchLater(v.video_id) { watchLater.removeAll { $0 == v.video_id }; Haptics.light() }
+        if isWatchLater(v.video_id) {
+            watchLater.removeAll { $0 == v.video_id }
+            Haptics.light()
+            let id = v.video_id
+            offerUndo("已移出稍后看") { [weak self] in
+                guard let self = self, !self.isWatchLater(id) else { return }
+                self.watchLater.insert(id, at: 0)
+                self.save()
+            }
+        }
         else { watchLater.insert(v.video_id, at: 0); snapshots[v.video_id] = v; Haptics.success() }
         save()
     }
@@ -75,7 +149,13 @@ final class Library: ObservableObject {
     func toggleBlock(_ author: String) {
         guard !author.isEmpty else { return }
         if isBlocked(author) { blockedAuthors.removeAll { $0 == author } }
-        else { blockedAuthors.append(author) }
+        else {
+            blockedAuthors.append(author)
+            offerUndo("已屏蔽 @" + author) { [weak self] in
+                self?.blockedAuthors.removeAll { $0 == author }
+                self?.save()
+            }
+        }
         Haptics.light()
         save()
     }
@@ -102,7 +182,15 @@ final class Library: ObservableObject {
 
     func toggleHidden(_ v: VideoItem) {
         if isHidden(v.video_id) { hiddenIds.removeAll { $0 == v.video_id } }
-        else { hiddenIds.append(v.video_id); snapshots[v.video_id] = v }
+        else {
+            hiddenIds.append(v.video_id)
+            snapshots[v.video_id] = v
+            let id = v.video_id
+            offerUndo("已隐藏这条视频") { [weak self] in
+                self?.hiddenIds.removeAll { $0 == id }
+                self?.save()
+            }
+        }
         save()
     }
 

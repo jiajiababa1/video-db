@@ -1,4 +1,68 @@
 import SwiftUI
+import AVKit
+
+/// 长按封面快速预览: 无声自动播放, 松手/点空白关闭 (contextMenu preview)
+struct CardPreview: View {
+    let video: VideoItem
+    @State private var player: AVPlayer? = nil
+
+    var body: some View {
+        ZStack {
+            CachedImage(urlString: video.thumbnail_url)
+            if let p = player {
+                PreviewLayer(player: p)
+            } else {
+                ProgressView().tint(.white)
+            }
+            VStack {
+                Spacer()
+                Text(video.displayTitle)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(LinearGradient(colors: [.clear, .black.opacity(0.75)],
+                                               startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .frame(width: 320, height: 180)
+        .background(Color.black)
+        .task {
+            if let u = await Resolver.resolve(video) {
+                let p = AVPlayer(playerItem: AVPlayerItem(url: u))
+                p.isMuted = true
+                player = p
+                p.play()
+            }
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+    }
+}
+
+/// 预览用纯播放层
+struct PreviewLayer: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PreviewLayerView {
+        let v = PreviewLayerView()
+        v.playerLayer.player = player
+        v.playerLayer.videoGravity = .resizeAspect
+        return v
+    }
+
+    func updateUIView(_ uiView: PreviewLayerView, context: Context) {
+        if uiView.playerLayer.player !== player { uiView.playerLayer.player = player }
+    }
+
+    final class PreviewLayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+}
 
 /// 视频卡片 (新版设计: 大圆角 + 时长/观看量徽标)
 struct VideoCard: View {
@@ -55,6 +119,14 @@ struct VideoCard: View {
         .background(Theme.surface)
         .cornerRadius(Theme.cardRadius)
         .contextMenu {
+            contextMenuItems
+        } preview: {
+            CardPreview(video: video)
+        }
+    }
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
             Button {
                 library.toggleFav(video)
             } label: {
@@ -122,7 +194,6 @@ struct VideoCard: View {
             } label: {
                 Label("标记重爬", systemImage: "arrow.triangle.2.circlepath")
             }
-        }
     }
 }
 
@@ -152,28 +223,53 @@ struct SkeletonGrid: View {
     }
 }
 
-/// 双列网格 (带分页触发)
+/// 双列网格 (带分页触发; selectMode 时点卡片 = 勾选, 供片库批量管理)
 struct VideoGrid: View {
     let items: [VideoItem]
     var progressOf: ((VideoItem) -> Double?)? = nil
     var onReachEnd: (() -> Void)? = nil
+    var selectMode: Bool = false
+    var selected: Binding<Set<String>>? = nil
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             ForEach(items) { v in
-                NavigationLink {
-                    PlayerView(video: v)
-                } label: {
+                if selectMode {
                     VideoCard(video: v, progress: progressOf?(v))
-                }
-                .buttonStyle(.plain)
-                .onAppear {
-                    if v.id == items.last?.id { onReachEnd?() }
-                    // 预热后面几张封面, 快滑不闪白
-                    if let idx = items.firstIndex(where: { $0.id == v.id }) {
-                        let next = items.dropFirst(idx + 1).prefix(6).compactMap { $0.thumbnail_url }
-                        if !next.isEmpty {
-                            Task { await ImageStore.shared.prefetch(Array(next)) }
+                        .overlay(alignment: .topTrailing) {
+                            let on = selected?.wrappedValue.contains(v.video_id) ?? false
+                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 22))
+                                .foregroundColor(on ? Theme.gold2 : .white.opacity(0.85))
+                                .shadow(radius: 4)
+                                .padding(7)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard let sel = selected else { return }
+                            if sel.wrappedValue.contains(v.video_id) {
+                                sel.wrappedValue.remove(v.video_id)
+                            } else {
+                                sel.wrappedValue.insert(v.video_id)
+                            }
+                            Haptics.select()
+                        }
+                } else {
+                    NavigationLink {
+                        PlayerView(video: v)
+                    } label: {
+                        VideoCard(video: v, progress: progressOf?(v))
+                    }
+                    .buttonStyle(.plain)
+                    .onAppear {
+                        if v.id == items.last?.id { onReachEnd?() }
+                        // 预热后面几张封面, 快滑不闪白 (省流量生效时跳过)
+                        if !AppSettings.saverActive,
+                           let idx = items.firstIndex(where: { $0.id == v.id }) {
+                            let next = items.dropFirst(idx + 1).prefix(6).compactMap { $0.thumbnail_url }
+                            if !next.isEmpty {
+                                Task { await ImageStore.shared.prefetch(Array(next)) }
+                            }
                         }
                     }
                 }
