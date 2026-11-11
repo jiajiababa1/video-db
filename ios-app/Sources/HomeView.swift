@@ -81,7 +81,7 @@ struct HomeView: View {
             }
         }
         .task { await load() }
-        .refreshable { await load() }
+        .refreshable { await load(force: true) }
         .overlay { if loading { ProgressView().tint(Theme.gold) } }
     }
 
@@ -157,7 +157,12 @@ struct HomeView: View {
         }
     }
 
-    private func load() async {
+    @State private var didLoad = false
+
+    private func load(force: Bool = false) async {
+        // 从播放页返回时 .task 会重跑: 已有数据就别再整批替换, 否则滚动位置被打回顶部
+        if didLoad && !force { return }
+        didLoad = true
         // 先显缓存 (秒开), 再拉新数据替换
         if latest.isEmpty, let c = FeedCache.read(FeedCache.homeKey("latest")) { latest = visible(c.items) }
         if hx.isEmpty, let c = FeedCache.read(FeedCache.homeKey("hsex")) { hx = visible(c.items) }

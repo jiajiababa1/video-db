@@ -45,6 +45,12 @@ struct FeedView: View {
                 VideoGrid(items: items, onReachEnd: { loadMore() })
                     .padding(.horizontal, 12)
                 if loading && !items.isEmpty { ProgressView().tint(Theme.gold).padding() }
+                if !loading && hasMore && !items.isEmpty {
+                    Button("加载更多") { loadMore() }
+                        .font(.system(size: 13.5, weight: .bold))
+                        .foregroundColor(Theme.gold2)
+                        .padding(.vertical, 6)
+                }
                 if !loading && items.isEmpty {
                     Text("这里还没有视频")
                         .foregroundColor(Theme.sub)
@@ -137,8 +143,14 @@ struct FeedView: View {
         }
     }
 
-    /// 首次进入: 先显缓存, 再静默刷新第一页
+    @State private var didInit = false
+
+    /// 首次进入: 先显缓存, 再静默刷新第一页。
+    /// 只跑一次: 从播放页返回时 .task 会重跑, 以前会把已翻页的列表打回第一页
+    /// (滚动位置随之丢掉, 表现为"退出视频就回到最上面")。下拉刷新走 reload(), 不受影响。
     private func initialLoad() async {
+        guard !didInit else { return }
+        didInit = true
         if personalIds == nil, let c = FeedCache.read(cacheKey), !c.items.isEmpty {
             items = visible(c.items)
             total = c.total
@@ -180,9 +192,9 @@ struct FeedView: View {
                 if let t = r.total { total = t }
                 hasMore = r.items.count >= FeedService.pageSize
                 page += 1
-            } else {
-                hasMore = false
             }
+            // 失败时什么都不改: hasMore 保持 true, 下次滑到底或点"加载更多"自动重试。
+            // 以前失败一次就把 hasMore 关掉, 底部加载从此失效直到重进页面。
             loading = false
         }
     }

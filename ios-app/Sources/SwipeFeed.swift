@@ -34,6 +34,14 @@ struct SwipeFeedView: View {
                         SwipePlayerLayer(ctrl: ctrl)
                             .frame(width: geo.size.width, height: geo.size.height)
                             .offset(y: dragOffset)
+                            .onTapGesture { ctrl.togglePlay() }
+                    }
+                    if ctrl.userPaused {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 52))
+                            .foregroundColor(.white.opacity(0.85))
+                            .shadow(radius: 8)
+                            .offset(y: dragOffset)
                     }
                     if !ctrl.readyIds.contains(v.video_id) && !ctrl.failedIds.contains(v.video_id) {
                         ProgressView().tint(.white)
@@ -58,6 +66,7 @@ struct SwipeFeedView: View {
             ctrl.onEnded = { goNext() }
             await initialLoad()
         }
+        .onAppear { ctrl.resumeActive() }
         .onDisappear { ctrl.stop() }
         .onChange(of: index) { _ in startCurrent() }
     }
@@ -137,6 +146,7 @@ struct SwipeFeedView: View {
                 .foregroundColor(.white)
                 .shadow(radius: 4)
             }
+            .simultaneousGesture(TapGesture().onEnded { ctrl.pauseActive() })
             railButton("shuffle", "随机") {
                 randomMode = true
                 Task { await reload() }
@@ -242,7 +252,28 @@ final class SwipeController: ObservableObject {
     @Published var failedIds: Set<String> = []
     @Published var current: Double = 0
     @Published var duration: Double = 0
+    @Published var userPaused = false
     var onEnded: (() -> Void)? = nil
+
+    func togglePlay() {
+        guard let p = activePlayer else { return }
+        if p.timeControlStatus == .playing {
+            p.pause()
+            userPaused = true
+        } else {
+            userPaused = false
+            p.playImmediately(atRate: 1)
+        }
+    }
+
+    func pauseActive() {
+        activePlayer?.pause()
+    }
+
+    func resumeActive() {
+        guard !userPaused, activeId != nil, activePlayer != nil else { return }
+        activePlayer?.playImmediately(atRate: 1)
+    }
 
     private var pool: [String: AVPlayer] = [:]
     private var observers: [String: NSObjectProtocol] = [:]
@@ -298,6 +329,7 @@ final class SwipeController: ObservableObject {
     }
 
     private func activate(_ v: VideoItem) {
+        if activeId != v.video_id { userPaused = false }
         if activeId == v.video_id, let p = pool[v.video_id] {
             if activePlayer !== p { attach(p, id: v.video_id) }
             p.playImmediately(atRate: 1)

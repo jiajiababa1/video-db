@@ -16,14 +16,37 @@ enum SB {
         return h
     }
 
+    /// GET 专用: 网络抖动/5xx/429 自动重试 (读请求幂等, 重试安全)。
+    /// 以前一次失败就被上层 try? 静默吞成空结果 — 表现为"搜不出来、加载失效, 多试几次又行"。
+    private static func dataWithRetry(_ req: URLRequest, retries: Int = 2) async throws -> (Data, URLResponse) {
+        var attempt = 0
+        while true {
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse,
+                   (http.statusCode >= 500 || http.statusCode == 429), attempt < retries {
+                    attempt += 1
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 700_000_000)
+                    continue
+                }
+                return (data, resp)
+            } catch {
+                if attempt >= retries { throw error }
+                attempt += 1
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 700_000_000)
+            }
+        }
+    }
+
     /// GET 查询, 返回解码结果与总条数 (Prefer: count=exact 时从 Content-Range 解析)
     static func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> (T, Int?) {
         var comps = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         comps.queryItems = query
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
+        req.timeoutInterval = 25
         for (k, v) in headers(extra: ["Prefer": "count=exact"]) { req.setValue(v, forHTTPHeaderField: k) }
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await dataWithRetry(req)
         try check(resp, data)
         var total: Int? = nil
         if let http = resp as? HTTPURLResponse,
@@ -67,8 +90,9 @@ enum SB {
     static func getRaw<T: Decodable>(_ urlString: String) async throws -> (T, Int?) {
         var req = URLRequest(url: URL(string: urlString)!)
         req.httpMethod = "GET"
+        req.timeoutInterval = 25
         for (k, v) in headers(extra: ["Prefer": "count=exact"]) { req.setValue(v, forHTTPHeaderField: k) }
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await dataWithRetry(req)
         try check(resp, data)
         var total: Int? = nil
         if let http = resp as? HTTPURLResponse,

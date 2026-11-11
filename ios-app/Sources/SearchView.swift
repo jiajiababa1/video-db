@@ -40,6 +40,13 @@ struct SearchView: View {
                         Image(systemName: "xmark.circle.fill").foregroundColor(Theme.sub)
                     }
                 }
+                Button("搜索") {
+                    submitted = query
+                    library.pushSearchRecent(query)
+                    Task { await searchAuthors(query) }
+                }
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(Theme.gold2)
             }
             .padding(.horizontal, 13).padding(.vertical, 10)
             .background(Theme.surface2)

@@ -1,14 +1,15 @@
 import SwiftUI
 import AVKit
-import MediaPlayer
 
-/// AVPlayerViewController 包装: 原生控制条 + 画中画
+/// 苹果原生播放器: AVPlayerViewController + 系统控制条
+/// (播放/暂停、原生进度条、全屏、画中画、隔空播放、系统倍速菜单全走原生)
 struct PlayerVC: UIViewControllerRepresentable {
     let player: AVPlayer
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
         vc.player = player
+        vc.showsPlaybackControls = true
         vc.allowsPictureInPicturePlayback = true
         vc.canStartPictureInPictureAutomaticallyFromInline = true
         return vc
@@ -16,28 +17,7 @@ struct PlayerVC: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {
         if vc.player !== player { vc.player = player }
-    }
-}
-
-/// 隐形音量锚点 (手势调音量用)
-struct VolumeAnchor: UIViewRepresentable {
-    static weak var slider: UISlider?
-
-    func makeUIView(context: Context) -> MPVolumeView {
-        let v = MPVolumeView()
-        v.alpha = 0.001
-        DispatchQueue.main.async {
-            VolumeAnchor.slider = v.subviews.compactMap { $0 as? UISlider }.first
-        }
-        return v
-    }
-
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
-
-    static func setVolume(_ value: Float) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            slider?.value = value
-        }
+        vc.showsPlaybackControls = true
     }
 }
 
@@ -155,7 +135,7 @@ final class PlayerVM: ObservableObject {
     }
 }
 
-/// 播放页: 原生 AVPlayer + 文案 + 操作 + 评论 + 接下来播放
+/// 播放页: 苹果原生播放器 + 文案 + 操作 + 评论 + 接下来播放
 struct PlayerView: View {
     let video: VideoItem
     @EnvironmentObject var library: Library
@@ -163,8 +143,6 @@ struct PlayerView: View {
     @StateObject private var vm: PlayerVM
     @State private var upNext: [VideoItem] = []
     @State private var showShare = false
-    @State private var gestureHint: String? = nil
-    @State private var dragStart: CGFloat? = nil
     @ObservedObject private var dl = Downloader.shared
 
     init(video: VideoItem) {
@@ -175,7 +153,6 @@ struct PlayerView: View {
     var body: some View {
         VStack(spacing: 0) {
             playerArea
-            progressRow
             controlsRow
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -253,7 +230,7 @@ struct PlayerView: View {
                 Text(n).font(.caption2).foregroundColor(Theme.gold2).lineLimit(1)
             }
             Spacer()
-            Text("双击两侧快退/快进 · 上下滑动调亮度/音量")
+            Text("点画面出原生控制条 · 长按画面 2 倍速")
                 .font(.caption2).foregroundColor(Theme.sub).lineLimit(1)
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
@@ -291,37 +268,6 @@ struct PlayerView: View {
         }
     }
 
-    @ViewBuilder
-    /// 常驻进度条 (可拖动)
-    private var progressRow: some View {
-        HStack(spacing: 8) {
-            Text(timeText(vm.currentTime))
-                .font(.caption2).monospacedDigit().foregroundColor(.secondary)
-                .frame(width: 40, alignment: .trailing)
-            Slider(value: Binding(
-                get: { vm.currentTime },
-                set: { vm.currentTime = $0 }
-            ), in: 0...max(vm.durationTime, 1), onEditingChanged: { editing in
-                vm.scrubbing = editing
-                if !editing { vm.scrub(to: vm.currentTime) }
-            })
-            .tint(Color(red: 0.78, green: 0.64, blue: 0.36))
-            .disabled(vm.durationTime <= 0)
-            Text(timeText(vm.durationTime))
-                .font(.caption2).monospacedDigit().foregroundColor(.secondary)
-                .frame(width: 40, alignment: .leading)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 4)
-        .background(Color.black.opacity(0.85))
-    }
-
-    private func timeText(_ s: Double) -> String {
-        guard s.isFinite, s > 0 else { return "0:00" }
-        let t = Int(s)
-        return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60)
-                         : String(format: "%d:%02d", t / 60, t % 60)
-    }
-
     private var playerArea: some View {
         ZStack {
             Color.black
@@ -329,9 +275,6 @@ struct PlayerView: View {
             case "ready":
                 if let p = vm.player {
                     PlayerVC(player: p)
-                    gestureStrip(left: true)
-                    gestureStrip(left: false)
-                    VolumeAnchor().frame(width: 1, height: 1)
                     if vm.boosting {
                         Text("⚡ 2x 快进中")
                             .font(.system(size: 13, weight: .bold))
@@ -341,14 +284,7 @@ struct PlayerView: View {
                             .cornerRadius(99)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .padding(.top, 10)
-                    }
-                    if let h = gestureHint {
-                        Text(h)
-                            .font(.system(size: 15, weight: .bold))
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(Color.black.opacity(0.65))
-                            .foregroundColor(.white)
-                            .cornerRadius(99)
+                            .allowsHitTesting(false)
                     }
                 }
             case "failed":
@@ -474,45 +410,6 @@ struct PlayerView: View {
                     .font(.caption).foregroundColor(Theme.sub)
             }
             Spacer()
-        }
-    }
-
-    /// 两侧手势条: 双击快退/快进, 上下拖动调亮度(左)/音量(右)
-    private func gestureStrip(left: Bool) -> some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.001))
-            .frame(width: 58)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: left ? .leading : .trailing)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                vm.seek(by: left ? -10 : 10)
-                flash(left ? "⏪ 快退 10 秒" : "⏩ 快进 10 秒")
-            }
-            .gesture(
-                DragGesture(minimumDistance: 12)
-                    .onChanged { v in
-                        if dragStart == nil {
-                            dragStart = left ? UIScreen.main.brightness
-                                : CGFloat(AVAudioSession.sharedInstance().outputVolume)
-                        }
-                        let nv = min(max((dragStart ?? 0) - v.translation.height / 260, 0), 1)
-                        if left {
-                            UIScreen.main.brightness = nv
-                            flash("☀️ 亮度 \(Int(nv * 100))%")
-                        } else {
-                            VolumeAnchor.setVolume(Float(nv))
-                            flash("🔊 音量 \(Int(nv * 100))%")
-                        }
-                    }
-                    .onEnded { _ in dragStart = nil }
-            )
-    }
-
-    private func flash(_ s: String) {
-        gestureHint = s
-        Task {
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            if gestureHint == s { gestureHint = nil }
         }
     }
 
