@@ -29,11 +29,7 @@ struct SectionsView: View {
                 }
                 .foregroundColor(.white)
                 .padding(18)
-                .background(
-                    LinearGradient(colors: [Color(red: 0.72, green: 0.45, blue: 0.16),
-                                            Color(red: 0.45, green: 0.24, blue: 0.35)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                )
+                .background(Theme.gold)
                 .cornerRadius(Theme.cardRadius)
             }
             .buttonStyle(.plain)

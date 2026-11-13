@@ -1,19 +1,20 @@
 import SwiftUI
 
-/// 新版设计语言: 影院黑 + 流光金 (与设计原型一致)
+/// 设计语言 v2 (抖音式简约): 纯黑底 + 白字 + 单一红 accent, 无多余装饰
 enum Theme {
-    static let bg = Color(red: 0.027, green: 0.027, blue: 0.031)
-    static let surface = Color(red: 0.07, green: 0.07, blue: 0.078)
-    static let surface2 = Color(red: 0.102, green: 0.102, blue: 0.118)
-    static let line = Color(red: 0.149, green: 0.149, blue: 0.169)
-    static let text = Color(red: 0.957, green: 0.945, blue: 0.918)
-    static let sub = Color(red: 0.608, green: 0.588, blue: 0.541)
-    static let gold = Color(red: 0.851, green: 0.671, blue: 0.306)
-    static let gold2 = Color(red: 0.941, green: 0.804, blue: 0.522)
-    static let cardRadius: CGFloat = 18
+    static let bg = Color.black
+    static let surface = Color(red: 0.07, green: 0.07, blue: 0.07)
+    static let surface2 = Color(red: 0.13, green: 0.13, blue: 0.13)
+    static let line = Color(red: 0.16, green: 0.16, blue: 0.16)
+    static let text = Color(red: 0.98, green: 0.98, blue: 0.98)
+    static let sub = Color(red: 0.55, green: 0.55, blue: 0.57)
+    // 历史命名沿用 (gold/gold2), 值已换成 accent 红, 全 App 自动统一
+    static let gold = Color(red: 0.996, green: 0.173, blue: 0.333)   // #FE2C55
+    static let gold2 = Color(red: 1.0, green: 0.42, blue: 0.55)
+    static let cardRadius: CGFloat = 12
 
     static var goldGradient: LinearGradient {
-        LinearGradient(colors: [gold2, gold], startPoint: .topLeading, endPoint: .bottomTrailing)
+        LinearGradient(colors: [gold, gold], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }
 

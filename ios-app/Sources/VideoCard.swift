@@ -26,7 +26,7 @@ struct CardPreview: View {
                                                startPoint: .top, endPoint: .bottom))
             }
         }
-        .frame(width: 320, height: 180)
+        .aspectRatio(16 / 9, contentMode: .fit)
         .background(Color.black)
         .task {
             if let u = await Resolver.resolve(video) {
@@ -40,6 +40,58 @@ struct CardPreview: View {
             player?.pause()
             player = nil
         }
+    }
+}
+
+/// 快速预览弹层: 无声预览 + 收藏/稍后看快捷操作 (长按菜单里点「快速预览」打开)
+struct PreviewSheet: View {
+    let video: VideoItem
+    @EnvironmentObject var library: Library
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 14) {
+            CardPreview(video: video)
+                .cornerRadius(14)
+                .clipped()
+                .padding(.top, 18)
+            Text(video.displayTitle)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 10) {
+                Button {
+                    library.toggleFav(video)
+                } label: {
+                    Label(library.isFav(video.video_id) ? "已收藏" : "收藏",
+                          systemImage: library.isFav(video.video_id) ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(Theme.surface2)
+                        .cornerRadius(12)
+                }
+                Button {
+                    library.toggleWatchLater(video)
+                } label: {
+                    Label(library.isWatchLater(video.video_id) ? "已加入" : "稍后看",
+                          systemImage: "clock")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(Theme.surface2)
+                        .cornerRadius(12)
+                }
+            }
+            .foregroundColor(Theme.text)
+            Button("关闭") { dismiss() }
+                .font(.system(size: 14))
+                .foregroundColor(Theme.sub)
+                .padding(.top, 2)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .background(Theme.bg.ignoresSafeArea())
     }
 }
 
@@ -69,6 +121,7 @@ struct VideoCard: View {
     let video: VideoItem
     var progress: Double? = nil
     @EnvironmentObject var library: Library
+    @State private var showPreview = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -120,13 +173,19 @@ struct VideoCard: View {
         .cornerRadius(Theme.cardRadius)
         .contextMenu {
             contextMenuItems
-        } preview: {
-            CardPreview(video: video)
+        }
+        .sheet(isPresented: $showPreview) {
+            PreviewSheet(video: video)
         }
     }
 
     @ViewBuilder
     private var contextMenuItems: some View {
+            Button {
+                showPreview = true
+            } label: {
+                Label("快速预览", systemImage: "play.rectangle")
+            }
             Button {
                 library.toggleFav(video)
             } label: {
