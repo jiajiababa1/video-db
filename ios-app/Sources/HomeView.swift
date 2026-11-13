@@ -18,9 +18,31 @@ struct HomeView: View {
 
     private var heroes: [VideoItem] { Array(latest.prefix(5)) }
 
+    private static var greeting: String {
+        switch Calendar.current.component(.hour, from: Date()) {
+        case 0..<5: return "夜深了"
+        case 5..<11: return "上午好"
+        case 11..<13: return "中午好"
+        case 13..<18: return "下午好"
+        default: return "晚上好"
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(Self.greeting)
+                            .font(.system(size: 20, weight: .heavy))
+                            .foregroundColor(Theme.text)
+                        Text("看看今天有什么新片")
+                            .font(.caption).foregroundColor(Theme.sub)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
                 searchBar
                 if !notices.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
@@ -194,6 +216,12 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                NavigationLink {
+                    SectionsView()
+                } label: {
+                    chipLabel("🧭 全部栏目", hot: false)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 6)

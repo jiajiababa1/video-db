@@ -12,6 +12,8 @@ import AVFoundation
 struct SwipeFeedView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var session: Session
+    @Environment(\.vdbTabActive) private var tabActive
+    var dockInset: Bool = false
     @StateObject private var ctrl = SwipeController()
     @State private var items: [VideoItem] = []
     @State private var seenIds: Set<String> = []
@@ -100,6 +102,12 @@ struct SwipeFeedView: View {
             await initialLoad()
         }
         .onDisappear { ctrl.stop() }
+        .onChange(of: tabActive) { active in
+            // Dock 模式下切走 Tab 自动暂停, 切回自动恢复 (导航 push 进来时不受影响)
+            if dockInset {
+                if active { ctrl.resumeActive() } else { ctrl.pauseActive() }
+            }
+        }
         .onChange(of: index) { _ in startCurrent() }
         .sheet(isPresented: $showComments, onDismiss: { ctrl.resumeActive() }) {
             if let v = current {
@@ -150,6 +158,16 @@ struct SwipeFeedView: View {
                         .font(.system(size: 14))
                         .foregroundColor(.white.opacity(0.92))
                         .lineLimit(3)
+                    HStack(spacing: 8) {
+                        if let t = v.viewsText {
+                            Text(t + " 观看")
+                        }
+                        if let d = v.created_at, !d.isEmpty {
+                            Text(String(d.prefix(10)))
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.65))
                     if isCurrent, ctrl.failedIds.contains(v.video_id) {
                         Text("⚠️ 这条解链失败, 已标记重爬 — 上滑看下一条")
                             .font(.caption).foregroundColor(.yellow)
@@ -159,7 +177,7 @@ struct SwipeFeedView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 14)
                 .padding(.trailing, 76)   // 给右侧栏让位
-                .padding(.bottom, 30)
+                .padding(.bottom, dockInset ? 104 : 30)
             }
         }
     }
@@ -257,7 +275,7 @@ struct SwipeFeedView: View {
                 .simultaneousGesture(TapGesture().onEnded { ctrl.pauseActive() })
             }
             .padding(.trailing, 10)
-            .padding(.bottom, 64)
+            .padding(.bottom, dockInset ? 128 : 64)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .task(id: v.video_id) { await refreshLike(v) }
@@ -286,6 +304,7 @@ struct SwipeFeedView: View {
                 ProgressView(value: min(ctrl.current / ctrl.duration, 1))
                     .progressViewStyle(.linear)
                     .tint(Theme.gold)
+                    .padding(.bottom, dockInset ? 84 : 0)
             }
         }
     }
