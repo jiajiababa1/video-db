@@ -69,7 +69,7 @@ struct SearchView: View {
                 if !hotAuthors.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("热门作者").font(.system(size: 14, weight: .bold))
-                        FlowChips(items: hotAuthors) { a in
+                        LinkChips(items: hotAuthors) { a in
                             NavigationLink {
                                 AuthorView(name: a)
                             } label: {
@@ -156,7 +156,7 @@ struct SearchView: View {
 }
 
 /// 简单流式布局: 一排排自动换行的 chips (iOS15 无 Layout 协议, 用横滑单行代替复杂实现)
-struct FlowChips<Item: Hashable, Content: View>: View {
+struct LinkChips<Item: Hashable, Content: View>: View {
     let items: [Item]
     let content: (Item) -> Content
 
