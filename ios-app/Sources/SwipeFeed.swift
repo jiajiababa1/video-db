@@ -130,8 +130,8 @@ struct SwipeFeedView: View {
                 SwipePlayerLayer(ctrl: ctrl)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // 邻居页/未就绪: 封面按原比例完整显示 (与视频画面构图一致, 切换不跳)
-                CachedImage(urlString: v.thumbnail_url, fit: true)
+                // 邻居页/未就绪: 封面铺满裁剪, 与播放层 (resizeAspectFill) 构图一致, 切换不跳
+                CachedImage(urlString: v.thumbnail_url)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if isCurrent, !ctrl.readyIds.contains(v.video_id), !ctrl.failedIds.contains(v.video_id) {
@@ -618,7 +618,7 @@ struct SwipePlayerLayer: UIViewRepresentable {
     func makeUIView(context: Context) -> PlayerLayerView {
         let v = PlayerLayerView()
         v.playerLayer.player = ctrl.activePlayer
-        v.playerLayer.videoGravity = .resizeAspect
+        v.playerLayer.videoGravity = .resizeAspectFill
         return v
     }
 

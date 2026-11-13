@@ -4,6 +4,58 @@ import SwiftUI
 // 作者排行榜 / 关注更新流 / 今日新增 / 我赞过的。
 // 后端接口已在 Supabase 侧建好 (2026-11-14), 统一走 sessions 表令牌校验。
 
+// MARK: - 站内页面列表 (动态读 site_pages, 站主建的每个页面都有入口)
+
+struct SitePagesListView: View {
+    struct Row: Decodable, Identifiable {
+        var slug: String?
+        var title: String?
+        var id: String { slug ?? "" }
+    }
+
+    @State private var rows: [Row] = []
+    @State private var loaded = false
+
+    var body: some View {
+        List {
+            if loaded && rows.isEmpty {
+                Text("还没有站内页面\n站主在管理面板「站内页管理」里新建后会出现在这里")
+                    .foregroundColor(.secondary)
+            }
+            ForEach(rows) { r in
+                NavigationLink {
+                    SitePageView(slug: r.slug ?? "", fallbackTitle: r.title ?? "")
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(r.title ?? "")
+                            .font(.system(size: 14.5, weight: .semibold))
+                        Text("/" + (r.slug ?? ""))
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("站内页面")
+        .task {
+            if !loaded {
+                loaded = true
+                await load()
+            }
+        }
+    }
+
+    private func load() async {
+        let (rs, _): ([Row], Int?) = (try? await SB.get(
+            "rest/v1/site_pages",
+            query: [
+                URLQueryItem(name: "select", value: "slug,title"),
+                URLQueryItem(name: "order", value: "slug.asc"),
+                URLQueryItem(name: "limit", value: "100"),
+            ])) ?? ([], nil)
+        rows = rs
+    }
+}
+
 // MARK: - 真点赞 API
 
 enum LikesAPI {

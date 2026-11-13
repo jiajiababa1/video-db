@@ -30,7 +30,7 @@ struct MeView: View {
                 filterCard
                 moreCard
                 dataCard
-                Text("2048 影院 · 原生版 v2.1")
+                Text("2048 影院 · 原生版 v2.1.1")
                     .font(.caption2).foregroundColor(Theme.sub)
                     .padding(.top, 6)
             }
@@ -498,15 +498,9 @@ struct MeView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("更多").font(.system(size: 16, weight: .bold))
             NavigationLink {
-                SitePageView(slug: "about", fallbackTitle: "关于")
+                SitePagesListView()
             } label: {
-                moreRow("关于本站", icon: "info.circle")
-            }
-            Divider().background(Theme.line)
-            NavigationLink {
-                SitePageView(slug: "contact", fallbackTitle: "联系站主")
-            } label: {
-                moreRow("联系站主", icon: "envelope")
+                moreRow("站内页面", icon: "doc.text")
             }
             if !library.blockedAuthors.isEmpty {
                 Divider().background(Theme.line)
