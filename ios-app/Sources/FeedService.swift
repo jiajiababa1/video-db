@@ -76,6 +76,12 @@ enum FeedService {
         return (rows, total)
     }
 
+    /// 随机取片 (服务端 random_playable 表采样随机取可播视频; 原来的随机深分页 offset 十几万必超时)
+    static func fetchRandom(_ limit: Int = pageSize) async -> [VideoItem] {
+        let rows: [VideoItem] = (try? await SB.rpc("random_playable", params: ["p_limit": limit])) ?? []
+        return rows
+    }
+
     /// 栏目计数 (单独的 count 查询, 与网站计数口径一致)
     static func count(section: AppSection) async -> Int? {
         let filters = filterString(section: section, playableOnly: true, author: nil, search: nil, personalIds: nil)

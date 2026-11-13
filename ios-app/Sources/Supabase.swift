@@ -45,7 +45,7 @@ enum SB {
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
         req.timeoutInterval = 25
-        for (k, v) in headers(extra: ["Prefer": "count=exact"]) { req.setValue(v, forHTTPHeaderField: k) }
+        for (k, v) in headers(extra: ["Prefer": "count=planned"]) { req.setValue(v, forHTTPHeaderField: k) }
         let (data, resp) = try await dataWithRetry(req)
         try check(resp, data)
         var total: Int? = nil
@@ -91,7 +91,7 @@ enum SB {
         var req = URLRequest(url: URL(string: urlString)!)
         req.httpMethod = "GET"
         req.timeoutInterval = 25
-        for (k, v) in headers(extra: ["Prefer": "count=exact"]) { req.setValue(v, forHTTPHeaderField: k) }
+        for (k, v) in headers(extra: ["Prefer": "count=planned"]) { req.setValue(v, forHTTPHeaderField: k) }
         let (data, resp) = try await dataWithRetry(req)
         try check(resp, data)
         var total: Int? = nil

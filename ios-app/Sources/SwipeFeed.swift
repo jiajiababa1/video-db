@@ -503,12 +503,8 @@ struct SwipeFeedView: View {
             if r.items.count < FeedService.pageSize { hasMore = false }
             return r.items
         case 2:
-            if totalCount == nil { totalCount = await FeedService.totalCount() }
-            let size = FeedService.pageSize
-            let maxPage = max(1, (totalCount ?? size) / size)
-            let p = Int.random(in: 1...maxPage)
-            let r = (try? await FeedService.fetchPage(page: p)) ?? (items: [], total: nil)
-            return r.items.shuffled()
+            // 服务端表采样随机取片 (每次都是新的一批, seenIds 负责去重)
+            return await FeedService.fetchRandom()
         default:
             let r = (try? await FeedService.fetchPage(page: page)) ?? (items: [], total: nil)
             if r.items.count < FeedService.pageSize { hasMore = false }

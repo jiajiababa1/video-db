@@ -111,8 +111,7 @@ struct RootView: View {
             HStack(spacing: 0) {
                 dockItem(0, icon: "house.fill", label: "首页")
                 dockItem(1, icon: "books.vertical.fill", label: "片库")
-                Color.clear
-                    .frame(maxWidth: .infinity)
+                Spacer()
                 dockItem(3, icon: "person.2.fill", label: "好友", badge: notices.socialBadge)
                 dockItem(4, icon: "person.crop.circle.fill", label: "我的", badge: notices.meBadge)
             }
