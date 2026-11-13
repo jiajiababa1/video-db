@@ -30,7 +30,7 @@ struct MeView: View {
                 filterCard
                 moreCard
                 dataCard
-                Text("2048 影院 · 原生版 v3.0")
+                Text("2048 影院 · 原生版 v3.0.1")
                     .font(.caption2).foregroundColor(Theme.sub)
                     .padding(.top, 6)
             }

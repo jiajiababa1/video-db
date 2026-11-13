@@ -125,21 +125,15 @@ struct SwipeFeedView: View {
 
     private func pageLayer(_ v: VideoItem, isCurrent: Bool) -> some View {
         ZStack {
-            // 氛围背景: 封面放大模糊铺满, 横竖屏都不会黑边突兀
-            // drawingGroup 把模糊结果栅格化成单张纹理缓存, 翻页动画不再逐帧重算模糊 (性能)
-            CachedImage(urlString: v.thumbnail_url)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .blur(radius: 48)
-                .scaleEffect(1.6)
-                .opacity(0.75)
-                .clipped()
-                .drawingGroup()
+            // 纯黑底: 库里横竖屏视频混杂 (实测约 1/3 横屏 16:9、2/3 竖屏),
+            // 统一按原比例完整显示 —— 横屏居中留黑, 竖屏满高, 不裁不拉伸
+            Color.black
             if isCurrent, ctrl.activePlayer != nil {
                 SwipePlayerLayer(ctrl: ctrl)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // 邻居页/未就绪: 封面铺满裁剪, 与播放层 (resizeAspectFill) 构图一致, 切换不跳
-                CachedImage(urlString: v.thumbnail_url)
+                // 邻居页/未就绪: 封面同样按原比例完整显示, 与播放层构图一致, 切换不跳
+                CachedImage(urlString: v.thumbnail_url, fit: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if isCurrent, !ctrl.readyIds.contains(v.video_id), !ctrl.failedIds.contains(v.video_id) {
@@ -297,16 +291,41 @@ struct SwipeFeedView: View {
         }
     }
 
+    /// 底部进度条: 当前时间 / 进度 / 总时长, 整条可拖动快进快退
     private func bottomProgress(_ v: VideoItem) -> some View {
         VStack {
             Spacer()
             if ctrl.duration > 0 && !ctrl.failedIds.contains(v.video_id) {
-                ProgressView(value: min(ctrl.current / ctrl.duration, 1))
-                    .progressViewStyle(.linear)
-                    .tint(Theme.gold)
-                    .padding(.bottom, dockInset ? 84 : 0)
+                GeometryReader { geo in
+                    HStack(spacing: 8) {
+                        Text(timeText(ctrl.current))
+                        ProgressView(value: min(max(ctrl.current / ctrl.duration, 0), 1))
+                            .progressViewStyle(.linear)
+                            .tint(Theme.gold)
+                        Text(timeText(ctrl.duration))
+                    }
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.85))
+                    .shadow(radius: 3)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { g in
+                                let f = min(max(g.location.x / max(geo.size.width, 1), 0), 1)
+                                ctrl.seekFraction(f)
+                            }
+                    )
+                }
+                .frame(height: 22)
+                .padding(.horizontal, 14)
+                .padding(.bottom, dockInset ? 88 : 6)
             }
         }
+    }
+
+    private func timeText(_ s: Double) -> String {
+        let t = Int(max(0, s))
+        return String(format: "%d:%02d", t / 60, t % 60)
     }
 
     // MARK: - 互动
@@ -529,6 +548,14 @@ final class SwipeController: ObservableObject {
         activePlayer?.playImmediately(atRate: 1)
     }
 
+    /// 进度条拖动: 按比例跳转 (带容差, 拖动更顺)
+    func seekFraction(_ f: Double) {
+        guard let p = activePlayer, duration > 0 else { return }
+        let tol = CMTime(seconds: 0.4, preferredTimescale: 600)
+        p.seek(to: CMTime(seconds: f * duration, preferredTimescale: 600),
+               toleranceBefore: tol, toleranceAfter: tol)
+    }
+
     private var pool: [String: AVPlayer] = [:]
     private var observers: [String: NSObjectProtocol] = [:]
     private var resolving: Set<String> = []
@@ -637,7 +664,7 @@ struct SwipePlayerLayer: UIViewRepresentable {
     func makeUIView(context: Context) -> PlayerLayerView {
         let v = PlayerLayerView()
         v.playerLayer.player = ctrl.activePlayer
-        v.playerLayer.videoGravity = .resizeAspectFill
+        v.playerLayer.videoGravity = .resizeAspect
         return v
     }
 

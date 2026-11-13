@@ -105,9 +105,21 @@ struct RootView: View {
     }
 
     private var dock: some View {
-        HStack(spacing: 0) {
-            dockItem(0, icon: "house.fill", label: "首页")
-            dockItem(1, icon: "books.vertical.fill", label: "片库")
+        // 玻璃条与主按钮分开叠放: 玻璃条自身带圆角裁剪, 主按钮必须在裁剪之外,
+        // 否则凸起的圆会被切掉一截 (v3.0 的按钮位置 bug)
+        ZStack {
+            HStack(spacing: 0) {
+                dockItem(0, icon: "house.fill", label: "首页")
+                dockItem(1, icon: "books.vertical.fill", label: "片库")
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                dockItem(3, icon: "person.2.fill", label: "好友", badge: notices.socialBadge)
+                dockItem(4, icon: "person.crop.circle.fill", label: "我的", badge: notices.meBadge)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+            .glassPanel(24, live: true, shadow: true)
             Button { selectTab(2) } label: {
                 Image(systemName: "play.fill")
                     .font(.system(size: 22, weight: .bold))
@@ -118,15 +130,8 @@ struct RootView: View {
                     .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 4)
             }
             .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-            .offset(y: -14)
-            dockItem(3, icon: "person.2.fill", label: "好友", badge: notices.socialBadge)
-            dockItem(4, icon: "person.crop.circle.fill", label: "我的", badge: notices.meBadge)
+            .offset(y: -16)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
-        .glassPanel(24, live: true, shadow: true)
         .padding(.horizontal, 14)
         .padding(.bottom, 8)
     }
