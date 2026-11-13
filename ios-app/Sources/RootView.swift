@@ -27,9 +27,7 @@ struct RootView: View {
                         .foregroundColor(Theme.gold2)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(Theme.surface2)
-                .cornerRadius(14)
-                .shadow(radius: 10)
+                .glassPanel(14, live: true, shadow: true)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 62)
             }

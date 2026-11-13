@@ -3,11 +3,38 @@ import SwiftUI
 // MARK: - 管理面板 (照搬网站管理面板, 凭登录 token 走同一套 admin RPC)
 
 struct AdminView: View {
+    @EnvironmentObject var session: Session
     @State private var stats: [(String, String)] = []
     @State private var loadingStats = true
 
+    private var identityText: String {
+        if session.username == "kuo" { return "站主" }
+        if session.isAdmin { return "管理员" }
+        return "无管理权限"
+    }
+
     var body: some View {
         List {
+            Section("当前身份") {
+                HStack {
+                    Text("登录账号")
+                    Spacer()
+                    Text(session.username.map { "@" + $0 } ?? "未登录").foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("权限")
+                    Spacer()
+                    Text(identityText)
+                        .foregroundColor(session.isAdmin ? .green : .orange)
+                }
+                if !session.isAdmin {
+                    Text("⚠️ 当前账号没有管理员权限：列表能看，但保存/发送类操作会被服务器拒绝。请退出后用站主账号 kuo 登录再操作。")
+                        .font(.caption).foregroundColor(.orange)
+                } else if session.username != "kuo" {
+                    Text("提示：站内页等少数功能仅站主 kuo 可用，管理员操作会提示「仅站主可操作」。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
             Section("概览") {
                 if loadingStats {
                     HStack { ProgressView(); Text("加载统计中…").foregroundColor(.secondary) }

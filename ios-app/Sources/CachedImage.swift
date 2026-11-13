@@ -3,12 +3,17 @@ import SwiftUI
 /// 带内存+磁盘缓存的图片 (替代 AsyncImage: 滚动/重进页面不再重新下载)
 struct CachedImage: View {
     let urlString: String?
+    var fit: Bool = false
     @State private var image: UIImage? = nil
 
     var body: some View {
         ZStack {
             if let img = image {
-                Image(uiImage: img).resizable().scaledToFill()
+                if fit {
+                    Image(uiImage: img).resizable().scaledToFit()
+                } else {
+                    Image(uiImage: img).resizable().scaledToFill()
+                }
             } else {
                 Rectangle().fill(Theme.surface2)
             }

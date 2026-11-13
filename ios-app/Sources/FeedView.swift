@@ -137,8 +137,7 @@ struct FeedView: View {
                     .cornerRadius(99)
             }
             .padding(12)
-            .background(Theme.surface)
-            .cornerRadius(14)
+            .glassPanel(14)
             .padding(.horizontal, 16)
         }
     }
@@ -229,8 +228,7 @@ struct HsexScrapeBar: View {
             .disabled(busy)
         }
         .padding(12)
-        .background(Theme.surface)
-        .cornerRadius(14)
+        .glassPanel(14)
     }
 
     private func trigger() async {

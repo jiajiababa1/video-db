@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 首页: 精选大图 + 继续观看 + 栏目货架 + 推荐网格
+/// 首页 v2: 搜索栏 + 精选轮播 + 频道胶囊 + 继续观看 + 栏目货架 + 推荐流
 struct HomeView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var bridge: Bridge
@@ -9,14 +9,19 @@ struct HomeView: View {
     @State private var recs: [VideoItem] = []
     @State private var loading = true
     @State private var notices: [Announcement] = []
+    @State private var heroIdx = 0
+    @State private var didLoad = false
 
     private var continueWatching: [VideoItem] {
         library.history.prefix(10).compactMap { library.snapshots[$0] }
     }
 
+    private var heroes: [VideoItem] { Array(latest.prefix(5)) }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
+                searchBar
                 if !notices.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(notices) { n in
@@ -28,13 +33,9 @@ struct HomeView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Theme.surface)
-                    .cornerRadius(10)
+                    .glassPanel(10)
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
-                }
-                if let hero = latest.first {
-                    heroView(hero)
                 }
                 if let ann = bridge.announcement, !ann.isEmpty {
                     Text(ann)
@@ -42,11 +43,14 @@ struct HomeView: View {
                         .foregroundColor(Theme.gold2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 13).padding(.vertical, 9)
-                        .background(Theme.surface)
-                        .cornerRadius(12)
+                        .glassPanel(12)
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
                 }
+                if !heroes.isEmpty {
+                    heroCarousel
+                }
+                channelChips
                 ForEach(bridge.shelfOrder, id: \.self) { key in
                     switch key {
                     case "continue":
@@ -71,56 +75,126 @@ struct HomeView: View {
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("2048 影院")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                NavigationLink {
-                    SearchView()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-            }
-        }
         .task { await load() }
         .refreshable { await load(force: true) }
         .overlay { if loading { ProgressView().tint(Theme.gold) } }
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+            guard !heroes.isEmpty else { return }
+            withAnimation { heroIdx = (heroIdx + 1) % heroes.count }
+        }
+    }
+
+    private var searchBar: some View {
+        NavigationLink {
+            SearchView()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                Text("搜视频、作者…")
+                Spacer()
+            }
+            .font(.system(size: 14))
+            .foregroundColor(Theme.sub)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .glassCapsule()
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var heroCarousel: some View {
+        ZStack(alignment: .bottom) {
+            TabView(selection: $heroIdx) {
+                ForEach(Array(heroes.enumerated()), id: \.element.id) { i, v in
+                    NavigationLink {
+                        PlayerView(video: v)
+                    } label: {
+                        heroView(v)
+                    }
+                    .buttonStyle(.plain)
+                    .tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 216)
+            HStack(spacing: 5) {
+                ForEach(heroes.indices, id: \.self) { i in
+                    Capsule()
+                        .fill(i == heroIdx ? Color.white : Color.white.opacity(0.35))
+                        .frame(width: i == heroIdx ? 16 : 6, height: 4)
+                }
+            }
+            .padding(.bottom, 8)
+        }
+        .padding(.top, 4)
     }
 
     private func heroView(_ v: VideoItem) -> some View {
-        NavigationLink {
-            PlayerView(video: v)
-        } label: {
-            ZStack(alignment: .bottomLeading) {
-                CachedImage(urlString: v.thumbnail_url)
-                    .aspectRatio(16 / 10, contentMode: .fit)
-                LinearGradient(colors: [.clear, .black.opacity(0.88)],
-                               startPoint: .center, endPoint: .bottom)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("今日精选")
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Theme.goldGradient).foregroundColor(.black)
+        ZStack(alignment: .bottomLeading) {
+            CachedImage(urlString: v.thumbnail_url)
+                .frame(height: 216)
+                .frame(maxWidth: .infinity)
+                .clipped()
+            LinearGradient(colors: [.clear, .black.opacity(0.88)],
+                           startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("今日精选")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Theme.gold).foregroundColor(.white)
+                    .cornerRadius(99)
+                Text(v.displayTitle)
+                    .font(.system(size: 17, weight: .bold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundColor(.white)
+                HStack(spacing: 10) {
+                    Text("▶ 播放")
+                        .font(.subheadline.weight(.bold))
+                        .padding(.horizontal, 16).padding(.vertical, 7)
+                        .background(Color.white).foregroundColor(.black)
                         .cornerRadius(99)
-                    Text(v.displayTitle)
-                        .font(.system(size: 18, weight: .bold))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    HStack(spacing: 10) {
-                        Text("▶ 播放")
-                            .font(.subheadline.weight(.bold))
-                            .padding(.horizontal, 16).padding(.vertical, 7)
-                            .background(Color.white).foregroundColor(.black)
-                            .cornerRadius(99)
-                        Text("@" + v.displayAuthor)
-                            .font(.caption).foregroundColor(.white.opacity(0.85))
-                    }
+                    Text("@" + v.displayAuthor)
+                        .font(.caption).foregroundColor(.white.opacity(0.85))
                 }
-                .padding(14)
             }
-            .cornerRadius(22)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
+            .padding(14)
         }
-        .buttonStyle(.plain)
+        .cornerRadius(16)
+        .padding(.horizontal, 16)
+    }
+
+    private var channelChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                NavigationLink {
+                    SwipeFeedView()
+                } label: {
+                    chipLabel("📱 刷视频", hot: true)
+                }
+                .buttonStyle(.plain)
+                ForEach(FeedService.allSections.filter { !$0.id.isEmpty }) { sec in
+                    NavigationLink {
+                        FeedView(section: sec)
+                    } label: {
+                        chipLabel(sec.name, hot: false)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func chipLabel(_ text: String, hot: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 13.5, weight: .semibold))
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(hot ? Theme.gold : Theme.surface2)
+            .foregroundColor(.white)
+            .cornerRadius(99)
     }
 
     private func shelfHeader(_ title: String, section: AppSection? = nil) -> some View {
@@ -131,7 +205,7 @@ struct HomeView: View {
                 NavigationLink {
                     FeedView(section: sec)
                 } label: {
-                    Text("更多 ›").font(.caption).foregroundColor(Theme.gold)
+                    Text("更多 ›").font(.caption).foregroundColor(Theme.gold2)
                 }
             }
         }
@@ -156,8 +230,6 @@ struct HomeView: View {
             .padding(.horizontal, 16)
         }
     }
-
-    @State private var didLoad = false
 
     private func load(force: Bool = false) async {
         // 从播放页返回时 .task 会重跑: 已有数据就别再整批替换, 否则滚动位置被打回顶部

@@ -32,6 +32,8 @@ final class PlayerVM: ObservableObject {
     var scrubbing = false
     private var tickCount = 0
     var video: VideoItem
+    var onPlayEnded: (() -> Void)? = nil
+    private var endObserver: NSObjectProtocol? = nil
     private var token: Any? = nil
     private var seekDone = false
     private var sleepTimer: Timer? = nil
@@ -102,6 +104,10 @@ final class PlayerVM: ObservableObject {
             let p = AVPlayer(playerItem: item)
             player = p
             state = "ready"
+            self.endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+                self?.onPlayEnded?()
+            }
             token = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] t in
                 guard let self = self, let item = p.currentItem else { return }
                 let dur = item.duration.seconds
@@ -132,6 +138,8 @@ final class PlayerVM: ObservableObject {
         sleepTimer?.invalidate()
         if let token = token { player?.removeTimeObserver(token) }
         token = nil
+        if let o = endObserver { NotificationCenter.default.removeObserver(o) }
+        endObserver = nil
     }
 }
 
@@ -143,6 +151,8 @@ struct PlayerView: View {
     @StateObject private var vm: PlayerVM
     @State private var upNext: [VideoItem] = []
     @State private var showShare = false
+    @AppStorage("vdb_autonext") private var autoNext = true
+    @State private var nextPush: VideoItem? = nil
     @ObservedObject private var dl = Downloader.shared
 
     init(video: VideoItem) {
@@ -183,8 +193,20 @@ struct PlayerView: View {
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .background(
+            NavigationLink(isActive: Binding(
+                get: { nextPush != nil },
+                set: { if !$0 { nextPush = nil } }
+            )) {
+                if let nv = nextPush { PlayerView(video: nv) }
+            } label: { EmptyView() }
+            .hidden()
+        )
         .task {
             await vm.start(library: library)
+            vm.onPlayEnded = {
+                if autoNext, let first = upNext.first { nextPush = first }
+            }
             await loadUpNext()
         }
         .onDisappear { vm.stop() }
@@ -226,6 +248,11 @@ struct PlayerView: View {
                 }
             }
             .disabled(dl.isDownloaded(video.video_id) || dl.progresses[video.video_id] != nil)
+            Button {
+                autoNext.toggle()
+            } label: {
+                ctrlLabel("play.rectangle.on.rectangle", autoNext ? "连播开" : "连播关")
+            }
             if let n = vm.sleepNote {
                 Text(n).font(.caption2).foregroundColor(Theme.gold2).lineLimit(1)
             }
@@ -355,8 +382,7 @@ struct PlayerView: View {
             .lineSpacing(5)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(Theme.surface)
-            .cornerRadius(14)
+            .glassPanel(14)
     }
 
     private var actionsRow: some View {
@@ -375,8 +401,7 @@ struct PlayerView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
-                    .background(Theme.surface)
-                    .cornerRadius(14)
+                    .glassPanel(14)
                     .foregroundColor(Theme.sub)
                 }
             }
@@ -391,8 +416,7 @@ struct PlayerView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-            .background(Theme.surface)
-            .cornerRadius(14)
+            .glassPanel(14)
             .foregroundColor(hot ? Theme.gold2 : Theme.sub)
         }
     }

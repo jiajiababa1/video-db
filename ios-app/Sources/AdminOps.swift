@@ -154,12 +154,9 @@ struct AdminUserEditor: View {
     }
 
     private func toggleVerified() async {
-        do {
-            try await SB.patch("rest/v1/user_accounts", query: [
-                URLQueryItem(name: "username", value: "eq." + username)], body: ["verified": !verified])
-            note = "✅ 已更新认证状态"
-            onDone()
-        } catch { note = "❌ 认证更新失败（权限）" }
+        // 必须走 admin_exec 的 verify/unverify (与网站一致):
+        // user_accounts 表禁止直接改表 (RLS 无 UPDATE 权限), 之前的直连 PATCH 必然失败
+        await run(AdminAPI.exec(action: verified ? "unverify" : "verify", target: username, detail: ""))
     }
 
     private func resetPwd() async {
@@ -190,8 +187,8 @@ struct AdminBroadcastView: View {
 
     private func send() async {
         sending = true
-        let sent = await AdminAPI.broadcastDM(recipientsText: recipients, content: content)
-        note = sent > 0 ? "✅ 已发送 \(sent) 条" : "❌ 发送失败（无对象或无权限）"
+        let (sent, err) = await AdminAPI.broadcastDM(recipientsText: recipients, content: content)
+        note = sent > 0 ? "✅ 已发送 \(sent) 条" : "❌ " + err
         sending = false
     }
 }

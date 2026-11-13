@@ -14,12 +14,23 @@ enum AdminAPI {
         var code: String?
     }
 
+    /// 最近一次 RPC 的 HTTP 层错误 (含服务器原文), 供界面把失败原因显示出来,
+    /// 不再出现笼统的"无返回/失败"让人无从排查
+    private(set) static var lastError: String? = nil
+
     private static func call<T: Decodable>(_ name: String, _ params: [String: Any]) async -> [T]? {
-        try? await SB.rpc(name, params: params)
+        do {
+            let rows: [T] = try await SB.rpc(name, params: params)
+            lastError = nil
+            return rows
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
     }
 
     private static func outcome(_ rows: [Res]) -> (Bool, String) {
-        guard let r = rows.first else { return (false, "无返回") }
+        guard let r = rows.first else { return (false, lastError ?? "无返回") }
         return (r.ok ?? false, r.message ?? "")
     }
 
@@ -89,7 +100,8 @@ enum AdminAPI {
     }
 
     // MARK: - 广播私信 (留空对象 = 全体未封禁用户, 与网站同逻辑)
-    static func broadcastDM(recipientsText: String, content: String) async -> Int {
+    /// 返回 (已发送数, 失败原因); 失败原因带服务器原文, 不再只报笼统的"发送失败"
+    static func broadcastDM(recipientsText: String, content: String) async -> (Int, String) {
         var recipients: [String] = []
         let names = recipientsText.split(whereSeparator: { ",，、 ".contains($0) }).map(String.init)
         if !names.isEmpty {
@@ -103,11 +115,12 @@ enum AdminAPI {
             ])) ?? ([], nil)
             recipients = result.0.compactMap { $0.username }.filter { $0 != Session.shared.username }
         }
-        guard !recipients.isEmpty else { return 0 }
+        guard !recipients.isEmpty else { return (0, "没有可发送的对象（用户列表为空）") }
         let rows: [Res] = (await call("admin_broadcast_dm", [
             "p_token": token, "p_recipients": recipients, "p_content": content,
         ])) ?? []
-        return rows.first?.sent?.value ?? 0
+        if let s = rows.first?.sent?.value { return (s, "") }
+        return (0, lastError ?? "接口无返回（多半是当前账号没有管理员权限）")
     }
 
     // MARK: - 站内页 / 配置

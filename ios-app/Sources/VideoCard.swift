@@ -128,6 +128,17 @@ struct VideoCard: View {
             ZStack(alignment: .bottomLeading) {
                 CachedImage(urlString: video.thumbnail_url)
                     .aspectRatio(16 / 9, contentMode: .fit)
+                    .opacity(library.isWatched(video.video_id) ? 0.65 : 1)
+                if library.isWatched(video.video_id) {
+                    Text("已看")
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.black.opacity(0.65))
+                        .foregroundColor(.white)
+                        .cornerRadius(5)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(6)
+                }
                 HStack {
                     if let vt = video.viewsText {
                         Text(vt).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
@@ -169,8 +180,7 @@ struct VideoCard: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
         }
-        .background(Theme.surface)
-        .cornerRadius(Theme.cardRadius)
+        .glassPanel()
         .contextMenu {
             contextMenuItems
         }
@@ -272,8 +282,7 @@ struct SkeletonGrid: View {
                         .frame(width: 80, height: 9)
                 }
                 .padding(6)
-                .background(Theme.surface)
-                .cornerRadius(Theme.cardRadius)
+                .glassPanel()
             }
         }
         .opacity(pulse ? 0.55 : 1)

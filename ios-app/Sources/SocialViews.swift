@@ -168,8 +168,7 @@ struct FriendsView: View {
                 Image(systemName: "chevron.right").foregroundColor(Theme.sub)
             }
             .padding(13)
-            .background(Theme.surface)
-            .cornerRadius(14)
+            .glassPanel(14)
         }
         .buttonStyle(.plain)
     }
@@ -189,8 +188,7 @@ struct FriendsView: View {
             trailing()
         }
         .padding(12)
-        .background(Theme.surface)
-        .cornerRadius(14)
+        .glassPanel(14)
     }
 }
 
@@ -215,8 +213,7 @@ struct BoardsView: View {
                             Text("建自己的群").font(.caption).foregroundColor(Theme.sub)
                         }
                         .padding(13)
-                        .background(Theme.surface)
-                        .cornerRadius(14)
+                        .glassPanel(14)
                     }
                     .buttonStyle(.plain)
                 }
@@ -243,8 +240,7 @@ struct BoardsView: View {
                             Image(systemName: "chevron.right").foregroundColor(Theme.sub)
                         }
                         .padding(13)
-                        .background(Theme.surface)
-                        .cornerRadius(14)
+                        .glassPanel(14)
                     }
                     .buttonStyle(.plain)
                 }
@@ -312,7 +308,7 @@ struct BoardChatView: View {
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(Theme.surface)
+                .glassPanel(0)
             }
             ScrollViewReader { proxy in
                 ScrollView {
@@ -576,8 +572,7 @@ struct WorksView: View {
             }
             .padding(12)
         }
-        .background(Theme.surface)
-        .cornerRadius(Theme.cardRadius)
+        .glassPanel()
     }
 
     private func load() async {

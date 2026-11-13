@@ -18,6 +18,7 @@ struct MeView: View {
             VStack(spacing: 14) {
                 accountCard
                 statsCard
+                reportCard
                 if session.isLoggedIn {
                     syncCard
                     accountSettingsCard
@@ -29,7 +30,7 @@ struct MeView: View {
                 filterCard
                 moreCard
                 dataCard
-                Text("2048 影院 · 原生版 v1.9")
+                Text("2048 影院 · 原生版 v2.0")
                     .font(.caption2).foregroundColor(Theme.sub)
                     .padding(.top, 6)
             }
@@ -74,8 +75,7 @@ struct MeView: View {
             }
         }
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
     }
 
     // MARK: 数据主页
@@ -94,8 +94,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
     }
 
     private func statBox(_ label: String, _ value: String) -> some View {
@@ -133,8 +132,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
     }
 
     // MARK: 账号设置 (改密码 / 兑换码)
@@ -190,8 +188,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
     }
 
     // MARK: 内容过滤 (屏蔽词 / 隐藏 / 屏蔽作者, 与账号云同步)
@@ -250,8 +247,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
     }
 
     // MARK: 站长工具
@@ -362,8 +358,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
         .task { await loadPendingWorks() }
     }
 
@@ -487,8 +482,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
     }
 
     private func infoRow(_ k: String, _ v: String) -> some View {
@@ -529,8 +523,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
     }
 
     private func moreRow(_ title: String, icon: String) -> some View {
@@ -540,6 +533,60 @@ struct MeView: View {
             Spacer()
             Image(systemName: "chevron.right").font(.caption).foregroundColor(Theme.sub)
         }
+    }
+
+    // MARK: 观看报告 (本地数据现算)
+    private var topAuthors: [(String, Int)] {
+        var counts: [String: Int] = [:]
+        for id in library.history {
+            if let a = library.snapshots[id]?.displayAuthor, !a.isEmpty {
+                counts[a, default: 0] += 1
+            }
+        }
+        return counts.sorted { $0.value > $1.value }.prefix(5).map { ($0.key, $0.value) }
+    }
+
+    private var reportCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("观看报告").font(.system(size: 16, weight: .bold))
+            HStack(spacing: 0) {
+                reportStat("\(library.history.count)", "看过视频")
+                reportStat("\(library.favorites.count)", "收藏")
+                reportStat("\(library.follows.count)", "关注作者")
+                reportStat("\(Downloader.shared.records.count)", "已下载")
+            }
+            if !topAuthors.isEmpty {
+                Text("最常看的作者")
+                    .font(.caption).foregroundColor(Theme.sub)
+                ForEach(Array(topAuthors.enumerated()), id: \.offset) { _, pair in
+                    NavigationLink {
+                        AuthorView(name: pair.0)
+                    } label: {
+                        HStack {
+                            Text("@" + pair.0).font(.system(size: 13.5)).foregroundColor(Theme.text)
+                            Spacer()
+                            Text("看过 \(pair.1) 条").font(.caption).foregroundColor(Theme.sub)
+                            Image(systemName: "chevron.right").font(.caption2).foregroundColor(Theme.sub)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                Text("看几条视频后, 这里会统计你最常看的作者")
+                    .font(.caption).foregroundColor(Theme.sub)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(15)
+        .glassPanel(18)
+    }
+
+    private func reportStat(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value).font(.system(size: 17, weight: .heavy))
+            Text(label).font(.caption2).foregroundColor(Theme.sub)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: 数据管理
@@ -593,8 +640,7 @@ struct MeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
-        .background(Theme.surface)
-        .cornerRadius(18)
+        .glassPanel(18)
         .confirmationDialog("清空收藏、稍后看、历史、关注?", isPresented: $showClearConfirm) {
             Button("全部清空", role: .destructive) { library.clearAll() }
             Button("取消", role: .cancel) {}
@@ -767,8 +813,7 @@ struct FlowChips: View {
                         }
                     }
                     .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Theme.surface2)
-                    .cornerRadius(99)
+                    .glassCapsule()
                 }
             }
         }

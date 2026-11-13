@@ -20,6 +20,12 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Text("收藏 \(library.favorites.count) · 稍后看 \(library.watchLater.count) · 历史 \(library.history.count) · 下载 \(Downloader.shared.records.count) 个 (\(ByteCountFormatter.string(fromByteCount: Downloader.shared.totalSize, countStyle: .file)))")
+                .font(.caption)
+                .foregroundColor(Theme.sub)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(tabs.indices, id: \.self) { i in
@@ -94,7 +100,7 @@ struct LibraryView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Theme.surface)
+        .glassPanel(0)
     }
 
     @ViewBuilder
@@ -138,7 +144,7 @@ struct LibraryView: View {
                         Spacer()
                         Text("把收藏整理成组").font(.caption).foregroundColor(Theme.sub)
                     }
-                    .padding(13).background(Theme.surface).cornerRadius(14)
+                    .padding(13).glassPanel(14)
                 }
                 .buttonStyle(.plain)
                 if library.favFolders.isEmpty {
@@ -159,7 +165,7 @@ struct LibraryView: View {
                                 .font(.caption).foregroundColor(Theme.sub)
                             Image(systemName: "chevron.right").foregroundColor(Theme.sub)
                         }
-                        .padding(13).background(Theme.surface).cornerRadius(14)
+                        .padding(13).glassPanel(14)
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -203,7 +209,7 @@ struct LibraryView: View {
                             }
                             Spacer()
                         }
-                        .padding(10).background(Theme.surface).cornerRadius(14)
+                        .padding(10).glassPanel(14)
                     }
                 }
             }
@@ -254,8 +260,7 @@ struct LibraryView: View {
                             Image(systemName: "chevron.right").foregroundColor(Theme.sub)
                         }
                         .padding(13)
-                        .background(Theme.surface)
-                        .cornerRadius(14)
+                        .glassPanel(14)
                     }
                     .buttonStyle(.plain)
                 }

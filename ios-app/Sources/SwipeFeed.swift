@@ -2,9 +2,13 @@ import SwiftUI
 import AVKit
 import AVFoundation
 
-/// 「刷视频」栏目 (抖音式): 三页跟手翻页 — 拖动时上下页一起滑动露出来,
-/// 松手吸附整页; 当前条的前后各 1 条提前解链+预缓冲, 翻过去直接播。
-/// 三种模式: 最新 (时间流) / 热门 (观看量) / 随机 (随机页打乱), 全程去重。
+/// 「刷视频」v3 (抖音式):
+/// - 翻页: 三页跟手滑动, 松手整页吸附; 手势只挂视频区, 右侧按钮栏/顶栏固定不动,
+///   任何视频上功能都完整可点 (v1.9 按钮跟页滑动+被手势抢事件是"不好用"的主因)。
+/// - 画面: 封面模糊放大做氛围背景 + 视频按原比例完整显示, 横竖屏切换不再跳变。
+/// - 当前条前后各 1 条提前解链+预缓冲, 翻过去直接播。
+/// - 双击画面 = 收藏 (爱心动画); 单击 = 暂停/播放。
+/// - 三模式: 最新 / 热门 / 随机, 全程去重。
 struct SwipeFeedView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var session: Session
@@ -21,6 +25,8 @@ struct SwipeFeedView: View {
     @State private var paging = false
     @State private var pageH: CGFloat = 800
     @State private var showComments = false
+    @State private var showShare = false
+    @State private var heartTick = 0       // 双击爱心动画触发计数
 
     private var current: VideoItem? { items.indices.contains(index) ? items[index] : nil }
     private var prevItem: VideoItem? { items.indices.contains(index - 1) ? items[index - 1] : nil }
@@ -30,28 +36,59 @@ struct SwipeFeedView: View {
         GeometryReader { geo in
             ZStack {
                 Color.black.ignoresSafeArea()
-                if let pv = prevItem {
-                    poster(pv)
-                        .offset(y: dragOffset - geo.size.height)
+
+                // 视频页区 (手势只在这一层)
+                ZStack {
+                    if let pv = prevItem {
+                        pageLayer(pv, isCurrent: false)
+                            .offset(y: dragOffset - geo.size.height)
+                    }
+                    if let v = current {
+                        pageLayer(v, isCurrent: true)
+                            .offset(y: dragOffset)
+                    } else if loading {
+                        ProgressView().tint(.white)
+                    } else {
+                        Text("暂无可播视频").foregroundColor(Theme.sub)
+                    }
+                    if let nv = nextItem {
+                        pageLayer(nv, isCurrent: false)
+                            .offset(y: dragOffset + geo.size.height)
+                    }
                 }
-                if let v = current {
-                    currentPage(v)
-                        .offset(y: dragOffset)
-                } else if loading {
-                    ProgressView().tint(.white)
-                } else {
-                    Text("暂无可播视频").foregroundColor(Theme.sub)
-                }
-                if let nv = nextItem {
-                    poster(nv)
-                        .offset(y: dragOffset + geo.size.height)
-                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+                .contentShape(Rectangle())
+                .gesture(swipeGesture(height: geo.size.height))
+                .onTapGesture(count: 2) { doubleTapFav() }
+                .onTapGesture(count: 1) { ctrl.togglePlay() }
+
+                // 固定层: 顶栏 + 右侧栏 + 底部进度 (不跟页滑动)
                 topBar
+                if let v = current {
+                    fixedRail(v)
+                    bottomProgress(v)
+                    if ctrl.userPaused {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 52))
+                            .foregroundColor(.white.opacity(0.85))
+                            .shadow(radius: 8)
+                    }
+                    if heartTick > 0 {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 84))
+                            .foregroundColor(Theme.gold)
+                            .shadow(radius: 12)
+                            .id(heartTick)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
             }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .contentShape(Rectangle())
-            .gesture(swipeGesture(height: geo.size.height))
-            .onAppear { pageH = geo.size.height }
+            .onAppear {
+                pageH = geo.size.height
+                dragOffset = 0
+                if !showComments { ctrl.resumeActive() }
+            }
         }
         .background(Color.black.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -60,7 +97,6 @@ struct SwipeFeedView: View {
             ctrl.onEnded = { goNext() }
             await initialLoad()
         }
-        .onAppear { if !showComments { ctrl.resumeActive() } }
         .onDisappear { ctrl.stop() }
         .onChange(of: index) { _ in startCurrent() }
         .sheet(isPresented: $showComments, onDismiss: { ctrl.resumeActive() }) {
@@ -68,35 +104,65 @@ struct SwipeFeedView: View {
                 CommentsSheet(video: v)
             }
         }
-    }
-
-    // MARK: - 页面层
-
-    private func poster(_ v: VideoItem) -> some View {
-        CachedImage(urlString: v.thumbnail_url)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func currentPage(_ v: VideoItem) -> some View {
-        ZStack {
-            poster(v)
-            if ctrl.activePlayer != nil {
-                SwipePlayerLayer(ctrl: ctrl)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onTapGesture { ctrl.togglePlay() }
+        .sheet(isPresented: $showShare) {
+            if let v = current {
+                ActivityView(items: [URL(string: "https://jiajiababa1.github.io/video-db/watch.html?v=" + v.video_id)!])
             }
-            if ctrl.userPaused {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 52))
-                    .foregroundColor(.white.opacity(0.85))
-                    .shadow(radius: 8)
-            }
-            if !ctrl.readyIds.contains(v.video_id) && !ctrl.failedIds.contains(v.video_id) {
-                ProgressView().tint(.white)
-            }
-            overlay(v)
         }
     }
+
+    // MARK: - 单页 (氛围背景 + 原比例画面 + 底部信息)
+
+    private func pageLayer(_ v: VideoItem, isCurrent: Bool) -> some View {
+        ZStack {
+            // 氛围背景: 封面放大模糊铺满, 横竖屏都不会黑边突兀
+            // drawingGroup 把模糊结果栅格化成单张纹理缓存, 翻页动画不再逐帧重算模糊 (性能)
+            CachedImage(urlString: v.thumbnail_url)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .blur(radius: 48)
+                .scaleEffect(1.6)
+                .opacity(0.75)
+                .clipped()
+                .drawingGroup()
+            if isCurrent, ctrl.activePlayer != nil {
+                SwipePlayerLayer(ctrl: ctrl)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // 邻居页/未就绪: 封面按原比例完整显示 (与视频画面构图一致, 切换不跳)
+                CachedImage(urlString: v.thumbnail_url, fit: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            if isCurrent, !ctrl.readyIds.contains(v.video_id), !ctrl.failedIds.contains(v.video_id) {
+                ProgressView().tint(.white)
+            }
+            // 底部信息 (跟页走)
+            VStack {
+                Spacer()
+                VStack(alignment: .leading, spacing: 5) {
+                    if !v.displayAuthor.isEmpty {
+                        Text("@" + v.displayAuthor)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    Text(v.displayTitle)
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.92))
+                        .lineLimit(3)
+                    if isCurrent, ctrl.failedIds.contains(v.video_id) {
+                        Text("⚠️ 这条解链失败, 已标记重爬 — 上滑看下一条")
+                            .font(.caption).foregroundColor(.yellow)
+                    }
+                }
+                .shadow(radius: 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 14)
+                .padding(.trailing, 76)   // 给右侧栏让位
+                .padding(.bottom, 30)
+            }
+        }
+    }
+
+    // MARK: - 固定层
 
     private var topBar: some View {
         VStack {
@@ -110,6 +176,8 @@ struct SwipeFeedView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 190)
                 .colorScheme(.dark)
+                .padding(3)
+                .glassCapsule(live: true)
                 .onChange(of: mode) { _ in Task { await reload() } }
                 Spacer()
             }
@@ -119,77 +187,116 @@ struct SwipeFeedView: View {
         }
     }
 
-    private func overlay(_ v: VideoItem) -> some View {
+    private func fixedRail(_ v: VideoItem) -> some View {
         VStack {
             Spacer()
-            HStack(alignment: .bottom, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(v.displayTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                        .lineLimit(3)
-                        .shadow(radius: 4)
-                    if !v.displayAuthor.isEmpty {
-                        Text("@" + v.displayAuthor)
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.85))
-                    }
-                    if ctrl.failedIds.contains(v.video_id) {
-                        Text("⚠️ 这条解链失败, 已标记重爬 — 上滑看下一条")
-                            .font(.caption).foregroundColor(.yellow)
-                    } else if ctrl.duration > 0 {
-                        ProgressView(value: min(ctrl.current / ctrl.duration, 1))
-                            .progressViewStyle(.linear)
-                            .tint(Theme.gold)
-                            .frame(width: 170)
+            VStack(spacing: 16) {
+                if !v.displayAuthor.isEmpty {
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            AuthorView(name: v.displayAuthor)
+                        } label: {
+                            ZStack {
+                                Circle().fill(Theme.surface2)
+                                Text(String(v.displayAuthor.prefix(1)))
+                                    .font(.system(size: 17, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            .frame(width: 46, height: 46)
+                            .overlay(Circle().stroke(Color.white.opacity(0.7), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .simultaneousGesture(TapGesture().onEnded { ctrl.pauseActive() })
+                        if !library.isFollowing(v.displayAuthor) {
+                            Button {
+                                library.toggleFollow(v.displayAuthor)
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .heavy))
+                                    .foregroundColor(.white)
+                                    .frame(width: 19, height: 19)
+                                    .background(Theme.gold)
+                                    .clipShape(Circle())
+                            }
+                            .offset(y: -9)
+                        }
                     }
                 }
-                Spacer()
-                rail(v)
+                railButton(library.isFav(v.video_id) ? "heart.fill" : "heart",
+                           library.isFav(v.video_id) ? Theme.gold : .white, "点赞") {
+                    library.toggleFav(v)
+                }
+                railButton("text.bubble.fill", .white, "评论") {
+                    ctrl.pauseActive()
+                    showComments = true
+                }
+                railButton(library.isWatchLater(v.video_id) ? "clock.fill" : "clock", .white, "稍后看") {
+                    library.toggleWatchLater(v)
+                }
+                railButton("square.and.arrow.up", .white, "分享") {
+                    showShare = true
+                }
+                NavigationLink {
+                    PlayerView(video: v)
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: "rectangle.expand.vertical")
+                            .font(.system(size: 20))
+                            .foregroundColor(.white)
+                            .frame(width: 46, height: 46)
+                            .glassCircle()
+                        Text("详情")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                    }
+                    .shadow(radius: 4)
+                }
+                .simultaneousGesture(TapGesture().onEnded { ctrl.pauseActive() })
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 26)
+            .padding(.trailing, 10)
+            .padding(.bottom, 64)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 
-    private func rail(_ v: VideoItem) -> some View {
-        VStack(spacing: 18) {
-            railButton(library.isFav(v.video_id) ? "bookmark.fill" : "bookmark", "收藏") {
-                library.toggleFav(v)
-            }
-            railButton(library.isWatchLater(v.video_id) ? "clock.fill" : "clock", "稍后看") {
-                library.toggleWatchLater(v)
-            }
-            railButton("text.bubble.fill", "评论") {
-                ctrl.pauseActive()
-                showComments = true
-            }
-            NavigationLink {
-                PlayerView(video: v)
-            } label: {
-                VStack(spacing: 3) {
-                    Image(systemName: "rectangle.expand.vertical").font(.system(size: 24))
-                    Text("详情").font(.caption2)
-                }
-                .foregroundColor(.white)
-                .shadow(radius: 4)
-            }
-            .simultaneousGesture(TapGesture().onEnded { ctrl.pauseActive() })
-            railButton("shuffle", "随机") {
-                mode = 2
-                Task { await reload() }
-            }
-        }
-    }
-
-    private func railButton(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
+    private func railButton(_ icon: String, _ color: Color, _ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: icon).font(.system(size: 24))
-                Text(label).font(.caption2)
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 21))
+                    .foregroundColor(color)
+                    .frame(width: 46, height: 46)
+                    .glassCircle()
+                Text(label)
+                    .font(.caption2)
+                    .foregroundColor(.white)
             }
-            .foregroundColor(.white)
             .shadow(radius: 4)
+        }
+    }
+
+    private func bottomProgress(_ v: VideoItem) -> some View {
+        VStack {
+            Spacer()
+            if ctrl.duration > 0 && !ctrl.failedIds.contains(v.video_id) {
+                ProgressView(value: min(ctrl.current / ctrl.duration, 1))
+                    .progressViewStyle(.linear)
+                    .tint(Theme.gold)
+            }
+        }
+    }
+
+    // MARK: - 互动
+
+    private func doubleTapFav() {
+        guard let v = current else { return }
+        if !library.isFav(v.video_id) {
+            library.toggleFav(v)
+        }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.55)) { heartTick += 1 }
+        Task {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            withAnimation(.easeOut(duration: 0.25)) { heartTick = 0 }
         }
     }
 
@@ -198,10 +305,10 @@ struct SwipeFeedView: View {
     private func swipeGesture(height: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { g in
-                guard !paging else { return }
+                guard !paging, !showComments else { return }
                 let dy = g.translation.height
                 if (index == 0 && dy > 0) || (nextItem == nil && dy < 0) {
-                    dragOffset = dy * 0.35   // 到头了, 橡皮筋
+                    dragOffset = dy * 0.35
                 } else {
                     dragOffset = dy
                 }
@@ -233,7 +340,6 @@ struct SwipeFeedView: View {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { dragOffset = 0 }
     }
 
-    /// 整页滑出动画: 先把当前页滑出屏幕, 再无动画换 index (新页正好在原位), 视觉连续
     private func flip(to newIndex: Int, direction: CGFloat, height: CGFloat) {
         guard !paging, items.indices.contains(newIndex) else { return }
         paging = true
@@ -292,7 +398,6 @@ struct SwipeFeedView: View {
         let batch = await fetchBatch()
         if batch.isEmpty {
             if mode == 2 {
-                // 随机模式抽到的都是看过的: 再多抽几页找没看过的
                 var extra: [VideoItem] = []
                 for _ in 0..<3 where extra.count < 6 {
                     extra.append(contentsOf: await fetchBatch())
@@ -318,18 +423,18 @@ struct SwipeFeedView: View {
 
     private func fetchBatch() async -> [VideoItem] {
         switch mode {
-        case 1:  // 热门: 按观看量排序, 与"最新"真正区分开
+        case 1:
             let r = (try? await FeedService.fetchPage(page: page, hotSort: true)) ?? (items: [], total: nil)
             if r.items.count < FeedService.pageSize { hasMore = false }
             return r.items
-        case 2:  // 随机: 随机页 + 打乱
+        case 2:
             if totalCount == nil { totalCount = await FeedService.totalCount() }
             let size = FeedService.pageSize
             let maxPage = max(1, (totalCount ?? size) / size)
             let p = Int.random(in: 1...maxPage)
             let r = (try? await FeedService.fetchPage(page: p)) ?? (items: [], total: nil)
             return r.items.shuffled()
-        default: // 最新: 按时间顺序翻页
+        default:
             let r = (try? await FeedService.fetchPage(page: page)) ?? (items: [], total: nil)
             if r.items.count < FeedService.pageSize { hasMore = false }
             return r.items

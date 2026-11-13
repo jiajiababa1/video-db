@@ -95,6 +95,7 @@ final class Library: ObservableObject {
     // MARK: - 查询
     func isFav(_ id: String) -> Bool { favorites.contains(id) }
     func isWatchLater(_ id: String) -> Bool { watchLater.contains(id) }
+    func isWatched(_ id: String) -> Bool { history.contains(id) }
     func isFollowing(_ author: String) -> Bool { follows.contains(author) }
 
     // MARK: - 变更

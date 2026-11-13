@@ -269,18 +269,54 @@ struct AdminPageEditor: View {
         _content = State(initialValue: page.content)
     }
 
+    /// 与网站 saveSitePage 完全一致的路径清洗: 去空格→小写→非法字符转 -→连续 - 合并。
+    /// 不清洗的话页面存进库的路径和网站识别的路径对不上, 建完打不开 (识别错误)。
+    private var normalizedSlug: String {
+        let lowered = slug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var out = ""
+        var lastDash = false
+        for ch in lowered {
+            if (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch == "_" {
+                out.append(ch)
+                lastDash = false
+            } else if ch == "-" {
+                if !lastDash { out.append(ch) }
+                lastDash = true
+            } else {
+                if !lastDash { out.append("-") }
+                lastDash = true
+            }
+        }
+        return out
+    }
+
+    private var slugUsable: Bool {
+        !isNew || (!normalizedSlug.isEmpty && normalizedSlug != "-")
+    }
+
     var body: some View {
         NavigationView {
             Form {
                 TextField("slug（英文标识）", text: $slug)
                     .autocorrectionDisabled().textInputAutocapitalization(.never)
                     .disabled(!isNew)
+                if isNew && !slug.isEmpty {
+                    if slugUsable {
+                        if normalizedSlug != slug {
+                            Text("网站会按这个路径识别：/" + normalizedSlug)
+                                .font(.caption).foregroundColor(Theme.gold2)
+                        }
+                    } else {
+                        Text("⚠️ 这个路径识别不了（中文/符号会被清掉），请换成英文或拼音，如 about、help")
+                            .font(.caption).foregroundColor(.orange)
+                    }
+                }
                 TextField("标题", text: $title)
                 Section("正文（支持简单 HTML）") {
                     TextEditor(text: $content).frame(minHeight: 220)
                 }
                 Button("保存") { Task { await save() } }
-                    .disabled(slug.isEmpty || title.isEmpty)
+                    .disabled(slug.isEmpty || title.isEmpty || !slugUsable)
                 if !isNew {
                     Button("删除该页", role: .destructive) { Task { await del() } }
                 }
@@ -293,8 +329,13 @@ struct AdminPageEditor: View {
     }
 
     private func save() async {
-        let (ok, msg) = await AdminAPI.sitepageSave(slug: slug, title: title, content: content)
-        note = ok ? "✅ 已保存" : "❌ " + msg
+        // 新建时传清洗后的路径 (与网站一致); 编辑时 slug 本就是库里的原值
+        let finalSlug = isNew ? normalizedSlug : slug
+        let (ok, msg) = await AdminAPI.sitepageSave(
+            slug: finalSlug,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            content: content.trimmingCharacters(in: .whitespacesAndNewlines))
+        note = ok ? "✅ 已保存（路径 /" + finalSlug + "）" : "❌ " + msg
         if ok { onDone(); dismiss() }
     }
 

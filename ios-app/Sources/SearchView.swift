@@ -6,6 +6,19 @@ struct SearchView: View {
     @State private var query = ""
     @State private var submitted = ""
     @State private var authors: [String] = []
+    @State private var hotAuthors: [String] = []
+
+    /// 热门作者: 取最近 300 条的作者出现频率 Top 10
+    private func loadHotAuthors() async {
+        struct ARow: Decodable { var author: String? }
+        let url = SB.base.absoluteString + "/rest/v1/videos?select=author&removed=not.is.true&order=created_at.desc&limit=300"
+        let (rows, _): ([ARow], Int?) = (try? await SB.getRaw(url)) ?? ([], nil)
+        var counts: [String: Int] = [:]
+        for r in rows {
+            if let a = r.author, !a.isEmpty { counts[a, default: 0] += 1 }
+        }
+        hotAuthors = counts.sorted { $0.value > $1.value }.prefix(10).map { $0.key }
+    }
 
     private func searchAuthors(_ q: String) async {
         let qq = FeedService.pgSan(q.trimmingCharacters(in: .whitespaces))
@@ -49,11 +62,30 @@ struct SearchView: View {
                 .foregroundColor(Theme.gold2)
             }
             .padding(.horizontal, 13).padding(.vertical, 10)
-            .background(Theme.surface2)
-            .cornerRadius(99)
+            .glassCapsule()
             .padding(16)
 
             if submitted.isEmpty {
+                if !hotAuthors.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("热门作者").font(.system(size: 14, weight: .bold))
+                        FlowChips(items: hotAuthors) { a in
+                            NavigationLink {
+                                AuthorView(name: a)
+                            } label: {
+                                Text("@" + a)
+                                    .font(.system(size: 13))
+                                    .padding(.horizontal, 12).padding(.vertical, 7)
+                                    .background(Theme.surface2)
+                                    .foregroundColor(Theme.text)
+                                    .cornerRadius(99)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+                }
                 if library.searchRecent.isEmpty {
                     Text("输入关键词搜全站视频\n支持标题和作者名")
                         .multilineTextAlignment(.center)
@@ -119,5 +151,20 @@ struct SearchView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await loadHotAuthors() }
+    }
+}
+
+/// 简单流式布局: 一排排自动换行的 chips (iOS15 无 Layout 协议, 用横滑单行代替复杂实现)
+struct FlowChips<Item: Hashable, Content: View>: View {
+    let items: [Item]
+    let content: (Item) -> Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(items, id: \.self) { content($0) }
+            }
+        }
     }
 }

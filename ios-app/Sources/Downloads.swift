@@ -127,7 +127,7 @@ struct DownloadsView: View {
                                 .font(.caption).foregroundColor(Theme.sub).lineLimit(1)
                             ProgressView(value: dl.progresses[id] ?? 0).tint(Theme.gold)
                         }
-                        .padding(12).background(Theme.surface).cornerRadius(12)
+                        .padding(12).glassPanel(12)
                     }
                 }
                 if dl.records.isEmpty && dl.progresses.isEmpty {
@@ -165,8 +165,7 @@ struct DownloadsView: View {
                         Spacer()
                     }
                     .padding(10)
-                    .background(Theme.surface)
-                    .cornerRadius(14)
+                    .glassPanel(14)
                 }
             }
             .padding(16)

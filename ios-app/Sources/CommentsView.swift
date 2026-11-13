@@ -142,8 +142,7 @@ struct CommentsView: View {
             HStack(spacing: 8) {
                 TextField("说点什么…", text: $draft)
                     .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(Theme.surface2)
-                    .cornerRadius(99)
+                    .glassCapsule()
                 Button("发送") {
                     Task { await post() }
                 }
