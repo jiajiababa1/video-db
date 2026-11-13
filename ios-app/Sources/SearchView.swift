@@ -8,8 +8,21 @@ struct SearchView: View {
     @State private var authors: [String] = []
     @State private var hotAuthors: [String] = []
 
-    /// 热门作者: 取最近 300 条的作者出现频率 Top 10
+    /// 热门作者: 优先读服务端排行榜缓存 (真实观看量 Top 10), 读不到再采样估算
     private func loadHotAuthors() async {
+        struct CRow: Decodable { var name: String? }
+        let (cache, _): ([CRow], Int?) = (try? await SB.get(
+            "rest/v1/leaderboard_authors_cache",
+            query: [
+                URLQueryItem(name: "select", value: "name"),
+                URLQueryItem(name: "order", value: "total_views.desc"),
+                URLQueryItem(name: "limit", value: "10"),
+            ])) ?? ([], nil)
+        let names = cache.compactMap { $0.name }.filter { !$0.isEmpty }
+        if !names.isEmpty {
+            hotAuthors = names
+            return
+        }
         struct ARow: Decodable { var author: String? }
         let url = SB.base.absoluteString + "/rest/v1/videos?select=author&removed=not.is.true&order=created_at.desc&limit=300"
         let (rows, _): ([ARow], Int?) = (try? await SB.getRaw(url)) ?? ([], nil)

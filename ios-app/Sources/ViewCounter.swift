@@ -6,6 +6,26 @@ enum ViewCounter {
     static func register(video: VideoItem, user: String?, library: Library) async {
         let key = (user ?? "guest") + "|" + video.video_id
         if library.countedViews.contains(key) { return }
+        // v2.1: 登录时走服务端统一计数 (全端去重, 网站与 App 不重复计)
+        if user != nil {
+            struct MR: Decodable { var ok: Bool?; var counted: Bool? }
+            let rows: [MR]? = try? await SB.rpc("mark_viewed", params: [
+                "p_token": Session.shared.loginToken, "p_video_id": video.video_id])
+            if let r = rows?.first, r.ok == true {
+                library.markCounted(key)
+                if r.counted == true {
+                    await MainActor.run {
+                        if var snap = library.snapshots[video.video_id],
+                           let cur = Int(snap.views ?? "") {
+                            snap.views = String(cur + 1)
+                            library.snapshots[video.video_id] = snap
+                            library.persistNow()
+                        }
+                    }
+                }
+                return
+            }
+        }
         library.markCounted(key)
 
         struct VRow: Decodable { var views: FlexInt? }

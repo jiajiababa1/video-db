@@ -119,6 +119,7 @@ final class PlayerVM: ObservableObject {
                 self.tickCount += 1
                 if self.tickCount % 10 == 0 {
                     self.library?.recordWatch(self.video, progress: t.seconds / dur)
+                    ProgressSync.shared.report(videoId: self.video.video_id, frac: t.seconds / dur)
                 }
                 if !self.seekDone {
                     self.seekDone = true
@@ -153,6 +154,8 @@ struct PlayerView: View {
     @State private var showShare = false
     @AppStorage("vdb_autonext") private var autoNext = true
     @State private var nextPush: VideoItem? = nil
+    @State private var danmaku: [DanmakuItem] = []
+    @State private var danmakuOn = true
     @ObservedObject private var dl = Downloader.shared
 
     init(video: VideoItem) {
@@ -164,6 +167,9 @@ struct PlayerView: View {
         VStack(spacing: 0) {
             playerArea
             controlsRow
+            DanmakuBar(videoId: video.video_id, currentTime: vm.currentTime,
+                       items: $danmaku, enabled: $danmakuOn)
+                .padding(.vertical, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(video.displayTitle)
@@ -193,6 +199,10 @@ struct PlayerView: View {
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await loadDanmaku()
+            ProgressSync.shared.pullIntoLibrary(library)
+        }
         .background(
             NavigationLink(isActive: Binding(
                 get: { nextPush != nil },
@@ -325,11 +335,26 @@ struct PlayerView: View {
             default:
                 ProgressView().tint(Theme.gold)
             }
+            if danmakuOn {
+                DanmakuOverlay(items: danmaku, currentTime: vm.currentTime)
+            }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
         .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 40, pressing: { pressing in
             if pressing { vm.beginBoost() } else { vm.endBoost() }
         }, perform: {})
+    }
+
+    private func loadDanmaku() async {
+        let (rows, _): ([DanmakuItem], Int?) = (try? await SB.get(
+            "rest/v1/video_danmaku",
+            query: [
+                URLQueryItem(name: "select", value: "id,video_id,username,content,time_offset,created_at"),
+                URLQueryItem(name: "video_id", value: "eq." + video.video_id),
+                URLQueryItem(name: "order", value: "time_offset.asc"),
+                URLQueryItem(name: "limit", value: "300"),
+            ])) ?? ([], nil)
+        danmaku = rows
     }
 
     private var authorRow: some View {

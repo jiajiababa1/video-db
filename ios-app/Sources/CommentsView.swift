@@ -6,6 +6,7 @@ struct CommentItem: Codable, Identifiable {
     var username: String?
     var content: String?
     var created_at: String?
+    var pinned: Bool?
 
     var timeText: String {
         guard let c = created_at else { return "" }
@@ -117,7 +118,19 @@ struct CommentsView: View {
                     HStack(spacing: 8) {
                         Text(c.username ?? "?")
                             .font(.caption.weight(.semibold)).foregroundColor(Theme.sub)
+                        if c.pinned == true {
+                            Text("置顶")
+                                .font(.caption2.weight(.heavy)).foregroundColor(Theme.gold2)
+                        }
                         Spacer()
+                        if session.isAdmin, c.id != nil {
+                            Button {
+                                Task { await pin(c) }
+                            } label: {
+                                Image(systemName: c.pinned == true ? "pin.fill" : "pin")
+                                    .font(.caption2).foregroundColor(Theme.sub)
+                            }
+                        }
                         if session.isAdmin || (session.username != nil && c.username == session.username) {
                             Button {
                                 Task { await delete(c) }
@@ -162,7 +175,7 @@ struct CommentsView: View {
                 "rest/v1/video_comments",
                 query: [
                     URLQueryItem(name: "video_id", value: "eq." + video.video_id),
-                    URLQueryItem(name: "order", value: "created_at.desc"),
+                    URLQueryItem(name: "order", value: "pinned.desc,created_at.desc"),
                     URLQueryItem(name: "limit", value: "100"),
                 ])
             comments = rows
@@ -183,6 +196,15 @@ struct CommentsView: View {
             await load()
         } catch {}
         posting = false
+    }
+
+    /// 站主/管理员置顶切换 (走服务端接口, 与网站规则一致)
+    private func pin(_ c: CommentItem) async {
+        guard let id = c.id else { return }
+        struct R: Decodable { var ok: Bool? }
+        let _: [R]? = try? await SB.rpc("admin_comment_pin", params: [
+            "p_token": session.loginToken, "p_id": id, "p_pinned": !(c.pinned ?? false)])
+        await load()
     }
 
     private func delete(_ c: CommentItem) async {

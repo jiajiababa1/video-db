@@ -136,6 +136,20 @@ struct LibraryView: View {
     private var foldersView: some View {
         ScrollView {
             VStack(spacing: 10) {
+                NavigationLink {
+                    LikedVideosView()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "heart.fill")
+                            .foregroundColor(.red).font(.system(size: 18))
+                        Text("我赞过的").font(.system(size: 15, weight: .bold))
+                        Spacer()
+                        Text("点赞同步全站").font(.caption).foregroundColor(Theme.sub)
+                        Image(systemName: "chevron.right").foregroundColor(Theme.sub)
+                    }
+                    .padding(13).glassPanel(14)
+                }
+                .buttonStyle(.plain)
                 Button {
                     showNewFolder = true
                 } label: {

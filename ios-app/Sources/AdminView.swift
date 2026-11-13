@@ -58,6 +58,7 @@ struct AdminView: View {
             Section("运营") {
                 nav("兑换码", "ticket") { AdminCodesView() }
                 nav("系统配置", "slider.horizontal.3") { AdminConfigView() }
+                nav("审计日志", "list.bullet.rectangle") { AuditLogView() }
             }
             Section("爬虫") {
                 nav("爬虫控制台 / 作者抓", "spider") { AdminScrapeView() }

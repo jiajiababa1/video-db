@@ -28,6 +28,7 @@ struct AdminUsersView: View {
                                 .font(.caption2).foregroundColor(.secondary)
                         }
                         Spacer()
+                        badge("ID " + adminStr(r, "id"), .gray)
                         if adminBool(r, "banned") { badge("已封禁", .red) }
                         if adminBool(r, "is_admin") { badge("管理员", .blue) }
                         if adminBool(r, "verified") { badge("已认证", .teal) }
@@ -52,7 +53,7 @@ struct AdminUsersView: View {
 
     private func load() async {
         var query = [
-            URLQueryItem(name: "select", value: "username,vip_level,vip_expires_at,is_admin,verified,banned,created_at"),
+            URLQueryItem(name: "select", value: "id,username,vip_level,vip_expires_at,is_admin,verified,banned,created_at"),
             URLQueryItem(name: "order", value: "created_at.desc"),
             URLQueryItem(name: "limit", value: "100"),
         ]
@@ -84,6 +85,7 @@ struct AdminUserEditor: View {
             Form {
                 Section("账号信息") {
                     row("用户名", "@" + username)
+                    row("用户ID", adminStr(user, "id"))
                     row("VIP", adminStr(user, "vip_level").isEmpty ? "无" : adminStr(user, "vip_level"))
                     row("到期", String(adminStr(user, "vip_expires_at").prefix(16)))
                     row("状态", isBanned ? "已封禁" : "正常")

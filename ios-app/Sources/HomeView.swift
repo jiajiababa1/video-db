@@ -174,6 +174,18 @@ struct HomeView: View {
                     chipLabel("📱 刷视频", hot: true)
                 }
                 .buttonStyle(.plain)
+                NavigationLink {
+                    FollowFeedView()
+                } label: {
+                    chipLabel("❤️ 关注", hot: false)
+                }
+                .buttonStyle(.plain)
+                NavigationLink {
+                    TodayFeedView()
+                } label: {
+                    chipLabel("🆕 今日新增", hot: false)
+                }
+                .buttonStyle(.plain)
                 ForEach(FeedService.allSections.filter { !$0.id.isEmpty }) { sec in
                     NavigationLink {
                         FeedView(section: sec)

@@ -27,6 +27,8 @@ struct SwipeFeedView: View {
     @State private var showComments = false
     @State private var showShare = false
     @State private var heartTick = 0       // 双击爱心动画触发计数
+    @State private var likeLiked = false   // 真点赞状态 (当前视频)
+    @State private var likeTotal = 0       // 真点赞数 (当前视频)
 
     private var current: VideoItem? { items.indices.contains(index) ? items[index] : nil }
     private var prevItem: VideoItem? { items.indices.contains(index - 1) ? items[index - 1] : nil }
@@ -222,9 +224,10 @@ struct SwipeFeedView: View {
                         }
                     }
                 }
-                railButton(library.isFav(v.video_id) ? "heart.fill" : "heart",
-                           library.isFav(v.video_id) ? Theme.gold : .white, "点赞") {
-                    library.toggleFav(v)
+                railButton(likeLiked ? "heart.fill" : "heart",
+                           likeLiked ? Theme.gold : .white,
+                           likeTotal > 0 ? "\(likeTotal)" : "点赞") {
+                    Task { await tapLike(v) }
                 }
                 railButton("text.bubble.fill", .white, "评论") {
                     ctrl.pauseActive()
@@ -257,6 +260,7 @@ struct SwipeFeedView: View {
             .padding(.bottom, 64)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .task(id: v.video_id) { await refreshLike(v) }
     }
 
     private func railButton(_ icon: String, _ color: Color, _ label: String, action: @escaping () -> Void) -> some View {
@@ -288,9 +292,42 @@ struct SwipeFeedView: View {
 
     // MARK: - 互动
 
+    /// 拉当前视频的真点赞状态
+    private func refreshLike(_ v: VideoItem) async {
+        let s = await LikesAPI.status(v.video_id)
+        if current?.video_id == v.video_id {
+            likeLiked = s.liked
+            likeTotal = s.total
+        }
+    }
+
+    /// 点右侧爱心: 登录走真点赞接口; 未登录退回本地收藏表现
+    private func tapLike(_ v: VideoItem) async {
+        guard session.isLoggedIn else {
+            library.toggleFav(v)
+            return
+        }
+        if let r = await LikesAPI.toggle(v.video_id) {
+            likeLiked = r.liked
+            likeTotal = r.total
+        }
+    }
+
     private func doubleTapFav() {
         guard let v = current else { return }
-        if !library.isFav(v.video_id) {
+        if session.isLoggedIn {
+            // 双击只点赞不取消 (抖音式), 先本地点亮再向服务端确认
+            if !likeLiked {
+                likeLiked = true
+                likeTotal += 1
+                Task {
+                    if let r = await LikesAPI.toggle(v.video_id) {
+                        likeLiked = r.liked
+                        likeTotal = r.total
+                    }
+                }
+            }
+        } else if !library.isFav(v.video_id) {
             library.toggleFav(v)
         }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.55)) { heartTick += 1 }

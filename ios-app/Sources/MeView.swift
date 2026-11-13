@@ -30,7 +30,7 @@ struct MeView: View {
                 filterCard
                 moreCard
                 dataCard
-                Text("2048 影院 · 原生版 v2.0")
+                Text("2048 影院 · 原生版 v2.1")
                     .font(.caption2).foregroundColor(Theme.sub)
                     .padding(.top, 6)
             }
@@ -615,6 +615,28 @@ struct MeView: View {
             } label: {
                 HStack {
                     Text("错误日志").font(.system(size: 14)).foregroundColor(Theme.text)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2).foregroundColor(Theme.sub)
+                }
+            }
+            .buttonStyle(.plain)
+            Divider().background(Theme.line)
+            NavigationLink {
+                DevicesView()
+            } label: {
+                HStack {
+                    Text("我的设备").font(.system(size: 14)).foregroundColor(Theme.text)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2).foregroundColor(Theme.sub)
+                }
+            }
+            .buttonStyle(.plain)
+            Divider().background(Theme.line)
+            NavigationLink {
+                LeaderboardView()
+            } label: {
+                HStack {
+                    Text("作者排行榜").font(.system(size: 14)).foregroundColor(Theme.text)
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption2).foregroundColor(Theme.sub)
                 }
