@@ -986,7 +986,7 @@ struct AuditLogView: View {
 
 
 // MARK: - 标题纠正 (v5.1 标题党治理, 学 DeArrow): 提名更准确的标题, 投票满 5 票自动生效, 站主可直接通过/驳回
-struct TitleSuggestion: Decodable, Identifiable {
+struct TitleSuggestion: Decodable {
     var id: FlexInt?
     var video_id: String?
     var current_title: String?
@@ -1042,7 +1042,7 @@ struct TitleFixView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.top, 40)
                 }
-                ForEach(items) { s in
+                ForEach(items, id: \.sid) { s in
                     row(s)
                 }
             }
