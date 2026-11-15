@@ -51,6 +51,7 @@ struct AdminView: View {
             }
             Section("用户管理") {
                 nav("用户列表 / VIP / 封禁", "person.2.badge.gearshape") { AdminUsersView() }
+                nav("用户设备信息", "iphone") { AdminDevicesView() }
                 nav("群发私信", "paperplane") { AdminBroadcastView() }
                 nav("私信总览", "envelope.open") { AdminMessagesView() }
                 nav("封禁记录", "hand.raised") { AdminBansView() }

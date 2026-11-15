@@ -571,3 +571,84 @@ struct AdminAppealsView: View {
         await load()
     }
 }
+
+// MARK: - 用户设备信息 (每位用户上报的设备资料, 按用户分组、点开看明细)
+struct AdminDevicesView: View {
+    struct DevRow: Decodable, Identifiable {
+        var username: String?
+        var device_id: String?
+        var model: String?
+        var system_version: String?
+        var app_version: String?
+        var locale: String?
+        var timezone: String?
+        var screen: String?
+        var battery: Int?
+        var storage: String?
+        var network: String?
+        var updated_at: String?
+        var id: String { (username ?? "") + "|" + (device_id ?? "") }
+        var seenText: String { String((updated_at ?? "").prefix(16)).replacingOccurrences(of: "T", with: " ") }
+    }
+
+    @State private var rows: [DevRow] = []
+    @State private var loaded = false
+
+    private var users: [String] {
+        Array(Set(rows.map { $0.username ?? "?" })).sorted()
+    }
+
+    var body: some View {
+        List {
+            if loaded && rows.isEmpty {
+                Text("还没有设备上报（用户打开新版 App 登录后会自动上报一次）")
+                    .foregroundColor(.secondary)
+            }
+            ForEach(users, id: \.self) { u in
+                Section("@" + u) {
+                    ForEach(rows.filter { ($0.username ?? "?") == u }) { d in
+                        DisclosureGroup {
+                            infoRow("设备型号", d.model)
+                            infoRow("系统版本", d.system_version)
+                            infoRow("App 版本", d.app_version)
+                            infoRow("设备 ID", d.device_id)
+                            infoRow("时区", d.timezone)
+                            infoRow("语言地区", d.locale)
+                            infoRow("屏幕分辨率", d.screen)
+                            infoRow("电量", d.battery.map { "\($0)%" })
+                            infoRow("存储空间", d.storage)
+                            infoRow("网络类型", d.network)
+                            infoRow("最后上报", d.seenText)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(d.model ?? "未知设备")
+                                    .font(.subheadline.weight(.semibold))
+                                Text((d.system_version ?? "") + " · 最后上报 " + d.seenText)
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("用户设备信息")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func infoRow(_ k: String, _ v: String?) -> some View {
+        HStack {
+            Text(k).foregroundColor(.secondary)
+            Spacer()
+            Text(v ?? "—").multilineTextAlignment(.trailing)
+        }
+        .font(.caption)
+    }
+
+    private func load() async {
+        let rows: [DevRow]? = try? await SB.rpc("admin_devices", params: [
+            "p_token": Session.shared.loginToken])
+        self.rows = rows ?? []
+        loaded = true
+    }
+}

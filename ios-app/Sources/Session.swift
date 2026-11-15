@@ -306,6 +306,7 @@ final class Session: ObservableObject {
         }
         await fetchMyId()
         await fetchBanStatus()
+        await DeviceReporter.report()
     }
 
     /// 封禁状态 (服务端为准): appeal_info 返回是否被封 + 申诉冷却剩余秒数
