@@ -131,7 +131,7 @@ struct CommentsView: View {
                                     .font(.caption2).foregroundColor(Theme.sub)
                             }
                         }
-                        if session.isAdmin || (session.username != nil && c.username == session.username) {
+                        if session.isAdmin || session.isOwner || (session.username != nil && c.username == session.username) {
                             Button {
                                 Task { await delete(c) }
                             } label: {
@@ -207,10 +207,17 @@ struct CommentsView: View {
         await load()
     }
 
+    /// 删除评论: 走服务端函数 (delete_comment 验令牌+权限)。
+    /// 旧版直接删表被 RLS 拦下、删了跟没删一样 (用户实测无效), 已废弃。
     private func delete(_ c: CommentItem) async {
         guard let id = c.id else { return }
-        try? await SB.delete("rest/v1/video_comments",
-            query: [URLQueryItem(name: "id", value: "eq." + String(id))])
-        await load()
+        struct R: Decodable { var ok: Bool?; var message: String? }
+        let rows: [R]? = try? await SB.rpc("delete_comment", params: [
+            "p_token": session.loginToken, "p_id": id])
+        if rows?.first?.ok == true {
+            comments.removeAll { $0.id == id }
+        } else {
+            await load()
+        }
     }
 }

@@ -1,10 +1,18 @@
 import SwiftUI
 
+/// 全屏页 (刷视频/播放页) 在场时隐藏悬浮底栏: 胶囊浮在所有页面之上,
+/// 会压住刷视频自己的进度条和播放页底部 —— 这类页面本来就该独占屏幕 (仿抖音)。
+final class ChromeState: ObservableObject {
+    static let shared = ChromeState()
+    @Published var hidden = false
+}
+
 struct RootView: View {
     @EnvironmentObject var session: Session
     @EnvironmentObject var library: Library
     @EnvironmentObject var bridge: Bridge
     @ObservedObject private var notices = NoticeCenter.shared
+    @ObservedObject private var chrome = ChromeState.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -155,6 +163,9 @@ struct RootView: View {
         )
         .padding(.horizontal, 56)
         .padding(.bottom, 8)
+        .opacity(chrome.hidden ? 0 : 1)
+        .allowsHitTesting(!chrome.hidden)
+        .animation(.easeOut(duration: 0.2), value: chrome.hidden)
     }
 
     private func dockItem(_ idx: Int, icon: String, label: String, badge: Int = 0) -> some View {

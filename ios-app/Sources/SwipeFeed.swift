@@ -47,6 +47,8 @@ struct SwipeFeedView: View {
     //  刷视频声音重叠的问题随之根除; 打开搜索/分享时也会先暂停)
     @State private var showSearch = false
     @State private var friendWorks: [VideoItem]? = nil  // 互关模式缓存
+    @State private var authorName = ""     // 左滑进作者主页: 目标作者 + 跳转开关
+    @State private var showAuthor = false
 
     private var current: VideoItem? { items.indices.contains(index) ? items[index] : nil }
     private var prevItem: VideoItem? { items.indices.contains(index - 1) ? items[index - 1] : nil }
@@ -97,15 +99,41 @@ struct SwipeFeedView: View {
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
                 .contentShape(Rectangle())
-                .gesture(swipeGesture(height: geo.size.height))
+                .simultaneousGesture(swipeGesture(height: geo.size.height))
                 .onTapGesture(count: 2) { doubleTapFav() }
                 .onTapGesture(count: 1) { ctrl.togglePlay() }
-                .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 20, pressing: { pressing in
-                    if !pressing { ctrl.endBoost() }
-                }, perform: {
-                    ctrl.beginBoost()
-                    if ctrl.boosting { Haptics.light() }
-                })
+                // 长按倍速必须与翻页拖动"同时识别": 旧版把长按和独占拖动手势叠在同一层,
+                // 手势仲裁把长按饿死, 永远触发不了 (用户实测无效)。改 simultaneous 后
+                // 按满 0.5 秒 onChanged 进倍速, 抬手 onEnded 恢复; 滑动翻页也会顺手结束倍速。
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5, maximumDistance: 20)
+                        .onChanged { _ in
+                            if !ctrl.boosting {
+                                ctrl.beginBoost()
+                                if ctrl.boosting { Haptics.light() }
+                            }
+                        }
+                        .onEnded { _ in ctrl.endBoost() }
+                )
+                // 左滑进作者主页: 水平位移过 80 且竖直漂移小才算 (不抢上下翻页)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 24)
+                        .onEnded { g in
+                            ctrl.endBoost()
+                            guard !showComments, !paging else { return }
+                            if g.translation.width < -80, abs(g.translation.height) < 60,
+                               let v = current, !v.displayAuthor.isEmpty {
+                                authorName = v.displayAuthor
+                                showAuthor = true
+                            }
+                        }
+                )
+
+                // 左滑跳转的目标 (隐藏链接, 由手势置位触发)
+                NavigationLink(destination: AuthorView(name: authorName), isActive: $showAuthor) {
+                    EmptyView()
+                }
+                .hidden()
 
                 // 固定层: 顶栏 + 右侧栏 + 底部进度 (不跟页滑动)
                 topBar
@@ -162,7 +190,8 @@ struct SwipeFeedView: View {
             }
             await initialLoad()
         }
-        .onDisappear { ctrl.stop() }
+        .onAppear { ChromeState.shared.hidden = true }
+        .onDisappear { ctrl.stop(); ChromeState.shared.hidden = false }
         .onChange(of: tabActive) { active in
             // Dock 模式下切走 Tab 自动暂停, 切回自动恢复 (导航 push 进来时不受影响)
             if dockInset {
@@ -458,6 +487,7 @@ struct SwipeFeedView: View {
             .onChanged { g in
                 guard !paging, !showComments else { return }
                 let dy = g.translation.height
+                if abs(dy) > 10, ctrl.boosting { ctrl.endBoost() }
                 if (index == 0 && dy > 0) || (nextItem == nil && dy < 0) {
                     dragOffset = dy * 0.35
                 } else {

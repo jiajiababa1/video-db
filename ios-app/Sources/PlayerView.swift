@@ -219,7 +219,8 @@ struct PlayerView: View {
             }
             await loadUpNext()
         }
-        .onDisappear { vm.stop() }
+        .onAppear { ChromeState.shared.hidden = true }
+        .onDisappear { vm.stop(); ChromeState.shared.hidden = false }
         .sheet(isPresented: $showShare) {
             ActivityView(items: [shareURL])
         }

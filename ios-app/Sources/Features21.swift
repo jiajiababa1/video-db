@@ -211,6 +211,7 @@ struct DanmakuBar: View {
     @EnvironmentObject var session: Session
     @State private var draft = ""
     @State private var sending = false
+    @State private var showManage = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -237,8 +238,22 @@ struct DanmakuBar: View {
                     .font(.caption).foregroundColor(Theme.sub)
                 Spacer()
             }
+            if !items.isEmpty {
+                Button { showManage = true } label: {
+                    Image(systemName: "list.bullet")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Theme.sub)
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 16)
+        .sheet(isPresented: $showManage) {
+            NavigationView {
+                DanmakuListView(items: $items)
+            }
+        }
     }
 
     private func send() async {
@@ -257,6 +272,73 @@ struct DanmakuBar: View {
             draft = ""
         }
         sending = false
+    }
+}
+
+/// 弹幕管理列表: 本人可删自己的, 管理员/站主可删任何人的 (服务端 delete_danmaku 验权)
+struct DanmakuListView: View {
+    @Binding var items: [DanmakuItem]
+    @EnvironmentObject var session: Session
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            if items.isEmpty {
+                Text("这个视频还没有弹幕")
+                    .foregroundColor(.secondary)
+            }
+            ForEach(items) { d in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(d.content ?? "")
+                            .font(.system(size: 14))
+                        Text("\(d.username ?? "?") · \(timeText(d.time_offset ?? 0))")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if canDelete(d) {
+                        Button {
+                            Task { await delete(d) }
+                        } label: {
+                            Image(systemName: "trash").foregroundColor(.red)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .navigationTitle("弹幕管理")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("完成") { dismiss() }
+            }
+        }
+    }
+
+    private func canDelete(_ d: DanmakuItem) -> Bool {
+        guard session.isLoggedIn else { return false }
+        return session.isAdmin || session.isOwner || d.username == session.username
+    }
+
+    private func timeText(_ t: Double) -> String {
+        let s = Int(t)
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    private func delete(_ d: DanmakuItem) async {
+        guard let id = d.id else { return }
+        if id < 0 {
+            // 本地刚发、还没回库的弹幕: 直接从列表拿掉即可
+            items.removeAll { $0.id == id }
+            return
+        }
+        struct R: Decodable { var ok: Bool?; var message: String? }
+        let rows: [R]? = try? await SB.rpc("delete_danmaku", params: [
+            "p_token": session.loginToken, "p_id": id])
+        if rows?.first?.ok == true {
+            items.removeAll { $0.id == id }
+        }
     }
 }
 

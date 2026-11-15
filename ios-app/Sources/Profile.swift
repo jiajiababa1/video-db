@@ -128,9 +128,9 @@ struct ProfileHomeView: View {
             } else {
                 loginPrompt
             }
-            if showDrawer {
-                drawerOverlay
-            }
+            // 抽屉常驻不卸载, 只靠位移开/关: 卸载会连带销毁抽屉里 NavigationLink
+            // 已推出的页面 —— 先是"点了没反应", 改延迟关闭后又变成"点进去自动退出"
+            drawerOverlay
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationBarHidden(true)
@@ -388,7 +388,7 @@ struct ProfileHomeView: View {
 
     private var drawerOverlay: some View {
         ZStack(alignment: .trailing) {
-            Color.black.opacity(0.45)
+            Color.black.opacity(showDrawer ? 0.45 : 0)
                 .ignoresSafeArea()
                 .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { showDrawer = false } }
             ScrollView {
@@ -406,10 +406,8 @@ struct ProfileHomeView: View {
                         }
                         .buttonStyle(.plain)
                         .simultaneousGesture(TapGesture().onEnded {
-                            // 延迟关抽屉: 同一拍就关会把刚触发的跳转一起销毁, 表现为"点了没反应"
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                                withAnimation(.easeOut(duration: 0.2)) { showDrawer = false }
-                            }
+                            // 只收起 (位移), 不卸载: 跳转的页面不会被带走
+                            showDrawer = false
                         })
                         Spacer()
                         Button { withAnimation(.easeOut(duration: 0.2)) { showDrawer = false } } label: {
@@ -445,7 +443,7 @@ struct ProfileHomeView: View {
                         },
                         .link(icon: "arrow.left.arrow.right", title: "切换账号", dest: AnyView(AccountSwitcherView())),
                     ])
-                    Text("2048 影院 · 原生版 v4.1")
+                    Text("2048 影院 · 原生版 v4.2")
                         .font(.caption2)
                         .foregroundColor(Theme.sub)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -456,8 +454,10 @@ struct ProfileHomeView: View {
             .frame(width: 292)
             .frame(maxHeight: .infinity)
             .background(Theme.surface)
-            .transition(.move(edge: .trailing))
+            .offset(x: showDrawer ? 0 : 300)
         }
+        .animation(.easeOut(duration: 0.22), value: showDrawer)
+        .allowsHitTesting(showDrawer)
         .zIndex(5)
     }
 
@@ -477,10 +477,8 @@ struct ProfileHomeView: View {
                     }
                     .buttonStyle(.plain)
                     .simultaneousGesture(TapGesture().onEnded {
-                        // 延迟关抽屉: 同一拍就关会把刚触发的跳转一起销毁, 表现为"点了没反应"
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            withAnimation(.easeOut(duration: 0.2)) { showDrawer = false }
-                        }
+                        // 只收起 (位移), 不卸载: 跳转的页面不会被带走
+                        showDrawer = false
                     })
                 case let .action(icon, title, note, run):
                     Button {
@@ -715,7 +713,7 @@ struct SettingsView: View {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("v4.1").foregroundColor(Theme.sub)
+                    Text("v4.2").foregroundColor(Theme.sub)
                 }
                 if session.isLoggedIn {
                     Button(role: .destructive) { session.logout() } label: {
