@@ -108,17 +108,20 @@ enum TokenVault {
 
     /// 登录后调用: 从云端取回并解密 gh/sb 令牌
     static func pullTokens(session: Session) async {
-        guard session.isLoggedIn, let user = session.username,
-              let key = loadKey() else { return }
-        guard let data = await fetchConfigData(user: user) else { return }
-        if let gh = data["ghToken"] as? String, !gh.isEmpty,
-           let plain = decrypt(key: key, blob: gh), !plain.isEmpty {
-            await MainActor.run { session.ghToken = plain }
+        guard session.isLoggedIn, let user = session.username else { return }
+        // 取不到/解不开就清空本机令牌: 绝不留上一个账号的令牌 ——
+        // 旧版只写不清, 残留的 gh 令牌曾让同一手机上的任何账号都被认成站主
+        guard let key = loadKey(), let data = await fetchConfigData(user: user) else {
+            await MainActor.run { session.ghToken = ""; session.sbToken = "" }
+            return
         }
-        if let sb = data["sbToken"] as? String,
-           let plain = decrypt(key: key, blob: sb) {
-            await MainActor.run { session.sbToken = plain }
-        }
+        var gh = ""
+        if let blob = data["ghToken"] as? String, !blob.isEmpty,
+           let plain = decrypt(key: key, blob: blob), !plain.isEmpty { gh = plain }
+        var sb = ""
+        if let blob = data["sbToken"] as? String, !blob.isEmpty,
+           let plain = decrypt(key: key, blob: blob), !plain.isEmpty { sb = plain }
+        await MainActor.run { session.ghToken = gh; session.sbToken = sb }
     }
 
     /// 令牌变更后调用: 加密合并回云端 (保留配置里的其他字段)

@@ -45,6 +45,13 @@ private enum SessionKeychain {
     }
 }
 
+/// 已保存账号 (多账号一键切换: 令牌存钥匙串, 点一下直接换, 不用再输密码)
+struct SavedAccount: Codable, Identifiable {
+    var username: String
+    var token: String
+    var id: String { username }
+}
+
 /// 会话状态: 设备 ID / 门禁 token / 账号登录 (令牌在钥匙串, 其余与网站 localStorage 同构)
 final class Session: ObservableObject {
     static let shared = Session()
@@ -53,6 +60,9 @@ final class Session: ObservableObject {
     @Published var username: String?
     @Published var isAdmin: Bool = false
     @Published var vipLevel: Int = 0
+    @Published var savedAccounts: [SavedAccount] = []
+    @Published var accountGeneration = 0   // 登录/切换/退出时 +1, RootView 据此重拉云端数据
+    @Published var myUserId: Int? = nil    // 自己的用户 ID: 站主只认 id == 1
 
     private let d = UserDefaults.standard
 
@@ -61,6 +71,85 @@ final class Session: ObservableObject {
         username = d.string(forKey: "login_user")
         isAdmin = d.bool(forKey: "login_is_admin")
         vipLevel = d.integer(forKey: "login_vip")
+        let storedId = d.integer(forKey: "login_user_id")
+        myUserId = storedId > 0 ? storedId : nil
+        savedAccounts = Self.loadSavedAccounts()
+        // 当前已登录的账号不在列表里 (老版本升上来) → 补存一次
+        if let u = username, !loginToken.isEmpty,
+           !savedAccounts.contains(where: { $0.username == u }) {
+            savedAccounts.append(SavedAccount(username: u, token: loginToken))
+            persistSavedAccounts()
+        }
+    }
+
+    // MARK: - 多账号保存
+
+    private static func loadSavedAccounts() -> [SavedAccount] {
+        guard let s = SessionKeychain.get("accounts_v1"),
+              let data = s.data(using: .utf8),
+              let arr = try? JSONDecoder().decode([SavedAccount].self, from: data) else { return [] }
+        return arr
+    }
+
+    private func persistSavedAccounts() {
+        if let data = try? JSONEncoder().encode(savedAccounts),
+           let s = String(data: data, encoding: .utf8) {
+            SessionKeychain.set(s, account: "accounts_v1")
+        }
+    }
+
+    private func rememberAccount() {
+        guard let u = username, !loginToken.isEmpty else { return }
+        if let i = savedAccounts.firstIndex(where: { $0.username == u }) {
+            savedAccounts[i].token = loginToken
+        } else {
+            savedAccounts.append(SavedAccount(username: u, token: loginToken))
+        }
+        persistSavedAccounts()
+    }
+
+    /// 一键切换账号: 换上已保存的令牌, 身份随后以服务端校验为准刷新
+    func switchAccount(to name: String) async {
+        guard let acc = savedAccounts.first(where: { $0.username == name }),
+              name != username else { return }
+        d.set(acc.username, forKey: "login_user")
+        storeLoginToken(acc.token)
+        d.removeObject(forKey: "login_is_admin")
+        d.removeObject(forKey: "login_vip")
+        username = acc.username
+        isAdmin = false
+        vipLevel = 0
+        myUserId = nil
+        d.removeObject(forKey: "gh_token")
+        d.removeObject(forKey: "login_user_id")
+        TokenVault.clearKey()
+        await validateSession()
+        accountGeneration += 1
+    }
+
+    /// 从已保存列表移除账号 (移除的是当前账号 = 完整退出登录)
+    func removeAccount(_ name: String) {
+        if name == username {
+            logout()
+            return
+        }
+        savedAccounts.removeAll { $0.username == name }
+        persistSavedAccounts()
+    }
+
+    /// 退出当前账号但保留在列表里: 不通知服务端作废令牌, 之后可一键切回
+    func signOutLocal() {
+        d.removeObject(forKey: "login_user")
+        SessionKeychain.remove("login_token")
+        d.removeObject(forKey: "login_token")
+        d.removeObject(forKey: "login_is_admin")
+        d.removeObject(forKey: "login_vip")
+        d.removeObject(forKey: "sb_token")
+        d.removeObject(forKey: "gh_token")
+        d.removeObject(forKey: "login_user_id")
+        TokenVault.clearKey()
+        username = nil; isAdmin = false; vipLevel = 0; myUserId = nil
+        accountGeneration += 1
     }
 
     var deviceId: String {
@@ -79,8 +168,10 @@ final class Session: ObservableObject {
         d.removeObject(forKey: "login_token")
     }
     var isLoggedIn: Bool { username != nil && !loginToken.isEmpty }
-    /// 站主闸门 (与网站 isOwner 近似: 管理员账号或本机存有 gh_token)
-    var isOwner: Bool { isAdmin || ghToken.isEmpty == false }
+    /// 站主闸门: 只认用户 ID == 1 (kuo 本人)。
+    /// 旧版用"本机存有 gh 令牌"判断, 令牌残留会让同一手机上的其他账号全被认成站主, 已废弃;
+    /// gh 令牌现在只是调用 GitHub 的凭据, 不再代表身份。
+    var isOwner: Bool { myUserId == 1 }
 
     var ghToken: String {
         get { d.string(forKey: "gh_token") ?? "" }
@@ -125,6 +216,9 @@ final class Session: ObservableObject {
             d.set(r.is_admin ?? false, forKey: "login_is_admin")
             d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
             username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
+            rememberAccount()
+            accountGeneration += 1
+            await fetchMyId()
             // 派生云端配置解密密钥并取回跟账号走的令牌 (gh/sb token)
             if let key = TokenVault.deriveKey(password: p) {
                 TokenVault.saveKey(key)
@@ -152,6 +246,9 @@ final class Session: ObservableObject {
             d.set(r.is_admin ?? false, forKey: "login_is_admin")
             d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
             username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
+            rememberAccount()
+            accountGeneration += 1
+            await fetchMyId()
             if let key = TokenVault.deriveKey(password: p) {
                 TokenVault.saveKey(key)
             }
@@ -163,6 +260,11 @@ final class Session: ObservableObject {
     }
 
     func logout() {
+        // 完整退出: 服务端作废令牌 + 从已保存账号列表移除 (一键切换里走 signOutLocal 则保留)
+        if let u = username {
+            savedAccounts.removeAll { $0.username == u }
+            persistSavedAccounts()
+        }
         let t = loginToken
         if !t.isEmpty {
             Task { let _: [EmptyResp] = (try? await SB.rpc("logout", params: ["p_token": t])) ?? [] }
@@ -173,8 +275,11 @@ final class Session: ObservableObject {
         d.removeObject(forKey: "login_is_admin")
         d.removeObject(forKey: "login_vip")
         d.removeObject(forKey: "sb_token")
+        d.removeObject(forKey: "gh_token")
+        d.removeObject(forKey: "login_user_id")
         TokenVault.clearKey()
-        username = nil; isAdmin = false; vipLevel = 0
+        username = nil; isAdmin = false; vipLevel = 0; myUserId = nil
+        accountGeneration += 1
     }
 
     /// 启动时校验本地会话: 身份以服务端为准。
@@ -196,6 +301,22 @@ final class Session: ObservableObject {
             vipLevel = 0
             d.set(false, forKey: "login_is_admin")
             d.set(0, forKey: "login_vip")
+        }
+        await fetchMyId()
+    }
+
+    /// 拉自己的用户 ID (站主判定只认它): 按用户名查 user_accounts.id (该列已开放读取)
+    func fetchMyId() async {
+        guard let u = username else { return }
+        struct R: Decodable { var id: Int? }
+        let (rows, _): ([R], Int?) = (try? await SB.get("rest/v1/user_accounts", query: [
+            URLQueryItem(name: "select", value: "id"),
+            URLQueryItem(name: "username", value: "eq." + u),
+            URLQueryItem(name: "limit", value: "1"),
+        ])) ?? ([], nil)
+        if let row = rows.first, let id = row.id {
+            myUserId = id
+            d.set(id, forKey: "login_user_id")
         }
     }
 }

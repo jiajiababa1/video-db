@@ -1,6 +1,17 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import UIKit
+
+/// 系统安全区尺寸 (刷视频全屏沉浸时, 顶栏/底部元素手动避让状态栏与小横条用)
+enum ScreenInsets {
+    private static var insets: UIEdgeInsets {
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
+            .windows.first(where: { $0.isKeyWindow })?.safeAreaInsets ?? .zero
+    }
+    static var top: CGFloat { insets.top }
+    static var bottom: CGFloat { insets.bottom }
+}
 
 /// 「刷视频」v3 (抖音式):
 /// - 翻页: 三页跟手滑动, 松手整页吸附; 手势只挂视频区, 右侧按钮栏/顶栏固定不动,
@@ -22,6 +33,7 @@ struct SwipeFeedView: View {
     @State private var hasMore = true
     @State private var loading = false
     @State private var mode = 0            // 0 最新 1 热门 2 随机
+    @State private var showWatched = false // 看完一遍后临时关掉"看过过滤"重看 (仅本次运行)
     @State private var totalCount: Int? = nil
     @State private var dragOffset: CGFloat = 0
     @State private var paging = false
@@ -31,7 +43,8 @@ struct SwipeFeedView: View {
     @State private var heartTick = 0       // 双击爱心动画触发计数
     @State private var likeLiked = false   // 真点赞状态 (当前视频)
     @State private var likeTotal = 0       // 真点赞数 (当前视频)
-    @State private var showCatalog = false // 片库/货架/栏目 (首页左上角入口)
+    // (v4.1 起刷视频只是栏目里的一条入口, 不再有左上角片库弹窗 —— 弹窗与底下
+    //  刷视频声音重叠的问题随之根除; 打开搜索/分享时也会先暂停)
     @State private var showSearch = false
     @State private var friendWorks: [VideoItem]? = nil  // 互关模式缓存
 
@@ -56,9 +69,25 @@ struct SwipeFeedView: View {
                     } else if loading {
                         ProgressView().tint(.white)
                     } else {
-                        Text(mode == 3 ? "还没有互关好友发布的作品\n去「朋友」加好友, 或在「我的」里发布作品" : "暂无可播视频")
-                            .foregroundColor(Theme.sub)
-                            .multilineTextAlignment(.center)
+                        VStack(spacing: 14) {
+                            Text(mode == 3
+                                 ? "还没有互关好友发布的作品\n去「朋友」加好友, 或在「我的」里发布作品"
+                                 : (dockInset && !showWatched
+                                    ? "新视频都看完啦 🎉\n看过的不再重复出现 (历史每天一清, 明天又能刷)"
+                                    : "暂无可播视频"))
+                                .foregroundColor(Theme.sub)
+                                .multilineTextAlignment(.center)
+                            if dockInset, !showWatched, mode != 3 {
+                                Button("重新看一遍") {
+                                    showWatched = true
+                                    Task { await reload() }
+                                }
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(Theme.gold2)
+                                .padding(.horizontal, 18).padding(.vertical, 9)
+                                .glassCapsule()
+                            }
+                        }
                     }
                     if let nv = nextItem {
                         pageLayer(nv, isCurrent: false)
@@ -71,6 +100,12 @@ struct SwipeFeedView: View {
                 .gesture(swipeGesture(height: geo.size.height))
                 .onTapGesture(count: 2) { doubleTapFav() }
                 .onTapGesture(count: 1) { ctrl.togglePlay() }
+                .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 20, pressing: { pressing in
+                    if !pressing { ctrl.endBoost() }
+                }, perform: {
+                    ctrl.beginBoost()
+                    if ctrl.boosting { Haptics.light() }
+                })
 
                 // 固定层: 顶栏 + 右侧栏 + 底部进度 (不跟页滑动)
                 topBar
@@ -92,6 +127,18 @@ struct SwipeFeedView: View {
                             .transition(.scale.combined(with: .opacity))
                     }
                 }
+                if ctrl.boosting {
+                    Text("⚡ 2x 快进中")
+                        .font(.system(size: 12.5, weight: .bold))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Color.black.opacity(0.65))
+                        .foregroundColor(.yellow)
+                        .cornerRadius(99)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(.trailing, 14)
+                        .padding(.bottom, dockInset ? 142 : 40)
+                        .allowsHitTesting(false)
+                }
             }
             .onAppear {
                 pageH = geo.size.height
@@ -99,7 +146,9 @@ struct SwipeFeedView: View {
                 if !showComments { ctrl.resumeActive() }
             }
         }
+        .ignoresSafeArea(dockInset ? .all : [])
         .background(Color.black.ignoresSafeArea())
+        .navigationBarHidden(dockInset)
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("刷视频")
         .task {
@@ -121,20 +170,21 @@ struct SwipeFeedView: View {
             }
         }
         .onChange(of: index) { _ in startCurrent() }
+        .onChange(of: session.accountGeneration) { _ in
+            // 换账号后当前视频的点赞状态按新账号重拉 (点赞记录每人一份)
+            if let v = current { Task { await refreshLike(v) } }
+        }
         .sheet(isPresented: $showComments, onDismiss: { ctrl.resumeActive() }) {
             if let v = current {
                 CommentsSheet(video: v)
             }
         }
-        .sheet(isPresented: $showShare) {
+        .sheet(isPresented: $showShare, onDismiss: { ctrl.resumeActive() }) {
             if let v = current {
                 ActivityView(items: [URL(string: "https://jiajiababa1.github.io/video-db/watch.html?v=" + v.video_id)!])
             }
         }
-        .sheet(isPresented: $showCatalog) {
-            NavigationView { CatalogView() }
-        }
-        .sheet(isPresented: $showSearch) {
+        .sheet(isPresented: $showSearch, onDismiss: { ctrl.resumeActive() }) {
             NavigationView { SearchView() }
         }
     }
@@ -188,7 +238,7 @@ struct SwipeFeedView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 14)
                 .padding(.trailing, 76)   // 给右侧栏让位
-                .padding(.bottom, dockInset ? 36 : 30)
+                .padding(.bottom, dockInset ? 118 : 30)
             }
         }
     }
@@ -198,14 +248,6 @@ struct SwipeFeedView: View {
     private var topBar: some View {
         VStack {
             HStack {
-                Button { showCatalog = true } label: {
-                    Image(systemName: "square.grid.2x2.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(.white)
-                        .frame(width: 36, height: 36)
-                        .glassCircle()
-                }
-                .buttonStyle(.plain)
                 Spacer()
                 Picker("模式", selection: $mode) {
                     Text("最新").tag(0)
@@ -220,7 +262,7 @@ struct SwipeFeedView: View {
                 .glassCapsule(live: true)
                 .onChange(of: mode) { _ in Task { await reload() } }
                 Spacer()
-                Button { showSearch = true } label: {
+                Button { ctrl.pauseActive(); showSearch = true } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white)
@@ -230,7 +272,7 @@ struct SwipeFeedView: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 12)
-            .padding(.top, 6)
+            .padding(.top, dockInset ? ScreenInsets.top + 2 : 6)
             Spacer()
         }
     }
@@ -283,7 +325,7 @@ struct SwipeFeedView: View {
                     library.toggleWatchLater(v)
                 }
                 railButton("square.and.arrow.up", .white, "分享") {
-                    showShare = true
+                    ctrl.pauseActive(); showShare = true
                 }
                 NavigationLink {
                     PlayerView(video: v)
@@ -303,7 +345,7 @@ struct SwipeFeedView: View {
                 .simultaneousGesture(TapGesture().onEnded { ctrl.pauseActive() })
             }
             .padding(.trailing, 10)
-            .padding(.bottom, dockInset ? 64 : 64)
+            .padding(.bottom, dockInset ? 118 : 64)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .task(id: v.video_id) { await refreshLike(v) }
@@ -352,7 +394,7 @@ struct SwipeFeedView: View {
                 }
                 .frame(height: 22)
                 .padding(.horizontal, 14)
-                .padding(.bottom, dockInset ? 12 : 6)
+                .padding(.bottom, dockInset ? 106 : 6)
             }
         }
     }
@@ -494,8 +536,12 @@ struct SwipeFeedView: View {
         items = []
         seenIds = []
         dragOffset = 0
-        let batch = await fetchBatch()
-        appendBatch(batch)
+        await pump(minItems: 12)
+        // 每次进来换个开头: 第一批随机旋转一下, 不再总是同一条 (仅刷视频主页)
+        if dockInset, items.count > 6 {
+            let cut = Int.random(in: 1...(items.count / 2))
+            items = Array(items[cut...]) + Array(items[..<cut])
+        }
         loading = false
         startCurrent()
     }
@@ -503,28 +549,28 @@ struct SwipeFeedView: View {
     private func loadMore() async {
         guard hasMore, !loading else { return }
         loading = true
-        page += 1
-        let batch = await fetchBatch()
-        if batch.isEmpty {
-            if mode == 2 {
-                var extra: [VideoItem] = []
-                for _ in 0..<3 where extra.count < 6 {
-                    extra.append(contentsOf: await fetchBatch())
-                }
-                let fresh = extra.filter { !seenIds.contains($0.video_id) }
-                if fresh.isEmpty { hasMore = false } else { appendBatch(fresh) }
-            } else {
-                hasMore = false
-            }
-        } else {
-            appendBatch(batch)
-        }
+        await pump(minItems: items.count + 1)
         loading = false
         ctrl.syncWindow(items: items, index: index)
     }
 
+    /// 连续取批直到攒够 minItems 条: 看过的被过滤后单批可能不足, 自动翻下一页补;
+    /// 最多 5 轮防死循环 (随机模式整批都看过时靠它收尾)
+    private func pump(minItems: Int) async {
+        var rounds = 0
+        while items.count < minItems, hasMore, rounds < 5 {
+            let batch = await fetchBatch()
+            appendBatch(batch)
+            if mode == 0 || mode == 1 { page += 1 }
+            if batch.isEmpty, mode != 2 { hasMore = false }
+            rounds += 1
+        }
+    }
+
     private func appendBatch(_ batch: [VideoItem]) {
         for v in batch where !seenIds.contains(v.video_id) {
+            // 刷视频专属逻辑 (仅主页实例): 看过的不再出现; 列表/片库/搜索不受影响
+            if dockInset, !showWatched, library.isWatched(v.video_id) { continue }
             seenIds.insert(v.video_id)
             items.append(v)
         }
@@ -564,6 +610,7 @@ final class SwipeController: ObservableObject {
     @Published var current: Double = 0
     @Published var duration: Double = 0
     @Published var userPaused = false
+    @Published var boosting = false   // 长按 2 倍速中
     var onEnded: (() -> Void)? = nil
     var onFailed: (() -> Void)? = nil
     private var statusObs: [String: NSKeyValueObservation] = [:]
@@ -586,6 +633,21 @@ final class SwipeController: ObservableObject {
     func resumeActive() {
         guard !userPaused, activeId != nil, activePlayer != nil else { return }
         activePlayer?.playImmediately(atRate: 1)
+    }
+
+    /// 长按倍速: 按满 0.5 秒才由手势 perform 调用 (普通点击不触发); 抬手 endBoost 恢复 1x
+    func beginBoost() {
+        guard let p = activePlayer, !userPaused,
+              p.timeControlStatus == .playing
+                || p.timeControlStatus == .waitingToPlayAtSpecifiedRate else { return }
+        boosting = true
+        p.rate = 2
+    }
+
+    func endBoost() {
+        guard boosting else { return }
+        boosting = false
+        if let p = activePlayer, p.timeControlStatus == .playing { p.rate = 1 }
     }
 
     /// 进度条拖动: 按比例跳转 (带容差, 拖动更顺)
@@ -640,7 +702,12 @@ final class SwipeController: ObservableObject {
                 item.preferredForwardBufferDuration = 10
                 self.observers[v.video_id] = NotificationCenter.default.addObserver(
                     forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
-                    if self?.activeId == v.video_id { self?.onEnded?() }
+                    guard let self = self, self.activeId == v.video_id else { return }
+                    // 刷视频循环播放 (抖音式): 播完从头再播; 用户手动暂停着就不打扰
+                    if !self.userPaused, let p = self.pool[v.video_id] {
+                        p.seek(to: .zero)
+                        p.playImmediately(atRate: 1)
+                    }
                 }
                 // 真就绪/真失败都听播放条目自己的状态: 以前没监听, 坏链接 (403/过期签名)
                 // 会永远停在黑屏 —— 这就是"有的视频黑屏"的根因
@@ -733,19 +800,39 @@ struct SwipePlayerLayer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PlayerLayerView {
         let v = PlayerLayerView()
-        v.playerLayer.player = ctrl.activePlayer
         v.playerLayer.videoGravity = .resizeAspect
+        v.bind(ctrl.activePlayer)
         return v
     }
 
     func updateUIView(_ uiView: PlayerLayerView, context: Context) {
         if uiView.playerLayer.player !== ctrl.activePlayer {
-            uiView.playerLayer.player = ctrl.activePlayer
+            uiView.bind(ctrl.activePlayer)
         }
     }
 
     final class PlayerLayerView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        private var readyObs: NSKeyValueObservation?
+
+        /// 换播放器先把画面藏起来, 等第一帧真显示出来 (isReadyForDisplay) 再淡入:
+        /// 否则播放层一挂上先是一帧黑, 每次翻页都会"闪一下" (底下封面垫着, 淡入正好盖住交接)
+        func bind(_ p: AVPlayer?) {
+            readyObs = nil
+            playerLayer.player = p
+            guard p != nil else { alpha = 0; return }
+            alpha = playerLayer.isReadyForDisplay ? 1 : 0
+            readyObs = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] layer, _ in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if layer.isReadyForDisplay {
+                        UIView.animate(withDuration: 0.18) { self.alpha = 1 }
+                    } else {
+                        self.alpha = 0
+                    }
+                }
+            }
+        }
     }
 }

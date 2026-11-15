@@ -35,6 +35,11 @@ struct RootView: View {
         .task {
             bridge.bootstrap()
             await session.validateSession()
+            library.activateUser(session.username)
+            // 历史每天一清: 跨天先清本地+云端, 再做拉取合并, 免得刚清完又被云端合回来
+            if library.rollDayIfNeeded(), session.isLoggedIn, let u = session.username {
+                await CloudSync.clearHistory(user: u)
+            }
             if session.isLoggedIn {
                 await TokenVault.pullTokens(session: session)
                 await ConfigSync.pull(session: session, library: library)
@@ -54,17 +59,33 @@ struct RootView: View {
                 }
             }
         }
+        .onChange(of: session.accountGeneration) { _ in
+            // 登录/切换/退出账号: 先把片库切到该账号自己的存档 (各账号数据互不串),
+            // 再按新账号重拉云端数据 (isLoggedIn 不变时也要做, 所以走 generation 而不是 isLoggedIn)
+            library.activateUser(session.username)
+            if session.isLoggedIn {
+                Task {
+                    await TokenVault.pullTokens(session: session)
+                    await ConfigSync.pull(session: session, library: library)
+                    await CloudSync.pullMerge(into: library, session: session)
+                    await notices.refresh(session: session)
+                }
+            }
+        }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
+                if library.rollDayIfNeeded(), session.isLoggedIn, let u = session.username {
+                    Task { await CloudSync.clearHistory(user: u) }
+                }
                 Task { await notices.refresh(session: session) }
             }
         }
     }
 
-    // MARK: - v4.0 四栏布局 (抖音式): 首页(刷视频) / 信息 / 朋友 / 我的
-    // 底栏不再悬浮覆盖内容, 改成布局内的一条: 页面区到此为止, 任何按钮都不会被它挡住
-    // (v3.x 悬浮 Dock 遮挡底部按钮的问题就来自覆盖式布局)。
-    // 老「首页货架 / 片库 / 栏目」收进刷视频页左上角的片库入口 (CatalogView)。
+    // MARK: - 四栏布局: 首页(总揽) / 信息 / 朋友 / 我的
+    // v4.1 改悬浮胶囊底栏 (用户点名仿抖音截图): 胶囊只占自身大小、不整屏拦截点击;
+    // 各页加底部安全区避让。首页 = 总揽页 (货架/片库/栏目三段), 刷视频是「栏目」
+    // 里的一条入口, 点进去才刷 (不再是首页本体, 也没有弹窗货架, 杜绝声音重叠)。
     @State private var tabSel = 0
     @State private var epochs = [0, 0, 0, 0]
     @State private var visited: Set<Int> = [0]
@@ -81,15 +102,27 @@ struct RootView: View {
     }
 
     private var mainTabs: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottom) {
             ZStack {
-                if visited.contains(0) { tabPage(0) { SwipeFeedView(dockInset: true) } }
-                if visited.contains(1) { tabPage(1) { InboxView() } }
-                if visited.contains(2) { tabPage(2) { FriendsView() } }
-                if visited.contains(3) { tabPage(3) { ProfileHomeView() } }
+                if visited.contains(0) {
+                    tabPage(0) { CatalogView() }
+                        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: 64) }
+                }
+                if visited.contains(1) {
+                    tabPage(1) { InboxView() }
+                        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: 64) }
+                }
+                if visited.contains(2) {
+                    tabPage(2) { FriendsView() }
+                        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: 64) }
+                }
+                if visited.contains(3) {
+                    tabPage(3) { ProfileHomeView() }
+                        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: 64) }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            dock
+            floatingDock
         }
     }
 
@@ -104,22 +137,24 @@ struct RootView: View {
             .zIndex(tabSel == idx ? 1 : 0)
     }
 
-    private var dock: some View {
+    /// 悬浮胶囊底栏 (仿抖音): 半透明黑胶囊浮在内容上; 胶囊之外的区域不拦截点击
+    private var floatingDock: some View {
         HStack(spacing: 0) {
             dockItem(0, icon: "house.fill", label: "首页")
             dockItem(1, icon: "bell.fill", label: "信息", badge: notices.socialBadge)
             dockItem(2, icon: "person.2.fill", label: "朋友")
             dockItem(3, icon: "person.crop.circle.fill", label: "我的", badge: notices.meBadge)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .background(Theme.bg)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 0.5)
-        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(
+            Capsule()
+                .fill(Color.black.opacity(0.55))
+                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.5), radius: 14, y: 5)
+        )
+        .padding(.horizontal, 56)
+        .padding(.bottom, 8)
     }
 
     private func dockItem(_ idx: Int, icon: String, label: String, badge: Int = 0) -> some View {
@@ -149,7 +184,8 @@ struct RootView: View {
     }
 }
 
-/// 片库总入口: 老首页货架 / 片库 / 栏目三页收纳 (刷视频页左上角按钮打开)
+/// 首页总揽: 货架 / 片库 / 栏目三段 (v4.1 起是首页本体, 不再是弹窗;
+/// 刷视频是栏目段里的一条入口, 点进去才开始刷)
 struct CatalogView: View {
     @State private var seg = 0
 
@@ -169,7 +205,7 @@ struct CatalogView: View {
             }
         }
         .background(Theme.bg.ignoresSafeArea())
-        .navigationTitle("片库")
+        .navigationTitle("首页")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

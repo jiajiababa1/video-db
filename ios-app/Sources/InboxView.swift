@@ -49,6 +49,7 @@ enum InboxAPI {
 /// 「信息」Tab: 通知(被赞/被评/好友申请) / 点赞(收到的+我赞过的) / 评论(收到的+我发出的) / 私信
 struct InboxView: View {
     @EnvironmentObject var session: Session
+    @Environment(\.vdbTabActive) private var tabActive
     @State private var seg: Int
     @State private var notes: [NotifyRow] = []
     @State private var myComments: [MyCommentRow] = []
@@ -109,6 +110,14 @@ struct InboxView: View {
         .navigationTitle("信息")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .onChange(of: tabActive) { active in
+            // 页面常驻不重建: 切回「信息」时刷新, 新的点赞/评论/私信要立刻能看到
+            if active { Task { await load() } }
+        }
+        .onChange(of: session.accountGeneration) { _ in
+            // 换账号后按新账号重拉 (通知/点赞/评论都是每人一份)
+            Task { await load() }
+        }
         .sheet(item: $playItem) { v in
             NavigationView { PlayerView(video: v) }
         }

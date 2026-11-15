@@ -107,6 +107,8 @@ struct ProfileHomeView: View {
     @State private var myId: Int? = nil
     @State private var seg = 0
     @State private var showDrawer = false
+    @State private var cacheSizeText = ""
+    @Environment(\.vdbTabActive) private var tabActive
     @State private var showEdit = false
     @State private var playItem: VideoItem? = nil
 
@@ -133,6 +135,18 @@ struct ProfileHomeView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationBarHidden(true)
         .task { await load() }
+        .onChange(of: tabActive) { active in
+            // 页面常驻不重建: 切回「我的」时刷新, 刚点的赞/改的资料要立刻能看到
+            if active { Task { await load() } }
+        }
+        .onChange(of: session.accountGeneration) { _ in
+            // 换账号后按新账号重拉 (点赞/资料/作品都是每人一份)
+            Task { await load() }
+        }
+        .onChange(of: showDrawer) { open in
+            // 缓存大小改在打开时算好放状态里, 不在抽屉构建时同步遍历目录 (那会让三条杠点了半天才动)
+            if open { cacheSizeText = CacheTool.sizeText() }
+        }
         .sheet(isPresented: $showEdit) {
             NavigationView {
                 ProfileEditView(profile: profile) { Task { await load() } }
@@ -391,7 +405,12 @@ struct ProfileHomeView: View {
                             .glassCapsule()
                         }
                         .buttonStyle(.plain)
-                        .simultaneousGesture(TapGesture().onEnded { showDrawer = false })
+                        .simultaneousGesture(TapGesture().onEnded {
+                            // 延迟关抽屉: 同一拍就关会把刚触发的跳转一起销毁, 表现为"点了没反应"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                withAnimation(.easeOut(duration: 0.2)) { showDrawer = false }
+                            }
+                        })
                         Spacer()
                         Button { withAnimation(.easeOut(duration: 0.2)) { showDrawer = false } } label: {
                             Image(systemName: "xmark")
@@ -420,14 +439,13 @@ struct ProfileHomeView: View {
                         ])
                     }
                     drawerGroup([
-                        .action(icon: "trash", title: "清理缓存", note: CacheTool.sizeText()) {
+                        .action(icon: "trash", title: "清理缓存", note: cacheSizeText.isEmpty ? nil : cacheSizeText) {
                             CacheTool.clear()
+                            cacheSizeText = CacheTool.sizeText()
                         },
-                        .action(icon: "arrow.left.arrow.right", title: "切换账号", note: nil) {
-                            session.logout()
-                        },
+                        .link(icon: "arrow.left.arrow.right", title: "切换账号", dest: AnyView(AccountSwitcherView())),
                     ])
-                    Text("2048 影院 · 原生版 v4.0")
+                    Text("2048 影院 · 原生版 v4.1")
                         .font(.caption2)
                         .foregroundColor(Theme.sub)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -458,7 +476,12 @@ struct ProfileHomeView: View {
                         drawerRow(icon: icon, title: title, note: nil)
                     }
                     .buttonStyle(.plain)
-                    .simultaneousGesture(TapGesture().onEnded { showDrawer = false })
+                    .simultaneousGesture(TapGesture().onEnded {
+                        // 延迟关抽屉: 同一拍就关会把刚触发的跳转一起销毁, 表现为"点了没反应"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            withAnimation(.easeOut(duration: 0.2)) { showDrawer = false }
+                        }
+                    })
                 case let .action(icon, title, note, run):
                     Button {
                         run()
@@ -644,6 +667,9 @@ struct SettingsView: View {
                     .onChange(of: saver) { AppSettings.dataSaver = $0 }
             }
             Section(header: Text("通用")) {
+                NavigationLink { AccountSwitcherView() } label: {
+                    Label("切换账号", systemImage: "arrow.left.arrow.right")
+                }
                 NavigationLink { DevicesView() } label: {
                     Label("我的设备", systemImage: "iphone")
                 }
@@ -689,7 +715,7 @@ struct SettingsView: View {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("v4.0").foregroundColor(Theme.sub)
+                    Text("v4.1").foregroundColor(Theme.sub)
                 }
                 if session.isLoggedIn {
                     Button(role: .destructive) { session.logout() } label: {

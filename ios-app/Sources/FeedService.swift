@@ -77,6 +77,29 @@ enum FeedService {
     }
 
     /// 随机取片 (服务端 random_playable 表采样随机取可播视频; 原来的随机深分页 offset 十几万必超时)
+    /// 全面优化后的搜索: 服务端 search_videos —— 多关键词空格分隔全部命中,
+    /// 按相关度排序 (作者全等 > 标题前缀 > 标题包含 > 作者包含), 再按观看量/时间
+    static func searchVideos(q: String, page: Int, playableOnly: Bool) async -> [VideoItem] {
+        let rows: [VideoItem]? = try? await SB.rpc("search_videos", params: [
+            "p_q": q,
+            "p_limit": pageSize,
+            "p_offset": (page - 1) * pageSize,
+            "p_playable": playableOnly,
+        ])
+        return rows ?? []
+    }
+
+    struct Suggest: Decodable {
+        var kind: String?
+        var txt: String?
+    }
+
+    /// 输入联想: 匹配的作者 + 热门标题 (服务端 search_suggest)
+    static func searchSuggest(q: String) async -> [Suggest] {
+        let rows: [Suggest]? = try? await SB.rpc("search_suggest", params: ["p_q": q, "p_limit": 8])
+        return rows ?? []
+    }
+
     static func fetchRandom(_ limit: Int = pageSize) async -> [VideoItem] {
         let rows: [VideoItem] = (try? await SB.rpc("random_playable", params: ["p_limit": limit])) ?? []
         return rows

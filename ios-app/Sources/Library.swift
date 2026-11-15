@@ -84,11 +84,46 @@ final class Library: ObservableObject {
         var id: String { item.video_id + "|" + kind }
     }
 
-    private let fileURL: URL
+    /// 当前存档归属的账号 ("" = 未登录): 每个账号一份独立存档, 同一手机换账号不串数据
+    private(set) var storeUser: String = ""
+
+    private var fileURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        if storeUser.isEmpty { return docs.appendingPathComponent("library-anon.json") }
+        let safe = storeUser.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "_")
+        return docs.appendingPathComponent("library-" + safe + ".json")
+    }
 
     init() {
+        // 启动即按上次登录的账号读档 (第一帧就不串号)
+        storeUser = UserDefaults.standard.string(forKey: "login_user") ?? ""
+        claimLegacyIfNeeded()
+        load()
+    }
+
+    /// 老版本是全机共用一份 library.json: 第一个登录的账号认领它 (原机主数据不丢),
+    /// 之后每个账号用自己的文件, 互不覆盖
+    private func claimLegacyIfNeeded() {
+        guard !storeUser.isEmpty else { return }
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        fileURL = docs.appendingPathComponent("library.json")
+        let legacy = docs.appendingPathComponent("library.json")
+        guard !FileManager.default.fileExists(atPath: fileURL.path),
+              UserDefaults.standard.string(forKey: "vdb_library_claimed") == nil,
+              FileManager.default.fileExists(atPath: legacy.path) else { return }
+        try? FileManager.default.copyItem(at: legacy, to: fileURL)
+        UserDefaults.standard.set(storeUser, forKey: "vdb_library_claimed")
+    }
+
+    /// 切换账号时调用: 内存全部重置后读新账号的存档 (没存档 = 全新空白, 不带上一个账号的数据)
+    func activateUser(_ name: String?) {
+        let key = (name ?? "").trimmingCharacters(in: .whitespaces)
+        guard key != storeUser else { return }
+        storeUser = key
+        favorites = []; watchLater = []; history = []; progress = [:]
+        follows = []; blockedAuthors = []; snapshots = [:]; favFolders = [:]
+        hiddenIds = []; badwords = []; searchRecent = []; recycle = []; countedViews = []
+        undoNote = nil; undoAction = nil
+        claimLegacyIfNeeded()
         load()
     }
 
@@ -134,6 +169,27 @@ final class Library: ObservableObject {
         if isFollowing(author) { follows.removeAll { $0 == author }; Haptics.light() }
         else { follows.insert(author, at: 0); Haptics.success() }
         save()
+    }
+
+    /// 历史每天一清 (全员规则): 跨天首次使用时清空观看历史与续播进度。
+    /// 返回 true 表示刚清过 (RootView 据此同步删云端历史行, 防合并时又被拉回来)。
+    /// 日期记在独立 UserDefaults 键上, 不进 Persist 结构 (避免老存档解码失败丢数据)。
+    @discardableResult
+    func rollDayIfNeeded() -> Bool {
+        let key = "vdb_history_day_" + (storeUser.isEmpty ? "anon" : storeUser)
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        let today = f.string(from: Date())
+        guard let stored = UserDefaults.standard.string(forKey: key) else {
+            UserDefaults.standard.set(today, forKey: key)
+            return false
+        }
+        guard stored != today else { return false }
+        UserDefaults.standard.set(today, forKey: key)
+        history = []
+        progress = [:]
+        save()
+        return true
     }
 
     func recordWatch(_ v: VideoItem, progress p: Double? = nil) {

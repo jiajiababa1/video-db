@@ -127,18 +127,14 @@ struct AuthorView: View {
     }
 
     private func loadMeta() async {
-        // 视频总数: 走 FeedService 同口径取 total
-        if let r = try? await FeedService.fetchPage(author: name, page: 1) {
-            videoTotal = r.total
-        }
-        // 总播放: 聚合该作者视频的 views (最多取 500 条求和)
-        let enc = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
-        let url = SB.base.absoluteString + "/rest/v1/videos?select=views&author=eq." + enc
-            + "&removed=not.is.true&limit=500"
-        struct VRow: Decodable { var views: FlexInt? }
-        let (rows, _): ([VRow], Int?) = (try? await SB.getRaw(url)) ?? ([], nil)
-        if !rows.isEmpty {
-            viewsTotal = rows.reduce(0) { $0 + ($1.views?.value ?? 0) }
+        // 视频总数 + 总播放: 服务端精确聚合 (author_stats)。
+        // 旧版拿列表接口的估算总数 (count=planned) 冒充: 规划器对作者过滤给的是
+        // 拍脑袋估值, 每个作者都显示同一个数 (用户实测全是 17), 已废弃。
+        struct Stat: Decodable { var videos: Int?; var views: Int? }
+        let stats: [Stat] = (try? await SB.rpc("author_stats", params: ["p_author": name])) ?? []
+        if let s = stats.first {
+            videoTotal = s.videos
+            if let v = s.views, v > 0 { viewsTotal = v }
         }
         // TA 的作品
         let all = await SocialAPI.works()

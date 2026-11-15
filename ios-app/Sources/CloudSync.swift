@@ -51,6 +51,14 @@ enum CloudSync {
                              prefer: "resolution=merge-duplicates,return=minimal")
     }
 
+    /// 每天一清: 删除当前用户的全部云端历史行 (本地已清, 防合并时被拉回来)
+    static func clearHistory(user: String) async {
+        try? await SB.delete("rest/v1/cloud_user_data", query: [
+            URLQueryItem(name: "username", value: "eq." + user),
+            URLQueryItem(name: "kind", value: "eq.hist"),
+        ])
+    }
+
     static func remove(kind: String, id: String, user: String) async {
         try? await SB.delete("rest/v1/cloud_user_data", query: [
             URLQueryItem(name: "username", value: "eq." + user),

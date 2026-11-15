@@ -81,7 +81,7 @@ struct HomeView: View {
                             shelf(continueWatching, showProgress: true)
                         }
                     case "latest":
-                        shelfHeader("最新上线", section: FeedService.allSections[2])
+                        shelfHeader("最新上线", latestLink: true)
                         shelf(latest)
                     case "hsex":
                         shelfHeader("Hsex 专栏", section: FeedService.allSections[8])
@@ -237,11 +237,18 @@ struct HomeView: View {
             .cornerRadius(99)
     }
 
-    private func shelfHeader(_ title: String, section: AppSection? = nil) -> some View {
+    private func shelfHeader(_ title: String, section: AppSection? = nil, latestLink: Bool = false) -> some View {
         HStack {
             Text(title).font(.system(size: 17, weight: .bold))
             Spacer()
-            if let sec = section {
+            if latestLink {
+                // 最新上线 = 全站按时间倒序 (与刷视频「最新」同口径), 不是 latest 栏目 tag
+                NavigationLink {
+                    FeedView(navTitle: "最新上线")
+                } label: {
+                    Text("更多 ›").font(.caption).foregroundColor(Theme.gold2)
+                }
+            } else if let sec = section {
                 NavigationLink {
                     FeedView(section: sec)
                 } label: {
@@ -280,7 +287,7 @@ struct HomeView: View {
         if hx.isEmpty, let c = FeedCache.read(FeedCache.homeKey("hsex")) { hx = visible(c.items) }
         if recs.isEmpty, let c = FeedCache.read(FeedCache.homeKey("recs")) { recs = visible(c.items) }
         loading = latest.isEmpty
-        async let a = FeedService.fetchPage(section: FeedService.allSections[2], page: 1)
+        async let a = FeedService.fetchPage(page: 1)
         async let b = FeedService.fetchPage(section: FeedService.allSections[8], page: 1)
         async let c = FeedService.fetchPage(section: FeedService.allSections[1], page: 1)
         if let r = try? await a {
