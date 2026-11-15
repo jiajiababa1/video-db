@@ -641,11 +641,15 @@ final class SwipeController: ObservableObject {
     @Published var duration: Double = 0
     @Published var userPaused = false
     @Published var boosting = false   // 长按 2 倍速中
+    private weak var boostPlayer: AVPlayer? = nil  // 正在被倍速的播放器 (恢复时认它, 不认状态)
+    var lastBoostEnd: Date? = nil     // 倍速结束时刻: 紧接着的单击是抬手误触, 不当点按处理
     var onEnded: (() -> Void)? = nil
     var onFailed: (() -> Void)? = nil
     private var statusObs: [String: NSKeyValueObservation] = [:]
 
     func togglePlay() {
+        // 长按刚抬手的 0.35 秒内忽略单击: 那是倍速的手抬起来, 不是用户要点暂停
+        if let t = lastBoostEnd, Date().timeIntervalSince(t) < 0.35 { return }
         guard let p = activePlayer else { return }
         if p.timeControlStatus == .playing {
             p.pause()
@@ -665,19 +669,26 @@ final class SwipeController: ObservableObject {
         activePlayer?.playImmediately(atRate: 1)
     }
 
-    /// 长按倍速: 按满 0.5 秒才由手势 perform 调用 (普通点击不触发); 抬手 endBoost 恢复 1x
+    /// 长按倍速: 按住期间一直 2x, 抬手恢复 1x
     func beginBoost() {
         guard let p = activePlayer, !userPaused,
               p.timeControlStatus == .playing
                 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate else { return }
         boosting = true
+        boostPlayer = p
         p.rate = 2
     }
 
     func endBoost() {
         guard boosting else { return }
         boosting = false
-        if let p = activePlayer, p.timeControlStatus == .playing { p.rate = 1 }
+        lastBoostEnd = Date()
+        // 无条件恢复: 旧版只在状态恰为 .playing 时才恢复, 缓冲中 (.waiting) 抬手
+        // 会跳过恢复 —— 视频从此一直卡在 2 倍速 (用户实测的 bug)
+        if let p = boostPlayer ?? activePlayer, p.timeControlStatus != .paused {
+            p.rate = 1
+        }
+        boostPlayer = nil
     }
 
     /// 进度条拖动: 按比例跳转 (带容差, 拖动更顺)
@@ -766,6 +777,7 @@ final class SwipeController: ObservableObject {
     }
 
     private func activate(_ v: VideoItem) {
+        if activeId != v.video_id { endBoost() }
         if activeId != v.video_id { userPaused = false }
         if activeId == v.video_id, let p = pool[v.video_id] {
             if activePlayer !== p { attach(p, id: v.video_id) }
@@ -808,6 +820,10 @@ final class SwipeController: ObservableObject {
             guard let self = self, self.activeId == id else { return }
             self.current = t.seconds
             if let d = p.currentItem?.duration.seconds, d.isFinite { self.duration = d }
+            // 兜底纠偏: 不在倍速状态却发现速率还是 2x (任何回调丢失的边缘情况) 立刻改回 1x
+            if !self.boosting, p.rate > 1.5, p.timeControlStatus != .paused {
+                p.rate = 1
+            }
         }
     }
 
