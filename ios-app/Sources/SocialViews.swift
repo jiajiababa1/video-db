@@ -20,6 +20,7 @@ struct FriendsView: View {
     @State private var addName = ""
     @State private var note: String? = nil
     @State private var unread = 0
+    @State private var shareTo: IdentifiedString? = nil
 
     private var me: String { session.username ?? "" }
     private var incoming: [FriendRow] { rows.filter { $0.status == "pending" && $0.user2 == me } }
@@ -89,6 +90,8 @@ struct FriendsView: View {
                                         .background(Theme.goldGradient).foregroundColor(.black)
                                         .cornerRadius(99)
                                 }
+                                Button("分享视频") { shareTo = IdentifiedString(value: other) }
+                                    .font(.system(size: 13)).foregroundColor(Theme.gold2)
                                 Button("删除") { Task { await SocialAPI.removeRow(a: me, b: other); await load() } }
                                     .font(.system(size: 13)).foregroundColor(.red)
                             }
@@ -108,6 +111,9 @@ struct FriendsView: View {
         .navigationTitle("好友与社交")
         .task { await load() }
         .refreshable { await load() }
+        .sheet(item: $shareTo) { w in
+            ShareVideoPickerView(friend: w.value)
+        }
     }
 
     private var addBox: some View {

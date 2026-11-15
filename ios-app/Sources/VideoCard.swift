@@ -193,6 +193,7 @@ struct VideoCard: View {
     @EnvironmentObject var library: Library
     @ObservedObject private var inline = InlinePlayCenter.shared
     @State private var showPreview = false
+    @State private var showShare = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -280,10 +281,18 @@ struct VideoCard: View {
         .sheet(isPresented: $showPreview) {
             PreviewSheet(video: video)
         }
+        .sheet(isPresented: $showShare) {
+            ShareToFriendView(video: video)
+        }
     }
 
     @ViewBuilder
     private var contextMenuItems: some View {
+            Button {
+                showShare = true
+            } label: {
+                Label("分享给朋友", systemImage: "paperplane")
+            }
             Button {
                 showPreview = true
             } label: {

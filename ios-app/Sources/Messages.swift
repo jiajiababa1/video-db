@@ -36,10 +36,12 @@ enum DMAPI {
     }
 
     static func send(token: String, to: String, content: String) async -> Bool {
-        struct R: Decodable { var ok: Bool? }
+        // send_message_t 返回的列叫 success 不是 ok: 旧版读 ok 永远是 nil 又兜底成 true,
+        // 发送失败也报成功 (与兑换码同类 bug)。按真实列名读, 失败就返回 false。
+        struct R: Decodable { var success: Bool? }
         let rows: [R] = (try? await SB.rpc("send_message_t",
             params: ["p_token": token, "p_to": to, "p_content": content])) ?? []
-        return rows.first?.ok ?? true
+        return rows.first?.success ?? false
     }
 
     static func unread(token: String) async -> Int {
@@ -80,6 +82,9 @@ struct ChatView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("@" + peer)
         .navigationBarTitleDisplayMode(.inline)
+        // 聊天页隐藏悬浮底栏: 否则它会盖住底部的发送栏 (用户实测)
+        .onAppear { ChromeState.shared.hidden = true }
+        .onDisappear { ChromeState.shared.hidden = false }
         .task {
             await reload()
             // 打开会话期间每 10 秒拉一次新消息

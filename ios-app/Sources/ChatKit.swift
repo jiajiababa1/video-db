@@ -17,6 +17,7 @@ enum MsgContent {
     case img(String)
     case video(String)
     case file(url: String, name: String, size: Int)
+    case share(id: String, title: String, thumb: String)   // 站内视频分享卡片 (发给朋友)
 
     static let stickers = ["😀","😂","🤣","😊","😍","😘","😎","🥳","😭","😡","😱","👍","👎","👏","🙏","💪","🤝","❤️","💔","🌹","🔥","🎉","🍺","💩","🤡","👻","🐱","🌚"]
 
@@ -35,6 +36,9 @@ enum MsgContent {
             case "loc": return .loc(name: o["n"] as? String ?? "位置", lat: num("lat"), lng: num("lng"))
             case "img": return .img(o["v"] as? String ?? "")
             case "video": return .video(o["v"] as? String ?? "")
+            case "share": return .share(id: o["id"] as? String ?? "",
+                                        title: o["title"] as? String ?? "分享视频",
+                                        thumb: o["thumb"] as? String ?? "")
             case "file": return .file(url: o["v"] as? String ?? "", name: o["n"] as? String ?? "文件",
                                        size: (o["s"] as? NSNumber)?.intValue ?? 0)
             default: break
@@ -82,6 +86,7 @@ enum MsgContent {
             return "📍 \(n) (\(String(format: "%.6f", lat)),\(String(format: "%.6f", lng)))"
         case .img(let u): return "🖼 图片 " + u
         case .video(let u): return "🎬 视频 " + u
+        case .share(_, let t, _): return "🎬 分享视频 《" + t + "》"
         case .file(let u, let n, _): return "📎 文件 \(n) " + u
         }
     }
@@ -95,6 +100,7 @@ enum MsgContent {
             return json(["t": "loc", "n": n, "lat": String(format: "%.6f", lat), "lng": String(format: "%.6f", lng)])
         case .img(let u): return json(["t": "img", "v": u])
         case .video(let u): return json(["t": "video", "v": u])
+        case .share(let id, let t, let th): return json(["t": "share", "id": id, "title": t, "thumb": th])
         case .file(let u, let n, let s): return json(["t": "file", "v": u, "n": n, "s": s])
         }
     }
@@ -107,6 +113,7 @@ enum MsgContent {
         case .loc: return "[位置]"
         case .img: return "[图片]"
         case .video: return "[视频]"
+        case .share(_, let t, _): return "[视频] " + t
         case .file(_, let n, _): return "[文件] " + n
         }
     }
@@ -145,6 +152,7 @@ struct MessageBubble: View {
     @StateObject private var voice = VoicePlayer()
     @State private var showImg = false
     @State private var showVideo: String? = nil
+    @State private var playSharedId: String? = nil
 
     var body: some View {
         Group {
@@ -210,6 +218,28 @@ struct MessageBubble: View {
                 .sheet(item: Binding(get: { showVideo.map { IdentifiedString(value: $0) } },
                                      set: { showVideo = $0?.value })) { w in
                     SimpleVideoPlayer(urlString: w.value)
+                }
+            case .share(let vid, let title, let thumb):
+                VStack(alignment: .leading, spacing: 0) {
+                    CachedImage(urlString: thumb)
+                        .frame(width: 200, height: 112)
+                        .clipped()
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.circle.fill").foregroundColor(Theme.gold2)
+                        Text(title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.text)
+                            .lineLimit(2)
+                    }
+                    .padding(8)
+                }
+                .frame(width: 200, alignment: .leading)
+                .background(isMe ? Theme.gold.opacity(0.25) : Theme.surface2)
+                .cornerRadius(12)
+                .onTapGesture { playSharedId = vid }
+                .sheet(item: Binding(get: { playSharedId.map { IdentifiedString(value: $0) } },
+                                     set: { playSharedId = $0?.value })) { w in
+                    SharedVideoPlayerSheet(videoId: w.value)
                 }
             case .file(let u, let n, let s):
                 Link(destination: URL(string: u) ?? URL(string: "about:blank")!) {

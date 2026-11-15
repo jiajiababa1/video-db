@@ -152,3 +152,18 @@ enum FeedService {
         return total
     }
 }
+
+// MARK: - 远程流共用过滤 (原 Features21.swift, v5.2 拆分移入)
+
+/// 把一组值拼成 PostgREST in.(...) 过滤值: 先剔除会破坏语法的字符
+func pgInList(_ values: [String]) -> String {
+    let bad = CharacterSet(charactersIn: "\"(),&")
+    let clean = values
+        .map { $0.components(separatedBy: bad).joined() }
+        .filter { !$0.isEmpty }
+    return "in.(\"" + clean.joined(separator: "\",\"") + "\")"
+}
+
+let playableOrFilter = "&or=(has_mp4.eq.true,duration.like.*video.twimg.com*)"
+
+// MARK: - 关注分组

@@ -157,17 +157,19 @@ enum TokenVault {
     /// 令牌变更后调用: 加密合并回云端 (保留配置里的其他字段)。
     /// 两道保险: ①本机为空不覆盖云端密文; ②候选密钥解不开云端已有密文时不推送
     /// (防错密钥把好密文冲掉)。推送成功用的密钥固定进本账号槽位。
-    static func pushTokens(session: Session) async {
+    static func pushTokens(session: Session, forceKey: Data? = nil) async {
         guard session.isLoggedIn, let user = session.username else { return }
         var data = await fetchConfigData(user: user) ?? [:]
         var candidates: [Data] = []
         if let k = loadKey(for: user) { candidates.append(k) }
         if let k = loadLegacyKey(), !candidates.contains(k) { candidates.append(k) }
-        guard !candidates.isEmpty else { return }
+        guard !candidates.isEmpty || forceKey != nil else { return }
         let ghBlob = data["ghToken"] as? String ?? ""
         let sbBlob = data["sbToken"] as? String ?? ""
         var key: Data? = nil
-        if ghBlob.isEmpty && sbBlob.isEmpty {
+        if let fk = forceKey {
+            key = fk   // 改密码场景: 强制用新密钥重加密覆盖 (旧密文用旧密钥, 解不开是预期内的)
+        } else if ghBlob.isEmpty && sbBlob.isEmpty {
             key = candidates.first
         } else {
             for k in candidates {

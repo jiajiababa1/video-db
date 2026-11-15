@@ -120,6 +120,8 @@ struct SwipeFeedView: View {
                     DragGesture(minimumDistance: 24)
                         .onEnded { g in
                             ctrl.endBoost()
+                            // 刚倍速完的横漂不算"左滑进作者页"
+                            if let t = ctrl.lastBoostEnd, Date().timeIntervalSince(t) < 0.4 { return }
                             guard !showComments, !paging else { return }
                             if g.translation.width < -80, abs(g.translation.height) < 60,
                                let v = current, !v.displayAuthor.isEmpty {
@@ -210,7 +212,7 @@ struct SwipeFeedView: View {
         }
         .sheet(isPresented: $showShare, onDismiss: { ctrl.resumeActive() }) {
             if let v = current {
-                ActivityView(items: [URL(string: "https://jiajiababa1.github.io/video-db/watch.html?v=" + v.video_id)!])
+                ShareToFriendView(video: v)
             }
         }
         .sheet(isPresented: $showSearch, onDismiss: { ctrl.resumeActive() }) {
@@ -485,7 +487,8 @@ struct SwipeFeedView: View {
     private func swipeGesture(height: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { g in
-                guard !paging, !showComments else { return }
+                // 倍速按住期间页面不跟手 (正常短视频 App 的习惯): 拖动只改偏移, 按住时直接冻结
+                guard !paging, !showComments, !ctrl.boosting else { return }
                 let dy = g.translation.height
                 if (index == 0 && dy > 0) || (nextItem == nil && dy < 0) {
                     dragOffset = dy * 0.35
@@ -495,6 +498,11 @@ struct SwipeFeedView: View {
             }
             .onEnded { g in
                 guard !paging else { return }
+                // 刚倍速完抬手: 这段位移是按住期间的漂移, 不是翻页意图, 只回弹不翻页
+                if ctrl.boosting || (ctrl.lastBoostEnd.map { Date().timeIntervalSince($0) < 0.4 } ?? false) {
+                    springBack()
+                    return
+                }
                 let predicted = g.predictedEndTranslation.height
                 if predicted < -height * 0.35 {
                     if nextItem != nil {
@@ -642,6 +650,7 @@ final class SwipeController: ObservableObject {
     @Published var boosting = false   // 长按 2 倍速中
     private weak var boostPlayer: AVPlayer? = nil  // 正在被倍速的播放器 (恢复时认它, 不认状态)
     var lastBoostEnd: Date? = nil     // 倍速结束时刻: 紧接着的单击是抬手误触, 不当点按处理
+    private var boostBeganAt: Date? = nil  // 倍速开始时刻: 兜底过期用
     var onEnded: (() -> Void)? = nil
     var onFailed: (() -> Void)? = nil
     private var statusObs: [String: NSKeyValueObservation] = [:]
@@ -674,6 +683,7 @@ final class SwipeController: ObservableObject {
               p.timeControlStatus == .playing
                 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate else { return }
         boosting = true
+        boostBeganAt = Date()
         boostPlayer = p
         p.rate = 2
     }
@@ -681,6 +691,7 @@ final class SwipeController: ObservableObject {
     func endBoost() {
         guard boosting else { return }
         boosting = false
+        boostBeganAt = nil
         lastBoostEnd = Date()
         // 无条件恢复: 旧版只在状态恰为 .playing 时才恢复, 缓冲中 (.waiting) 抬手
         // 会跳过恢复 —— 视频从此一直卡在 2 倍速 (用户实测的 bug)
@@ -826,6 +837,10 @@ final class SwipeController: ObservableObject {
             // 倍速看门狗: 按住期间播放器若自己把速率改回去 (缓冲恢复/换条目), 立刻重新顶回 2x
             if self.boosting, p.timeControlStatus != .paused, p.rate < 1.5 {
                 p.rate = 2
+            }
+            // 倍速兜底过期: 万一抬手回调丢失, 倍速最多挂 20 秒自动结束 (防翻页被永久冻住)
+            if self.boosting, let t = self.boostBeganAt, Date().timeIntervalSince(t) > 20 {
+                self.endBoost()
             }
         }
     }
