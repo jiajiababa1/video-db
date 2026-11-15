@@ -5,7 +5,7 @@ import Security
 /// 会话敏感令牌存 iOS 钥匙串 (不再明文放 UserDefaults):
 /// login_token / gate_token 都走这里; 旧版明文值首次读取时自动迁移进钥匙串并删除明文。
 /// 身份权限以服务端 check_session 的回答为准, 本地标志被改也认不回来 (见 validateSession)。
-private enum SessionKeychain {
+enum SessionKeychain {   // 原为 private: Password.swift 改密后也要同步钥匙串里的自动重登密码, 改为内部可见
     private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: "vdb.session",
