@@ -13,7 +13,7 @@ struct DownloadRecord: Codable, Identifiable {
     var id: String { video.video_id }
 }
 
-final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, URLSessionAssetDownloadDelegate {
+final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, AVAssetDownloadDelegate {
     static let shared = Downloader()
 
     @Published var progresses: [String: Double] = [:]   // 正在下载: video_id -> 0...1
@@ -203,8 +203,8 @@ final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, 
         }
     }
 
-    // MARK: URLSessionAssetDownloadDelegate (HLS 离线下载)
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
+    // MARK: AVAssetDownloadDelegate (HLS 离线下载)
+    @objc func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
                     didLoad timeRange: CMTimeRange, totalTimeRangesLoaded loadedTimeRanges: [NSValue],
                     totalTimeRangesExpectedToLoad: [NSValue]) {
         guard let v = hlsPending[assetDownloadTask.taskIdentifier] else { return }
@@ -214,7 +214,7 @@ final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, 
         DispatchQueue.main.async { self.progresses[v.video_id] = min(0.999, loaded / total) }
     }
 
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
+    @objc func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
                     didFinishDownloadingTo location: URL) {
         guard let v = hlsPending.removeValue(forKey: assetDownloadTask.taskIdentifier) else { return }
         hlsTasks[v.video_id] = nil
