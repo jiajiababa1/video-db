@@ -338,7 +338,7 @@ struct LinkPlayView: View {
         Form {
             Section {
                 TextField("粘贴视频直链 (mp4 / m3u8)", text: $link)
-                    .autocapitalization(.never)
+                    .autocapitalization(.none)
                     .autocorrectionDisabled(true)
                 Button("从剪贴板粘贴") {
                     if let s = UIPasteboard.general.string {

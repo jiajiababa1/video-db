@@ -352,6 +352,17 @@ struct PlayerView: View {
         }, perform: { vm.beginBoost() })
     }
 
+    /// 弹幕密度分桶 (在 ViewBuilder 外算好, builder 里不能写循环)
+    private func densityBuckets(_ buckets: Int) -> [Int] {
+        let dur = max(vm.durationTime, 1)
+        var counts = [Int](repeating: 0, count: buckets)
+        for d in danmaku {
+            let i = min(buckets - 1, max(0, Int((d.time_offset ?? 0) / dur * Double(buckets))))
+            counts[i] += 1
+        }
+        return counts
+    }
+
     /// 高能进度条: 按弹幕密度画热度柱 (弹幕越密柱越高), 金色游标是当前进度, 可拖动跳转。
     /// 密度数据来自已加载的弹幕时间点, 不额外请求。
     private var energyBar: some View {
@@ -359,11 +370,7 @@ struct PlayerView: View {
             let w = geo.size.width
             let dur = max(vm.durationTime, 1)
             let buckets = 56
-            var counts = [Int](repeating: 0, count: buckets)
-            for d in danmaku {
-                let i = min(buckets - 1, max(0, Int((d.time_offset ?? 0) / dur * Double(buckets))))
-                counts[i] += 1
-            }
+            let counts = densityBuckets(buckets)
             let peak = max(1, counts.max() ?? 1)
             ZStack(alignment: .bottomLeading) {
                 HStack(alignment: .bottom, spacing: 1) {
