@@ -41,7 +41,8 @@ final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, 
     override init() {
         super.init()
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
-        hlsSession = AVAssetDownloadURLSession(configuration: .default,
+        // 注意: AVAssetDownloadURLSession 只接受后台配置, 用 .default 会直接抛异常崩溃 (v5.1 实测)
+        hlsSession = AVAssetDownloadURLSession(configuration: .background(withIdentifier: "com.jiajiababa1.videodb.hlsdl"),
                                                assetDownloadDelegate: self, delegateQueue: .main)
         if let data = try? Data(contentsOf: indexURL),
            let rows = try? JSONDecoder().decode([DownloadRecord].self, from: data) {
@@ -235,6 +236,9 @@ final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, 
             failHLS(v, reason: "保存文件出错")
         }
     }
+
+    /// 后台会话事件处理完 (系统因后台下载唤醒 App 时会调; 无事可做, 实现它让系统知道已处理)
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {}
 
     // MARK: 任务结束 (两个会话共用)
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

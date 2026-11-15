@@ -492,7 +492,7 @@ struct ProfileHomeView: View {
                         },
                         .link(icon: "arrow.left.arrow.right", title: "切换账号", dest: AnyView(AccountSwitcherView())),
                     ])
-                    Text("2048 影院 · 原生版 v5.1")
+                    Text("2048 影院 · 原生版 v5.1.1")
                         .font(.caption2)
                         .foregroundColor(Theme.sub)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -1009,7 +1009,7 @@ struct SettingsView: View {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("v5.1").foregroundColor(Theme.sub)
+                    Text("v5.1.1").foregroundColor(Theme.sub)
                 }
                 if session.isLoggedIn {
                     Button(role: .destructive) { session.logout() } label: {
