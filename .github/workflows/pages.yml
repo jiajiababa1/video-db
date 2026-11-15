@@ -73,7 +73,8 @@ jobs:
         run: |
           mkdir -p _site/updates
           cp updates/bundle.json _site/updates/bundle.json
-
+          cp updates/rules.json _site/updates/rules.json
+          
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
