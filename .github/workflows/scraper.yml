@@ -28,6 +28,7 @@ on:
           - deep      # 只跑深挖 (作者深挖/ID扫段, 不碰正常栏目, 预算3倍)
           - iwara     # 只抓 iwara 栏目 (站点 Iwara 专属按钮触发, 不碰其他栏目)
           - hsex      # 只抓 hsex 栏目 (站点 Hsex 专属按钮触发, 不碰其他栏目)
+          - rules    # 只跑规则源 ( 规则在 updates/rules.json, 热更新不改代码)
 
 jobs:
   # ====== 完整抓取 (每 2 小时整点) ======
