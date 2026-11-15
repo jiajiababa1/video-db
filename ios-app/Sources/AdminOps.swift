@@ -411,9 +411,13 @@ struct TokenConfigView: View {
         if !gh.isEmpty { session.ghToken = gh.trimmingCharacters(in: .whitespacesAndNewlines) }
         if !sb.isEmpty { session.sbToken = sb.trimmingCharacters(in: .whitespacesAndNewlines) }
         await TokenVault.pushTokens(session: session)
-        note = "已保存 ✓ 现在可以去爬作者了"
         gh = ""; sb = ""
         hasKey = (TokenVault.loadKey(for: session.username ?? "") != nil || TokenVault.loadLegacyKey() != nil)
+        // pushTokens 没有密钥时是静默不同步的, 保存结果必须说实话:
+        // 有密钥 = 已加密存云端、跟账号走; 没密钥 = 只存了本机, 切号/重装就没了
+        note = hasKey
+            ? "已保存 ✓ 已加密同步到云端，现在可以去爬作者了"
+            : "已存到本机 ✓ 但还没同步云端：当前没有解密密钥（自动登录进来的），退出后用密码登录一次，再回来点一次保存就跟账号走了"
     }
 }
 

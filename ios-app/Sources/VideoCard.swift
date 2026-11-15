@@ -271,7 +271,7 @@ struct SkeletonGrid: View {
     @State private var pulse = false
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
             ForEach(0..<6, id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 7) {
                     RoundedRectangle(cornerRadius: 10).fill(Theme.surface2)
@@ -300,7 +300,7 @@ struct VideoGrid: View {
     var selected: Binding<Set<String>>? = nil
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
             ForEach(items) { v in
                 if selectMode {
                     VideoCard(video: v, progress: progressOf?(v))

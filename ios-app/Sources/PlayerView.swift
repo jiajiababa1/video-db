@@ -166,6 +166,9 @@ struct PlayerView: View {
     var body: some View {
         VStack(spacing: 0) {
             playerArea
+            if vm.durationTime > 5 && danmaku.count >= 3 {
+                energyBar
+            }
             controlsRow
             DanmakuBar(videoId: video.video_id, currentTime: vm.currentTime,
                        items: $danmaku, enabled: $danmakuOn)
@@ -347,6 +350,49 @@ struct PlayerView: View {
         .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 20, pressing: { pressing in
             if !pressing { vm.endBoost() }
         }, perform: { vm.beginBoost() })
+    }
+
+    /// 高能进度条: 按弹幕密度画热度柱 (弹幕越密柱越高), 金色游标是当前进度, 可拖动跳转。
+    /// 密度数据来自已加载的弹幕时间点, 不额外请求。
+    private var energyBar: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let dur = max(vm.durationTime, 1)
+            let buckets = 56
+            var counts = [Int](repeating: 0, count: buckets)
+            for d in danmaku {
+                let i = min(buckets - 1, max(0, Int((d.time_offset ?? 0) / dur * Double(buckets))))
+                counts[i] += 1
+            }
+            let peak = max(1, counts.max() ?? 1)
+            ZStack(alignment: .bottomLeading) {
+                HStack(alignment: .bottom, spacing: 1) {
+                    ForEach(0..<buckets, id: \.self) { i in
+                        Rectangle()
+                            .fill(Theme.gold.opacity(counts[i] == 0 ? 0.12 : 0.35 + 0.65 * Double(counts[i]) / Double(peak)))
+                            .frame(width: max(1, (w - CGFloat(buckets - 1)) / CGFloat(buckets)),
+                                   height: 3 + 13 * CGFloat(counts[i]) / CGFloat(peak))
+                    }
+                }
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 2, height: 20)
+                    .offset(x: w * CGFloat(min(1, max(0, vm.currentTime / dur))) - 1)
+            }
+            .frame(height: 20, alignment: .bottom)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        vm.scrubbing = true
+                        vm.scrub(to: dur * Double(min(1, max(0, g.location.x / w))))
+                    }
+                    .onEnded { _ in vm.scrubbing = false }
+            )
+        }
+        .frame(height: 20)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
     }
 
     private func loadDanmaku() async {

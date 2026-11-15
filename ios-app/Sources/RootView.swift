@@ -243,7 +243,7 @@ struct CatalogView: View {
                 Text("栏目").tag(2)
             }
             .pickerStyle(.segmented)
-            .padding(12)
+            .padding(8)
             switch seg {
             case 1: LibraryView()
             case 2: SectionsView()
