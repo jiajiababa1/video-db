@@ -923,12 +923,21 @@ def crawl_hsex(fetcher, deadline, seen):
                     if rr.status_code == 200:
                         return rr.text
                     log(f"  [hsex] GET {url} -> HTTP {rr.status_code} (curl_cffi)", "WARN")
+                    if rr.status_code == 429:
+                        # 被限速: 等 15 秒再试一次 (详情页连发会触发该站限速)
+                        time.sleep(15)
+                        rr = creq.get(url, headers={"User-Agent": ua},
+                                      timeout=30, impersonate="chrome")
+                        if rr.status_code == 200:
+                            return rr.text
+                        log(f"  [hsex] GET {url} 重试 -> HTTP {rr.status_code} (curl_cffi)", "WARN")
                 except Exception as e:
                     log(f"  [hsex] GET {url} curl_cffi 异常: {str(e)[:80]}", "WARN")
             return None
 
         def fill_detail(rec):
             """抓详情页补 m3u8 (顺带补齐标题/作者/时长), 返回是否拿到 m3u8"""
+            time.sleep(1.0)  # 礼貌间隔: 详情页连发会被该站限速 (403/429)
             html_text = _get_text(rec["url"])
             m3u8, title, author, dur = parse_hsex_detail(html_text, rec["_hx_id"])
             if title and not rec["title"]:
@@ -1611,14 +1620,6 @@ def sb_save(videos):
         # 带 mp4_url 的记录 (新来源抓取时直给): 按 resolve 写回的口径存 ——
         # duration 与 mp4_url 都写完整 mp4 直链; 不带的记录保持原有行为。
         mp4 = (v.get("mp4_url") or "").strip()
-        # 入库闸门: 深挖扫段/详情相关这类扩增来源的新行不再自动挂「待重爬」旗 —
-        # 它们照样进解析池 (sb_pending 按 has_mp4 取数), 但不会把展示计数撑爆;
-        # 正经栏目的行维持原样挂旗。
-        _flag = bool(v.get("needs_rescrape", True))
-        if _flag:
-            _secs = {s for s in (v.get("source_section") or "").split("|") if s}
-            if _secs and _secs <= {"sweep", "detail_related"}:
-                _flag = False
         records.append({
             "video_id": vid,
             "title": (v.get("title") or "")[:500],
@@ -1635,7 +1636,7 @@ def sb_save(videos):
             "vote_down": 0,
             "scraped_at": now,
             "has_mp4": bool(v.get("has_mp4", False)),
-            "needs_rescrape": _flag,
+            "needs_rescrape": bool(v.get("needs_rescrape", True)),
         })
 
     saved = 0
@@ -1669,159 +1670,6 @@ def _sb_patch_one(video_id, patch):
         return r.status_code in (200, 204)
     except Exception:
         return False
-
-
-def _park_chunk(video_ids, now):
-    """整批解析内容失效时把这批行轮转到队尾: 只更新 mp4_checked_at,
-    不写失败结果 (不动 needs_rescrape / retry_count), 避免传输层假死
-    把成批视频误钉成解析失败。"""
-    with ThreadPoolExecutor(max_workers=SB_WORKERS) as ex:
-        futs = [ex.submit(_sb_patch_one, vid, {
-            "mp4_checked_at": now, "updated_at": now,
-        }) for vid in video_ids]
-        for f in futs:
-            try:
-                f.result()
-            except Exception:
-                pass
-
-
-def _count_where(params):
-    try:
-        r = httpx.head(SUPABASE_URL + "/rest/v1/videos", params=params,
-                       headers={**sb_headers(), "Prefer": "count=exact"}, timeout=60)
-        if r.status_code != 200:
-            return -1
-        cr = r.headers.get("content-range", "")
-        tail = cr.rsplit("/", 1)[-1] if "/" in cr else ""
-        return int(tail) if tail.isdigit() else -1
-    except Exception:
-        return -1
-
-
-def reconcile_needs_rescrape():
-    """待重爬对账自愈: 两类逻辑上不该挂旗的行自动清标, 前后计数打日志。
-    1) 已有直链 (has_mp4=true) 却挂 needs_rescrape — 全量复爬经 upsert 带入的脏标;
-    2) monsnode_video_id 为空 — 永远进不了解析队列的假排队行。
-    解析队列 (sb_pending) 按 has_mp4/monsnode_id 取数, 不受本对账影响。"""
-    jobs = [
-        ("已有直链却挂旗", {"has_mp4": "eq.true", "needs_rescrape": "eq.true"}),
-        ("无解析ID却挂旗", {"needs_rescrape": "eq.true", "monsnode_video_id": "is.null"}),
-        ("空解析ID却挂旗", {"needs_rescrape": "eq.true", "monsnode_video_id": "eq."}),
-    ]
-    for label, params in jobs:
-        try:
-            before = _count_where(params)
-            if before <= 0:
-                continue
-            r = httpx.patch(SUPABASE_URL + "/rest/v1/videos", params=params,
-                            headers=sb_headers(True), json={"needs_rescrape": False},
-                            timeout=120)
-            if r.status_code not in (200, 204):
-                log(f"  [对账] {label} 清标失败 HTTP {r.status_code}", "WARN")
-                continue
-            after = _count_where(params)
-            log(f"  [对账] {label}: {before} → {after}")
-        except Exception as e:
-            log(f"  [对账] {label} 异常 (忽略): {str(e)[:120]}", "WARN")
-
-
-LINK_PATROL_LIMIT = _env_int("LINK_PATROL_LIMIT", 800)  # 每轮断链巡检条数
-
-
-def _link_verdict(client, link):
-    """判定存量直链死活: 返回 True=活, False=确认死 (两次 404/410),
-    None=说不准 (网络失败/403/5xx) — 说不准一律不降级, 防整网假死误杀。"""
-    for _ in range(2):
-        try:
-            r = client.get(link, headers={
-                "User-Agent": "Mozilla/5.0",
-                "Range": "bytes=0-1",
-                "Referer": "https://x.com/",
-            }, timeout=15)
-            if r.status_code in (200, 206):
-                return True
-            if r.status_code in (404, 410):
-                continue  # 再试一次确认才判死
-            return None
-        except Exception:
-            continue
-    return False
-
-
-def link_patrol(limit=None):
-    """断链巡检: 抽查 has_mp4 的存量直链 (按 mp4_checked_at 最久没查优先;
-    hx_ 除外 — hsex 是播放时现抓的签名 m3u8, 查存量没意义)。
-    确认失效 → has_mp4=false + needs_rescrape=true + 清掉死链, 回到解析队列
-    重新解析; 源站已删的会在重解析时被标 removed 彻底下线。
-    活链只盖检查时间戳轮转; 整批都测不准 (网络全断) 时整轮跳过不降级。"""
-    limit = limit or LINK_PATROL_LIMIT
-    url = (SUPABASE_URL + "/rest/v1/videos"
-           + "?select=video_id,mp4_url,duration"
-           + "&has_mp4=is.true"
-           + "&video_id=not.like.hx_*"
-           + "&removed=not.is.true"
-           + "&order=mp4_checked_at.asc.nullsfirst,video_id.asc"
-           + "&limit=" + str(limit))
-    try:
-        r = httpx.get(url, headers=sb_headers(), timeout=60)
-        if r.status_code != 200:
-            log(f"  [巡检] 取待查失败 HTTP {r.status_code}", "WARN")
-            return 0, 0
-        rows = r.json()
-    except Exception as e:
-        log(f"  [巡检] 取待查异常: {str(e)[:120]}", "WARN")
-        return 0, 0
-    if not rows:
-        return 0, 0
-
-    def link_of(row):
-        for col in ("mp4_url", "duration"):
-            v = (row.get(col) or "").strip()
-            if v.startswith("http"):
-                return v
-        return None
-
-    now = datetime.now(timezone.utc).isoformat()
-    client = httpx.Client(timeout=20, follow_redirects=True)
-
-    # 预检: 先测前 8 条, 若全都说不准 (网络层不通), 整轮跳过 — 一条都不降级
-    pre = [link_of(x) for x in rows[:8]]
-    pre = [x for x in pre if x]
-    if pre and all(_link_verdict(client, x) is None for x in pre):
-        log("  [巡检] 预检全测不准 (网络层不通), 本轮跳过, 不降级任何视频", "WARN")
-        client.close()
-        return 0, 0
-
-    def process(row):
-        vid = row["video_id"]
-        link = link_of(row)
-        if not link:
-            # has_mp4 却没存任何链接: 本来就播不了, 直接降级回解析队列
-            _sb_patch_one(vid, {"has_mp4": False, "needs_rescrape": True,
-                                "mp4_checked_at": now, "updated_at": now})
-            return "dead"
-        verdict = _link_verdict(client, link)
-        if verdict is None:
-            return "skip"
-        if verdict:
-            _sb_patch_one(vid, {"mp4_checked_at": now})
-            return "alive"
-        patch = {"has_mp4": False, "needs_rescrape": True, "mp4_url": "",
-                 "mp4_checked_at": now, "updated_at": now}
-        if (row.get("duration") or "").strip().startswith("http"):
-            patch["duration"] = ""
-        _sb_patch_one(vid, patch)
-        return "dead"
-
-    dead = 0
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        for res in ex.map(process, rows):
-            if res == "dead":
-                dead += 1
-    client.close()
-    log(f"  [巡检] 本轮检查 {len(rows)} 条存量直链, 确认失效 {dead} 条已降级回重爬队列")
-    return len(rows), dead
 
 
 _RPC_BULK = {"state": None}  # None=未探测, True=可用, False=不可用
@@ -2018,14 +1866,6 @@ def resolve_pending(fetcher, limit, budget, tag="解析"):
             log(f"[{tag}] 首批 {len(chunk)} 条全部抓取失败 — 传输层已失效, 提前结束"
                 f" (未写入无效结果, 队列保持不变)", "ERROR")
             break
-        deleted_n = sum(1 for _, mp in results.values() if mp == DELETED_MARK)
-        if hit == 0 and deleted_n == 0 and len(results) >= 40:
-            log(f"[{tag}] 本批 {len(results)} 条零命中且无删除标记 — 疑似整批内容失效 "
-                f"(被拦/错误页), 不计失败, 仅轮转到队尾并结束本轮", "WARN")
-            _park_chunk([vid for _, vid in results.values()],
-                        datetime.now(timezone.utc).isoformat())
-            done += len(chunk)
-            break
         sb_write_results(results)
         hit_total += hit
         done += len(chunk)
@@ -2157,8 +1997,6 @@ def scrape_all():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, FULL_RESOLVE_LIMIT, FULL_RESOLVE_BUDGET, tag="解析"
         )
-        reconcile_needs_rescrape()
-        link_patrol()
     except Exception as e:
         import traceback
         log(f"抓取流程异常: {e}", "ERROR")
@@ -2272,8 +2110,6 @@ def resolve_only():
         stats["mp4_resolved"] = resolve_pending(
             fetcher, RESOLVE_LIMIT, RESOLVE_BUDGET, tag="解析"
         )
-        reconcile_needs_rescrape()
-        link_patrol()
     except Exception as e:
         import traceback
         log(f"解析流程异常: {e}", "ERROR")
@@ -2350,6 +2186,65 @@ def selftest():
     return ok
 
 
+def _section_existing_ids(section):
+    """某栏目已入库的全部 video_id 集合 (规则引擎去重用, 与 _hsex_existing_ids 同法)"""
+    ids = set()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return ids
+    offset = 0
+    try:
+        while True:
+            r = httpx.get(SUPABASE_URL + "/rest/v1/videos",
+                          params={"source_section": "eq." + section,
+                                  "select": "video_id",
+                                  "order": "video_id.asc",
+                                  "limit": "1000", "offset": str(offset)},
+                          headers=sb_headers(), timeout=30)
+            if r.status_code != 200:
+                break
+            rows = r.json()
+            if not rows:
+                break
+            for row in rows:
+                if row.get("video_id"):
+                    ids.add(row["video_id"])
+            if len(rows) < 1000:
+                break
+            offset += 1000
+    except Exception:
+        pass
+    return ids
+
+
+def rules_only():
+    """规则化抓源 (v1, 2026-11-16): 规则热拉取 updates/rules.json (拉不到用
+    scraper/rules.json 兜底), 每个 enabled 源按规则抓列表 + 给新条目抓详情补直链,
+    行走 sb_save 入库。加新源 = 改规则文件, 不改代码 (见 scraper/rule_engine.py)。"""
+    import rule_engine
+    stats = {"videos_found": 0, "videos_saved": 0, "errors": []}
+    data, origin = rule_engine.load_rules(log=lambda m: log(m))
+    log(f"  [rules] 规则来源: {origin}, 版本 v{data.get('version')}, "
+        f"源 {len(data.get('sources') or [])} 个")
+    deadline = time.time() + _env_int("RULES_BUDGET", 600)
+    for rule in data.get("sources") or []:
+        if not rule.get("enabled"):
+            continue
+        try:
+            existing = _section_existing_ids(rule.get("section", rule.get("name", "")))
+            st = rule_engine.run_source(rule, sb_save, existing,
+                                        log=lambda m: log(m), deadline=deadline)
+            stats["videos_found"] += st["found"]
+            stats["videos_saved"] += st["saved"]
+            stats["errors"].extend(st["errors"])
+            log(f"  [rules] 源 {rule.get('name')}: 发现 {st['found']} "
+                f"保存 {st['saved']} 详情 {st['details']}")
+        except Exception as e:
+            import traceback
+            stats["errors"].append(f"rules {rule.get('name')}: {e}")
+            traceback.print_exc()
+    return stats
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     print("=" * 60)
@@ -2406,6 +2301,17 @@ def main():
         print("=" * 60)
         return
 
+    if mode == "rules":
+        stats = rules_only()
+        print("\n" + "=" * 60)
+        print(f"  规则源 发现: {stats['videos_found']}   保存: {stats['videos_saved']}")
+        if stats["errors"]:
+            print(f"  错误 ({len(stats['errors'])}):")
+            for e in stats["errors"][:5]:
+                print(f"    - {e[:120]}")
+        print("=" * 60)
+        return
+
     stats = scrape_all()
     print("\n" + "=" * 60)
     print(f"  发现: {stats['videos_found']}   保存: {stats['videos_saved']}   MP4: {stats['mp4_resolved']}")
@@ -2414,6 +2320,12 @@ def main():
         for e in stats["errors"][:5]:
             print(f"    - {e[:120]}")
     print("=" * 60)
+    # 规则源并行通道: 每轮 full 顺带跑一遍 (规则热下发, 失败不影响主流程)
+    try:
+        rstats = rules_only()
+        print(f"  规则源: 发现 {rstats['videos_found']}   保存 {rstats['videos_saved']}")
+    except Exception as e:
+        log(f"规则源阶段异常 (已忽略): {e}", "WARN")
 
 
 if __name__ == "__main__":
