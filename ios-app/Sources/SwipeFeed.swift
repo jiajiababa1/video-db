@@ -106,7 +106,7 @@ struct SwipeFeedView: View {
                 // 手势仲裁把长按饿死, 永远触发不了 (用户实测无效)。改 simultaneous 后
                 // 按满 0.5 秒 onChanged 进倍速, 抬手 onEnded 恢复; 滑动翻页也会顺手结束倍速。
                 .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 0.5, maximumDistance: 20)
+                    LongPressGesture(minimumDuration: 0.5, maximumDistance: 10_000)
                         .onChanged { _ in
                             if !ctrl.boosting {
                                 ctrl.beginBoost()
@@ -487,7 +487,6 @@ struct SwipeFeedView: View {
             .onChanged { g in
                 guard !paging, !showComments else { return }
                 let dy = g.translation.height
-                if abs(dy) > 10, ctrl.boosting { ctrl.endBoost() }
                 if (index == 0 && dy > 0) || (nextItem == nil && dy < 0) {
                     dragOffset = dy * 0.35
                 } else {
@@ -823,6 +822,10 @@ final class SwipeController: ObservableObject {
             // 兜底纠偏: 不在倍速状态却发现速率还是 2x (任何回调丢失的边缘情况) 立刻改回 1x
             if !self.boosting, p.rate > 1.5, p.timeControlStatus != .paused {
                 p.rate = 1
+            }
+            // 倍速看门狗: 按住期间播放器若自己把速率改回去 (缓冲恢复/换条目), 立刻重新顶回 2x
+            if self.boosting, p.timeControlStatus != .paused, p.rate < 1.5 {
+                p.rate = 2
             }
         }
     }

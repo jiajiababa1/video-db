@@ -126,11 +126,17 @@ final class Session: ObservableObject {
         d.removeObject(forKey: "gh_token")
         d.removeObject(forKey: "login_user_id")
         await validateSession()
+        if sessionExpired, let pw = SessionKeychain.get("pwd_" + name) {
+            // 服务端按设备只存一个会话: 别的账号输密码登录会顶掉这个账号的旧令牌,
+            // 已保存账号里存的令牌随之失效。用本机钥匙串里该账号的密码静默重登一次, 切换才算真完成。
+            _ = await login(username: name, password: pw)
+        }
         accountGeneration += 1
     }
 
     /// 从已保存列表移除账号 (移除的是当前账号 = 完整退出登录)
     func removeAccount(_ name: String) {
+        SessionKeychain.remove("pwd_" + name)
         if name == username {
             logout()
             return
@@ -218,6 +224,7 @@ final class Session: ObservableObject {
             d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
             username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
             rememberAccount()
+            SessionKeychain.set(p, account: "pwd_" + u)
             sessionExpired = false
             accountGeneration += 1
             await fetchMyId()
@@ -249,6 +256,7 @@ final class Session: ObservableObject {
             d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
             username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
             rememberAccount()
+            SessionKeychain.set(p, account: "pwd_" + u)
             sessionExpired = false
             accountGeneration += 1
             await fetchMyId()
@@ -267,6 +275,7 @@ final class Session: ObservableObject {
         if let u = username {
             savedAccounts.removeAll { $0.username == u }
             persistSavedAccounts()
+            SessionKeychain.remove("pwd_" + u)
         }
         let t = loginToken
         if !t.isEmpty {
@@ -299,6 +308,9 @@ final class Session: ObservableObject {
             vipLevel = r.vip_level?.value ?? 0
             d.set(isAdmin, forKey: "login_is_admin")
             d.set(vipLevel, forKey: "login_vip")
+            // 切号/冷启动也把云端令牌拉回来: 旧版只在输密码登录时拉, 切号又先清了 gh_token,
+            // 没人补 → 令牌"被顶掉"、爬作者报无令牌 (用户多次实测)。
+            await TokenVault.pullTokens(session: self)
         } else {
             // 服务端明确说令牌已失效 (不是网络错误 —— 网络错误在上面的 guard 就返回了):
             // 旧版只把管理员标记清零、照样装作登录着, 于是令牌拉不到、生成兑换码没反应、

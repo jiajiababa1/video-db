@@ -341,8 +341,10 @@ struct DanmakuBar: View {
     @State private var sending = false
     @State private var showManage = false
     @State private var showSettings = false
+    @State private var sendNote: String? = nil
 
     var body: some View {
+        VStack(spacing: 4) {
         HStack(spacing: 8) {
             Button { enabled.toggle() } label: {
                 Text("弹")
@@ -399,6 +401,12 @@ struct DanmakuBar: View {
                 DanmakuSettingsView()
             }
         }
+        if let sendNote = sendNote {
+            Text(sendNote)
+                .font(.caption2).foregroundColor(.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        }
     }
 
     private func send() async {
@@ -415,6 +423,10 @@ struct DanmakuBar: View {
                                      time_offset: currentTime, created_at: nil))
             items.sort { ($0.time_offset ?? 0) < ($1.time_offset ?? 0) }
             draft = ""
+            sendNote = nil
+        } else {
+            // 旧版失败一声不吭, 用户只看到"点了没反应"。把真实原因显示出来。
+            sendNote = rows?.first?.message ?? "发送失败: 登录可能已失效, 退出重新登录一次再试"
         }
         sending = false
     }

@@ -15,9 +15,24 @@ struct CardFrameKey: PreferenceKey {
 final class InlinePlayCenter: ObservableObject {
     static let shared = InlinePlayCenter()
     @Published var activeId: String? = nil
-    let player = AVQueuePlayer()
-    private var looper: AVPlayerLooper? = nil
+    let player = AVPlayer()
     private var currentURL: URL? = nil
+    private var endObserver: NSObjectProtocol? = nil
+
+    private init() {
+        player.isMuted = true
+        // 手动循环: 播完 seek 回开头接着播。不用 AVQueuePlayer+AVPlayerLooper:
+        // looper 会复制管理队列条目, 换卡时 removeAllItems 与新 looper 冲突, 抛
+        // "AVPlayerItem can occupy only one position in a player's queue" 直接崩溃 (v5.1 实测)。
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self = self,
+                  let item = note.object as? AVPlayerItem,
+                  item == self.player.currentItem else { return }
+            self.player.seek(to: .zero) { _ in self.player.play() }
+        }
+    }
 
     func consider(frames: [String: CGRect], items: [VideoItem], screenH: CGFloat) {
         var bestId: String? = nil
@@ -42,8 +57,7 @@ final class InlinePlayCenter: ObservableObject {
         activeId = v.video_id
         if currentURL != u {
             currentURL = u
-            player.removeAllItems()
-            looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: u))
+            player.replaceCurrentItem(with: AVPlayerItem(url: u))
         }
         player.isMuted = true
         player.play()
@@ -51,8 +65,7 @@ final class InlinePlayCenter: ObservableObject {
 
     func stop() {
         player.pause()
-        player.removeAllItems()
-        looper = nil
+        player.replaceCurrentItem(with: nil)
         currentURL = nil
         activeId = nil
     }
@@ -187,9 +200,15 @@ struct VideoCard: View {
                 CachedImage(urlString: video.thumbnail_url)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .opacity(library.isWatched(video.video_id) ? 0.65 : 1)
+                    // 预览层用 overlay 贴在封面上: 尺寸严格等于封面 (独立放 ZStack 里会被压得很小, 用户实测)
+                    .overlay(
+                        Group {
+                            if inline.activeId == video.video_id, video.storedURL != nil {
+                                PreviewLayer(player: inline.player)
+                            }
+                        }
+                    )
                 if inline.activeId == video.video_id, video.storedURL != nil {
-                    PreviewLayer(player: inline.player)
-                        .aspectRatio(16 / 9, contentMode: .fit)
                     Text("▶ 自动播放")
                         .font(.system(size: 9.5, weight: .bold))
                         .padding(.horizontal, 5).padding(.vertical, 2)
