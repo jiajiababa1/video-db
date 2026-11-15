@@ -171,6 +171,7 @@ struct PlayerView: View {
     @StateObject private var vm: PlayerVM
     @State private var upNext: [VideoItem] = []
     @State private var showShare = false
+    @State private var showFixTitle = false
     @AppStorage("vdb_autonext") private var autoNext = true
     @State private var nextPush: VideoItem? = nil
     @State private var danmaku: [DanmakuItem] = []
@@ -194,9 +195,20 @@ struct PlayerView: View {
                 .padding(.vertical, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text(video.displayTitle)
-                        .font(.system(size: 17, weight: .bold))
-                        .lineLimit(3)
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(video.displayTitle)
+                            .font(.system(size: 17, weight: .bold))
+                            .lineLimit(3)
+                        Spacer()
+                        Button { showFixTitle = true } label: {
+                            Label("纠正标题", systemImage: "pencil.line")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .background(Theme.surface2).foregroundColor(Theme.sub)
+                                .cornerRadius(99)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     authorRow
                     copyBlock
                     actionsRow
@@ -246,6 +258,9 @@ struct PlayerView: View {
         .onDisappear { vm.stop(); ChromeState.shared.hidden = false }
         .sheet(isPresented: $showShare) {
             ActivityView(items: [shareURL])
+        }
+        .sheet(isPresented: $showFixTitle) {
+            NavigationView { TitleSuggestView(video: video) }
         }
     }
 

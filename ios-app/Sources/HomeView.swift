@@ -13,6 +13,7 @@ struct HomeView: View {
     @State private var heroIdx = 0
     @State private var didLoad = false
     @State private var showLinkPlay = false
+    @State private var showTitleFix = false
 
     private var continueWatching: [VideoItem] {
         library.history.prefix(10).compactMap { library.snapshots[$0] }
@@ -101,6 +102,9 @@ struct HomeView: View {
         .navigationTitle("2048 影院")
         .sheet(isPresented: $showLinkPlay) {
             NavigationView { LinkPlayView() }
+        }
+        .sheet(isPresented: $showTitleFix) {
+            NavigationView { TitleFixView() }
         }
         .task { await load() }
         .refreshable { await load(force: true) }
@@ -231,6 +235,12 @@ struct HomeView: View {
                     showLinkPlay = true
                 } label: {
                     chipLabel("🔗 贴链接播", hot: false)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    showTitleFix = true
+                } label: {
+                    chipLabel("🛠 标题纠正", hot: false)
                 }
                 .buttonStyle(.plain)
             }
