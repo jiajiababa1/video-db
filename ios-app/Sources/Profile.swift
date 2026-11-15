@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 用户公开资料 (user_profiles 表): 昵称/头像/封面/简介, 个人主页用
 struct UserProfile: Codable {
@@ -471,6 +472,7 @@ struct ProfileHomeView: View {
                     drawerGroup([
                         .link(icon: "lightbulb", title: "创作者中心", dest: AnyView(CreatorCenterView())),
                         .link(icon: "headphones", title: "联系站主", dest: AnyView(ChatView(peer: "kuo"))),
+                        .link(icon: "ticket", title: "兑换 VIP", dest: AnyView(RedeemView())),
                         .link(icon: "iphone", title: "我的设备", dest: AnyView(DevicesView())),
                         .link(icon: "doc.text", title: "站内页面", dest: AnyView(SitePagesListView())),
                     ])
@@ -486,7 +488,7 @@ struct ProfileHomeView: View {
                         },
                         .link(icon: "arrow.left.arrow.right", title: "切换账号", dest: AnyView(AccountSwitcherView())),
                     ])
-                    Text("2048 影院 · 原生版 v4.4")
+                    Text("2048 影院 · 原生版 v4.5")
                         .font(.caption2)
                         .foregroundColor(Theme.sub)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -589,6 +591,53 @@ struct ProfileHomeView: View {
 }
 
 // MARK: - 编辑主页
+
+/// 兑换 VIP 页: 输入兑换码走 redeem_code (服务端验码), 成功后刷新会话等级。
+/// (入口曾在旧「我的」页里, v4.0 改版换主页时丢了, 这里正式补回: 设置 + 抽屉各一个入口)
+struct RedeemView: View {
+    @EnvironmentObject var session: Session
+    @State private var code = ""
+    @State private var note = ""
+    @State private var busy = false
+
+    var body: some View {
+        Form {
+            Section {
+                Text("输入站主发放的兑换码，兑换 VIP 时长，兑换后立即生效。")
+                    .font(.callout).foregroundColor(.secondary)
+            }
+            Section("兑换码") {
+                TextField("输入兑换码", text: $code)
+                    .autocapitalization(.allCharacters)
+                    .autocorrectionDisabled(true)
+                Button("粘贴") {
+                    if let s = UIPasteboard.general.string {
+                        code = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+            }
+            Section {
+                Button(busy ? "兑换中…" : "立即兑换") { Task { await redeem() } }
+                    .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+            }
+            if !note.isEmpty { Section { Text(note).font(.callout) } }
+        }
+        .navigationTitle("兑换 VIP")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func redeem() async {
+        guard let me = session.username else { note = "请先登录"; return }
+        busy = true
+        let r = await AccountAPI.redeem(user: me, code: code)
+        note = r.msg
+        if r.ok {
+            code = ""
+            await session.validateSession()
+        }
+        busy = false
+    }
+}
 
 /// 封禁申诉页: 被封禁用户唯一能发出的消息, 每小时限一条 (服务端 send_appeal 验权+限流)
 struct AppealView: View {
@@ -804,11 +853,18 @@ struct SettingsView: View {
                     }
                 }
             }
+            if session.isLoggedIn {
+                Section(header: Text("兑换")) {
+                    NavigationLink { RedeemView() } label: {
+                        Label("兑换 VIP", systemImage: "ticket")
+                    }
+                }
+            }
             Section(header: Text("关于")) {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("v4.4").foregroundColor(Theme.sub)
+                    Text("v4.5").foregroundColor(Theme.sub)
                 }
                 if session.isLoggedIn {
                     Button(role: .destructive) { session.logout() } label: {
