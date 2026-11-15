@@ -224,7 +224,11 @@ struct DanmakuBar: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            if session.isLoggedIn {
+            if session.isBanned {
+                Text("账号已被封禁，无法发弹幕")
+                    .font(.caption).foregroundColor(.red)
+                Spacer()
+            } else if session.isLoggedIn {
                 TextField("发条弹幕…", text: $draft)
                     .font(.system(size: 13))
                     .padding(.horizontal, 10).padding(.vertical, 7)

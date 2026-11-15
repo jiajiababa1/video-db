@@ -54,6 +54,7 @@ struct AdminView: View {
                 nav("群发私信", "paperplane") { AdminBroadcastView() }
                 nav("私信总览", "envelope.open") { AdminMessagesView() }
                 nav("封禁记录", "hand.raised") { AdminBansView() }
+                nav("封禁申诉", "envelope.badge") { AdminAppealsView() }
             }
             Section("运营") {
                 nav("兑换码", "ticket") { AdminCodesView() }

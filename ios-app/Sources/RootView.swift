@@ -14,6 +14,8 @@ struct RootView: View {
     @ObservedObject private var notices = NoticeCenter.shared
     @ObservedObject private var chrome = ChromeState.shared
     @Environment(\.scenePhase) private var scenePhase
+    @State private var banSnoozed = false    // 封禁弹窗点了"下次再弹" (本次运行内不再弹)
+    @State private var showBanAppeal = false
 
     var body: some View {
         Group {
@@ -87,6 +89,20 @@ struct RootView: View {
                 }
                 Task { await notices.refresh(session: session) }
             }
+        }
+        // 封禁弹窗: 被封禁就一直弹, 只有点按钮才消 —— "联系站主申诉"去申诉,
+        // "下次再弹"本次运行内不再弹 (下次打开 App 还会弹); 解封后自动消失。
+        .alert("你的账号已被封禁", isPresented: Binding(
+            get: { session.isBanned && !banSnoozed },
+            set: { if !$0 { banSnoozed = true } }
+        )) {
+            Button("联系站主申诉") { showBanAppeal = true }
+            Button("下次再弹") { banSnoozed = true }
+        } message: {
+            Text("封禁期间不能评论、发弹幕、发私信或发布任何内容。申诉每小时限发一条。")
+        }
+        .sheet(isPresented: $showBanAppeal) {
+            NavigationView { AppealView() }
         }
     }
 

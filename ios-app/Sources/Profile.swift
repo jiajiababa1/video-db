@@ -107,6 +107,7 @@ struct ProfileHomeView: View {
     @State private var myId: Int? = nil
     @State private var seg = 0
     @State private var showDrawer = false
+    @State private var showAppeal = false
     @State private var cacheSizeText = ""
     @Environment(\.vdbTabActive) private var tabActive
     @State private var showEdit = false
@@ -152,6 +153,11 @@ struct ProfileHomeView: View {
                 ProfileEditView(profile: profile) { Task { await load() } }
             }
         }
+        .sheet(isPresented: $showAppeal) {
+            NavigationView {
+                AppealView()
+            }
+        }
         .sheet(item: $playItem) { v in
             NavigationView { PlayerView(video: v) }
         }
@@ -174,6 +180,9 @@ struct ProfileHomeView: View {
     private var content: some View {
         ScrollView {
             VStack(spacing: 0) {
+                if session.isBanned {
+                    bannedCard
+                }
                 header
                 Picker("主页", selection: $seg) {
                     Text("发布").tag(0)
@@ -192,6 +201,34 @@ struct ProfileHomeView: View {
     }
 
     // MARK: 头部: 封面 + 头像 + 昵称/ID + 数据行 + 编辑主页
+
+    /// 封禁卡 (主页顶部, 封禁时显示): 说明禁言范围 + 申诉入口
+    private var bannedCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "hand.raised.fill").foregroundColor(.red)
+                Text("你的账号已被封禁")
+                    .font(.system(size: 15, weight: .bold)).foregroundColor(.red)
+            }
+            Text("封禁期间不能评论、发弹幕、发私信或发布任何内容。可以向站主申诉（每小时限一条）。")
+                .font(.caption).foregroundColor(Theme.sub)
+            Button {
+                showAppeal = true
+            } label: {
+                Text("联系站主申诉")
+                    .font(.system(size: 13.5, weight: .bold))
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .glassCapsule()
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.red.opacity(0.12))
+        .cornerRadius(14)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+    }
 
     private var header: some View {
         VStack(spacing: 0) {
@@ -242,6 +279,12 @@ struct ProfileHomeView: View {
                             .background(Theme.surface2)
                             .foregroundColor(Theme.gold2)
                             .cornerRadius(4)
+                    }
+                    if session.isBanned {
+                        // 名字下面一行小字 (用户点名要的封禁标记)
+                        Text("被封禁用户")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(.red)
                     }
                 }
                 Spacer()
@@ -443,7 +486,7 @@ struct ProfileHomeView: View {
                         },
                         .link(icon: "arrow.left.arrow.right", title: "切换账号", dest: AnyView(AccountSwitcherView())),
                     ])
-                    Text("2048 影院 · 原生版 v4.2")
+                    Text("2048 影院 · 原生版 v4.3")
                         .font(.caption2)
                         .foregroundColor(Theme.sub)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -546,6 +589,58 @@ struct ProfileHomeView: View {
 }
 
 // MARK: - 编辑主页
+
+/// 封禁申诉页: 被封禁用户唯一能发出的消息, 每小时限一条 (服务端 send_appeal 验权+限流)
+struct AppealView: View {
+    @EnvironmentObject var session: Session
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = ""
+    @State private var note = ""
+    @State private var sending = false
+
+    var body: some View {
+        Form {
+            Section {
+                Text("你的账号已被封禁，无法发表任何言论（评论、弹幕、私信、留言板、作品都不能发）。如需解封，可以在这里向站主申诉，每小时只能发送一条。")
+                    .font(.callout)
+            }
+            Section("申诉内容") {
+                TextField("说明情况…", text: $draft)
+            }
+            if session.appealWaitSeconds > 0 {
+                Section {
+                    Text("刚申诉过，请约 \(Int(ceil(Double(session.appealWaitSeconds) / 60.0))) 分钟后再发下一条")
+                        .foregroundColor(.secondary)
+                }
+            }
+            Section {
+                Button(sending ? "发送中…" : "发送申诉") { Task { await send() } }
+                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || sending || session.appealWaitSeconds > 0)
+            }
+            if !note.isEmpty { Section { Text(note).font(.callout) } }
+        }
+        .navigationTitle("联系站主申诉")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
+        .task { await session.fetchBanStatus() }
+    }
+
+    private func send() async {
+        sending = true
+        struct R: Decodable { var ok: Bool?; var message: String? }
+        let rows: [R]? = try? await SB.rpc("send_appeal", params: [
+            "p_token": session.loginToken,
+            "p_content": draft.trimmingCharacters(in: .whitespacesAndNewlines)])
+        if rows?.first?.ok == true {
+            note = "已发送，站主会看到你的申诉。下一次可发送时间：1 小时后。"
+            draft = ""
+        } else {
+            note = rows?.first?.message ?? "发送失败，请稍后再试"
+        }
+        await session.fetchBanStatus()
+        sending = false
+    }
+}
 
 struct ProfileEditView: View {
     let profile: UserProfile?
@@ -713,7 +808,7 @@ struct SettingsView: View {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("v4.2").foregroundColor(Theme.sub)
+                    Text("v4.3").foregroundColor(Theme.sub)
                 }
                 if session.isLoggedIn {
                     Button(role: .destructive) { session.logout() } label: {

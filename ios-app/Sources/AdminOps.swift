@@ -74,6 +74,7 @@ struct AdminUserEditor: View {
     @State private var banReason = ""
     @State private var newPwd = ""
     @State private var confirmDelete = false
+    @State private var confirmBan = false
 
     private var username: String { adminStr(user, "username") }
     private var isBanned: Bool { adminBool(user, "banned") }
@@ -111,9 +112,8 @@ struct AdminUserEditor: View {
                     if isBanned {
                         Button("解封") { Task { await run(AdminAPI.exec(action: "unban", target: username, detail: "")) } }
                     } else {
-                        Button("封禁该用户", role: .destructive) {
-                            Task { await run(AdminAPI.exec(action: "ban", target: username, detail: banReason.isEmpty ? "管理员封禁" : banReason)) }
-                        }
+                        // 先弹窗确认, 点"确认封禁"的那一刻立即生效 (不是直接执行)
+                        Button("封禁该用户", role: .destructive) { confirmBan = true }
                     }
                 }
                 Section("重置密码") {
@@ -133,6 +133,14 @@ struct AdminUserEditor: View {
                     Task { await run(AdminAPI.exec(action: "delete_user", target: username, detail: "")) }
                 }
                 Button("取消", role: .cancel) {}
+            }
+            .confirmationDialog("封禁 @\(username)？", isPresented: $confirmBan, titleVisibility: .visible) {
+                Button("确认封禁 (立即生效)", role: .destructive) {
+                    Task { await run(AdminAPI.exec(action: "ban", target: username, detail: banReason.isEmpty ? "管理员封禁" : banReason)) }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("点击确认的这一刻对方立即被封禁：不能评论、不能发弹幕、不能发私信/留言板消息、不能发布作品，什么言论都发不了；对方只能通过「联系站主」申诉，且每小时限发一条。")
             }
         }
     }
@@ -507,5 +515,59 @@ struct AdminDataView: View {
         let data = (try? JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted])) ?? Data()
         exportText = String(data: data, encoding: .utf8) ?? ""
         note = "已生成 \(rows.count) 条清单，点下面分享保存"
+    }
+}
+
+// MARK: - 封禁申诉 (被封用户的申诉列表, 站主/管理员可直接解封)
+struct AdminAppealsView: View {
+    struct AppealRow: Decodable, Identifiable {
+        var username: String?
+        var content: String?
+        var created_at: String?
+        var id: String { (username ?? "") + "|" + (created_at ?? "") }
+        var timeText: String { String((created_at ?? "").prefix(16)).replacingOccurrences(of: "T", with: " ") }
+    }
+
+    @State private var rows: [AppealRow] = []
+    @State private var loaded = false
+    @State private var note = ""
+
+    var body: some View {
+        List {
+            if loaded && rows.isEmpty {
+                Text("暂无申诉").foregroundColor(.secondary)
+            }
+            ForEach(rows) { r in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("@" + (r.username ?? "?")).font(.subheadline.weight(.bold))
+                        Spacer()
+                        Text(r.timeText).font(.caption2).foregroundColor(.secondary)
+                    }
+                    Text(r.content ?? "").font(.callout)
+                    Button("解封该用户") { Task { await unban(r.username ?? "") } }
+                        .font(.caption.weight(.bold))
+                }
+                .padding(.vertical, 2)
+            }
+            if !note.isEmpty { Text(note).font(.footnote).foregroundColor(.secondary) }
+        }
+        .navigationTitle("封禁申诉")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func load() async {
+        let rows: [AppealRow]? = try? await SB.rpc("list_appeals", params: [
+            "p_token": Session.shared.loginToken, "p_limit": 50])
+        self.rows = rows ?? []
+        loaded = true
+    }
+
+    private func unban(_ name: String) async {
+        guard !name.isEmpty else { return }
+        let (ok, _) = await AdminAPI.exec(action: "unban", target: name, detail: "")
+        note = ok ? "已解封 @\(name)" : "解封失败"
+        await load()
     }
 }

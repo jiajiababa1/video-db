@@ -151,7 +151,10 @@ struct CommentsView: View {
 
     @ViewBuilder
     private var composer: some View {
-        if session.isLoggedIn {
+        if session.isBanned {
+            Text("账号已被封禁，无法评论")
+                .font(.caption).foregroundColor(.red)
+        } else if session.isLoggedIn {
             HStack(spacing: 8) {
                 TextField("说点什么…", text: $draft)
                     .padding(.horizontal, 12).padding(.vertical, 9)

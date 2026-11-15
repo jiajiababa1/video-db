@@ -13,10 +13,15 @@ struct ChatSendBar: View {
     @State private var busy = false
     @State private var note: String? = nil
     @StateObject private var recorder = VoiceRecorder()
+    @ObservedObject private var session = Session.shared
     private let locator = LocationFetcher()
 
     var body: some View {
         VStack(spacing: 8) {
+            if session.isBanned {
+                Text("账号已被封禁，无法发送消息")
+                    .font(.caption).foregroundColor(.red)
+            }
             if let note = note {
                 Text(note).font(.caption).foregroundColor(Theme.sub)
             }
@@ -84,6 +89,7 @@ struct ChatSendBar: View {
             }
         }
         .padding(12)
+        .disabled(session.isBanned)
         .sheet(isPresented: $showPicker) {
             MediaPicker { url, isVideo in
                 Task { await uploadPicked(url: url, isVideo: isVideo) }

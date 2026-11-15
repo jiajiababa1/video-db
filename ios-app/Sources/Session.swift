@@ -63,6 +63,8 @@ final class Session: ObservableObject {
     @Published var savedAccounts: [SavedAccount] = []
     @Published var accountGeneration = 0   // 登录/切换/退出时 +1, RootView 据此重拉云端数据
     @Published var myUserId: Int? = nil    // 自己的用户 ID: 站主只认 id == 1
+    @Published var isBanned: Bool = false  // 被封禁: 全站禁言, 只能每小时申诉一次
+    @Published var appealWaitSeconds: Int = 0  // 距下次可申诉的剩余秒数
 
     private let d = UserDefaults.standard
 
@@ -287,7 +289,7 @@ final class Session: ObservableObject {
     /// 服务端明确回复无效 → 立即降权 (清管理员/VIP 标志, 防改本地配置冒用站主功能),
     /// 但不清 token 本身 (与网站一致, 避免网络抖动误登出); 网络失败则不动。
     func validateSession() async {
-        guard isLoggedIn else { return }
+        guard isLoggedIn else { isBanned = false; appealWaitSeconds = 0; return }
         struct R: Decodable { var valid: Bool?; var username: String?; var is_admin: Bool?; var vip_level: FlexInt? }
         guard let rows: [R] = try? await SB.rpc("check_session", params: ["p_token": loginToken]),
               let r = rows.first else { return }
@@ -303,6 +305,17 @@ final class Session: ObservableObject {
             d.set(0, forKey: "login_vip")
         }
         await fetchMyId()
+        await fetchBanStatus()
+    }
+
+    /// 封禁状态 (服务端为准): appeal_info 返回是否被封 + 申诉冷却剩余秒数
+    func fetchBanStatus() async {
+        struct R: Decodable { var banned: Bool?; var wait_seconds: Int? }
+        let rows: [R]? = try? await SB.rpc("appeal_info", params: ["p_token": loginToken])
+        if let r = rows?.first {
+            isBanned = r.banned ?? false
+            appealWaitSeconds = r.wait_seconds ?? 0
+        }
     }
 
     /// 拉自己的用户 ID (站主判定只认它): 按用户名查 user_accounts.id (该列已开放读取)
