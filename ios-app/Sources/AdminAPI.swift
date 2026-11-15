@@ -160,12 +160,15 @@ enum AdminAPI {
         (await call("admin_list_codes", ["p_token": token])) ?? []
     }
 
-    static func generateCode(level: String, uses: Int, minutes: Int, permanent: Bool) async -> String? {
-        let rows: [Res] = (await call("admin_generate_code", [
+    /// 生成兑换码: 返回 (码, 服务端消息) —— 失败时把真实原因带回去显示,
+    /// 不再让界面猜「已生成」 (旧版把「无管理员权限」也显示成已生成, 码其实一个都没建)
+    static func generateCode(level: String, uses: Int, minutes: Int, permanent: Bool) async -> (code: String?, message: String?) {
+        let rows: [Res]? = await call("admin_generate_code", [
             "p_token": token, "p_level": level, "p_uses": uses,
             "p_duration_minutes": minutes, "p_permanent": permanent,
-        ])) ?? []
-        return rows.first?.code
+        ])
+        guard let r = rows?.first else { return (nil, lastError ?? "接口无返回") }
+        return (r.code, r.message)
     }
 
     // MARK: - 总览类

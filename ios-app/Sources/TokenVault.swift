@@ -29,29 +29,38 @@ enum TokenVault {
     }
 
     // MARK: - 派生密钥存 iOS 钥匙串 (对应网站的 localStorage gb_enc_key)
-    private static var kcQuery: [String: Any] {
+    // v4.8 起按账号分槽: 旧版全机共用一把密钥, 切号时还会被 clearKey 删掉,
+    // 切回站主号 (免密切换, 没法重新派生) 就永远解不开云端令牌 —— 用户实测的「切号挤掉令牌」。
+    // 现在每个账号一把自己的密钥, 切号/退出都不删任何账号的密钥。
+    private static func kcQuery(account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: "vdb.enc",
-         kSecAttrAccount as String: "gb_enc_key"]
+         kSecAttrAccount as String: account]
     }
 
-    static func saveKey(_ data: Data) {
-        SecItemDelete(kcQuery as CFDictionary)
-        var q = kcQuery
+    static func saveKey(_ data: Data, for user: String) {
+        let q0 = kcQuery(account: "gb_enc_key_" + user)
+        SecItemDelete(q0 as CFDictionary)
+        var q = q0
         q[kSecValueData as String] = data
         SecItemAdd(q as CFDictionary, nil)
     }
 
-    static func loadKey() -> Data? {
-        var q = kcQuery
+    static func loadKey(for user: String) -> Data? {
+        var q = kcQuery(account: "gb_enc_key_" + user)
         q[kSecReturnData as String] = true
         var out: AnyObject?
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return nil }
         return out as? Data
     }
 
-    static func clearKey() {
-        SecItemDelete(kcQuery as CFDictionary)
+    /// 旧版共享槽位 (只读, 用于迁移): 能解开某账号的云端令牌就迁进那个账号自己的槽位
+    static func loadLegacyKey() -> Data? {
+        var q = kcQuery(account: "gb_enc_key")
+        q[kSecReturnData as String] = true
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return nil }
+        return out as? Data
     }
 
     // MARK: - AES-GCM 令牌加解密 (密文格式 enc:v1:<iv b64url>:<ct+tag b64url>, 与网站一致)
@@ -113,14 +122,31 @@ enum TokenVault {
     /// 只有云端明确存了空值才置空; 字段缺失或解不开就完全不动。
     static func pullTokens(session: Session) async {
         guard session.isLoggedIn, let user = session.username else { return }
-        guard let key = loadKey(), let data = await fetchConfigData(user: user) else { return }
+        guard let data = await fetchConfigData(user: user) else { return }
+        let ghBlob = data["ghToken"] as? String
+        let sbBlob = data["sbToken"] as? String
+        // 候选密钥: 本账号槽位优先, 其次旧版共享槽位 (切号删密钥时代的残留)
+        var candidates: [Data] = []
+        if let k = loadKey(for: user) { candidates.append(k) }
+        if let k = loadLegacyKey(), !candidates.contains(k) { candidates.append(k) }
         var gh: String? = nil
-        if let blob = data["ghToken"] as? String {
-            gh = blob.isEmpty ? "" : decrypt(key: key, blob: blob)
-        }
         var sb: String? = nil
-        if let blob = data["sbToken"] as? String {
-            sb = blob.isEmpty ? "" : decrypt(key: key, blob: blob)
+        for key in candidates {
+            var used = false
+            if let blob = ghBlob {
+                if blob.isEmpty { gh = "" }
+                else if let p = decrypt(key: key, blob: blob) { gh = p; used = true }
+            }
+            if let blob = sbBlob {
+                if blob.isEmpty { sb = "" }
+                else if let p = decrypt(key: key, blob: blob) { sb = p; used = true }
+            }
+            if used {
+                // 这把密钥能解本账号的令牌 → 固定进本账号槽位, 以后切号互不影响
+                if loadKey(for: user) != key { saveKey(key, for: user) }
+                break
+            }
+            if gh != nil && sb != nil { break }   // 两边都是云端空值, 已处理完
         }
         await MainActor.run {
             if let gh = gh { session.ghToken = gh }
@@ -128,13 +154,36 @@ enum TokenVault {
         }
     }
 
-    /// 令牌变更后调用: 加密合并回云端 (保留配置里的其他字段)
+    /// 令牌变更后调用: 加密合并回云端 (保留配置里的其他字段)。
+    /// 两道保险: ①本机为空不覆盖云端密文; ②候选密钥解不开云端已有密文时不推送
+    /// (防错密钥把好密文冲掉)。推送成功用的密钥固定进本账号槽位。
     static func pushTokens(session: Session) async {
-        guard session.isLoggedIn, let user = session.username,
-              let key = loadKey() else { return }
+        guard session.isLoggedIn, let user = session.username else { return }
         var data = await fetchConfigData(user: user) ?? [:]
-        data["ghToken"] = session.ghToken.isEmpty ? "" : (encrypt(key: key, plain: session.ghToken) ?? "")
-        data["sbToken"] = session.sbToken.isEmpty ? "" : (encrypt(key: key, plain: session.sbToken) ?? "")
+        var candidates: [Data] = []
+        if let k = loadKey(for: user) { candidates.append(k) }
+        if let k = loadLegacyKey(), !candidates.contains(k) { candidates.append(k) }
+        guard !candidates.isEmpty else { return }
+        let ghBlob = data["ghToken"] as? String ?? ""
+        let sbBlob = data["sbToken"] as? String ?? ""
+        var key: Data? = nil
+        if ghBlob.isEmpty && sbBlob.isEmpty {
+            key = candidates.first
+        } else {
+            for k in candidates {
+                let okGH = ghBlob.isEmpty || decrypt(key: k, blob: ghBlob) != nil
+                let okSB = sbBlob.isEmpty || decrypt(key: k, blob: sbBlob) != nil
+                if okGH && okSB { key = k; break }
+            }
+        }
+        guard let useKey = key else { return }
+        if !session.ghToken.isEmpty, let enc = encrypt(key: useKey, plain: session.ghToken) {
+            data["ghToken"] = enc
+        }
+        if !session.sbToken.isEmpty, let enc = encrypt(key: useKey, plain: session.sbToken) {
+            data["sbToken"] = enc
+        }
+        if loadKey(for: user) != useKey { saveKey(useKey, for: user) }
         let body: [String: Any] = [
             "username": user,
             "data": data,

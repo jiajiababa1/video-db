@@ -16,6 +16,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var banSnoozed = false    // 封禁弹窗点了"下次再弹" (本次运行内不再弹)
     @State private var showBanAppeal = false
+    @State private var expiredSnoozed = false  // 登录失效弹窗点了"稍后再说" (本次运行内不再弹)
 
     var body: some View {
         Group {
@@ -103,6 +104,24 @@ struct RootView: View {
         }
         .sheet(isPresented: $showBanAppeal) {
             NavigationView { AppealView() }
+        }
+        // 登录失效弹窗: 服务端明确判令牌已作废 (常见: 同一台设备登录/注册了别的账号,
+        // 把这个账号的设备会话顶掉, 切回来时拿的是已作废的旧令牌)。旧版装作还登录着,
+        // 表现就是令牌拉不到、生成兑换码没反应 —— 现在明说并给一键重登入口。
+        .alert("登录已失效", isPresented: Binding(
+            get: { session.sessionExpired && !expiredSnoozed },
+            set: { if !$0 { expiredSnoozed = true } }
+        )) {
+            Button("重新登录") {
+                session.sessionExpired = false
+                session.signOutLocal()
+            }
+            Button("稍后再说") { expiredSnoozed = true }
+        } message: {
+            Text("这个账号的登录令牌已被服务端作废，重新用密码登录一次即可恢复。令牌、片库都跟账号走，不会丢。")
+        }
+        .onChange(of: session.sessionExpired) { expired in
+            if !expired { expiredSnoozed = false }
         }
     }
 

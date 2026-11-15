@@ -65,6 +65,7 @@ final class Session: ObservableObject {
     @Published var myUserId: Int? = nil    // 自己的用户 ID: 站主只认 id == 1
     @Published var isBanned: Bool = false  // 被封禁: 全站禁言, 只能每小时申诉一次
     @Published var appealWaitSeconds: Int = 0  // 距下次可申诉的剩余秒数
+    @Published var sessionExpired: Bool = false  // 服务端明确判令牌失效 (僵尸登录态): RootView 弹窗让用户重登
 
     private let d = UserDefaults.standard
 
@@ -124,7 +125,6 @@ final class Session: ObservableObject {
         myUserId = nil
         d.removeObject(forKey: "gh_token")
         d.removeObject(forKey: "login_user_id")
-        TokenVault.clearKey()
         await validateSession()
         accountGeneration += 1
     }
@@ -149,7 +149,6 @@ final class Session: ObservableObject {
         d.removeObject(forKey: "sb_token")
         d.removeObject(forKey: "gh_token")
         d.removeObject(forKey: "login_user_id")
-        TokenVault.clearKey()
         username = nil; isAdmin = false; vipLevel = 0; myUserId = nil
         accountGeneration += 1
     }
@@ -219,11 +218,12 @@ final class Session: ObservableObject {
             d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
             username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
             rememberAccount()
+            sessionExpired = false
             accountGeneration += 1
             await fetchMyId()
             // 派生云端配置解密密钥并取回跟账号走的令牌 (gh/sb token)
             if let key = TokenVault.deriveKey(password: p) {
-                TokenVault.saveKey(key)
+                TokenVault.saveKey(key, for: u)
             }
             await TokenVault.pullTokens(session: self)
             return nil
@@ -249,10 +249,11 @@ final class Session: ObservableObject {
             d.set(r.vip_level?.value ?? 0, forKey: "login_vip")
             username = u; isAdmin = r.is_admin ?? false; vipLevel = r.vip_level?.value ?? 0
             rememberAccount()
+            sessionExpired = false
             accountGeneration += 1
             await fetchMyId()
             if let key = TokenVault.deriveKey(password: p) {
-                TokenVault.saveKey(key)
+                TokenVault.saveKey(key, for: u)
             }
             await TokenVault.pullTokens(session: self)
             return nil
@@ -279,7 +280,6 @@ final class Session: ObservableObject {
         d.removeObject(forKey: "sb_token")
         d.removeObject(forKey: "gh_token")
         d.removeObject(forKey: "login_user_id")
-        TokenVault.clearKey()
         username = nil; isAdmin = false; vipLevel = 0; myUserId = nil
         accountGeneration += 1
     }
@@ -294,11 +294,16 @@ final class Session: ObservableObject {
         guard let rows: [R] = try? await SB.rpc("check_session", params: ["p_token": loginToken]),
               let r = rows.first else { return }
         if r.valid == true {
+            sessionExpired = false
             isAdmin = r.is_admin ?? false
             vipLevel = r.vip_level?.value ?? 0
             d.set(isAdmin, forKey: "login_is_admin")
             d.set(vipLevel, forKey: "login_vip")
         } else {
+            // 服务端明确说令牌已失效 (不是网络错误 —— 网络错误在上面的 guard 就返回了):
+            // 旧版只把管理员标记清零、照样装作登录着, 于是令牌拉不到、生成兑换码没反应、
+            // 爬作者报无令牌, 用户还以为是功能坏了。现在明确标记, RootView 弹窗请用户重登。
+            sessionExpired = true
             isAdmin = false
             vipLevel = 0
             d.set(false, forKey: "login_is_admin")

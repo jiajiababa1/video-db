@@ -332,10 +332,11 @@ struct AdminCodesView: View {
     }
 
     private func gen() async {
-        if let code = await AdminAPI.generateCode(level: level, uses: uses, minutes: minutes, permanent: perm) {
+        let r = await AdminAPI.generateCode(level: level, uses: uses, minutes: minutes, permanent: perm)
+        if let code = r.code, !code.isEmpty {
             note = "✅ 新码：" + code
         } else {
-            note = "已生成（列表已刷新）"
+            note = "生成失败：" + (r.message ?? "未知原因")
         }
         codes = await AdminAPI.listCodes()
     }
@@ -403,7 +404,7 @@ struct TokenConfigView: View {
             if !note.isEmpty { Section { Text(note).font(.callout) } }
         }
         .navigationTitle("令牌配置")
-        .onAppear { hasKey = TokenVault.loadKey() != nil }
+        .onAppear { hasKey = (TokenVault.loadKey(for: session.username ?? "") != nil || TokenVault.loadLegacyKey() != nil) }
     }
 
     private func save() async {
@@ -412,7 +413,7 @@ struct TokenConfigView: View {
         await TokenVault.pushTokens(session: session)
         note = "已保存 ✓ 现在可以去爬作者了"
         gh = ""; sb = ""
-        hasKey = TokenVault.loadKey() != nil
+        hasKey = (TokenVault.loadKey(for: session.username ?? "") != nil || TokenVault.loadLegacyKey() != nil)
     }
 }
 
