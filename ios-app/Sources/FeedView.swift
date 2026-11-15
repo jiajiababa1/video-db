@@ -15,7 +15,7 @@ struct FeedView: View {
     @State private var page = 1
     @State private var hasMore = true
     @State private var loading = false
-    @State private var playableOnly = true
+    @State private var playableOnly = false   // 只看可播默认关, 点了才过滤 (用户定规)
     @State private var hotSort = false
     @State private var total: Int? = nil
 

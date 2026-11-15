@@ -61,11 +61,12 @@ struct RootView: View {
         }
     }
 
-    // MARK: - v3.0 自定义悬浮 Dock 导航 (替代系统 TabView 的模板感)
-    // 五个目的地: 首页 / 片库 / 刷视频(中间主按钮) / 好友 / 我的。
-    // 栏目页收进首页的「全部栏目」入口。页面懒挂载: 首次点开才创建, 之后保持状态。
+    // MARK: - v4.0 四栏布局 (抖音式): 首页(刷视频) / 信息 / 朋友 / 我的
+    // 底栏不再悬浮覆盖内容, 改成布局内的一条: 页面区到此为止, 任何按钮都不会被它挡住
+    // (v3.x 悬浮 Dock 遮挡底部按钮的问题就来自覆盖式布局)。
+    // 老「首页货架 / 片库 / 栏目」收进刷视频页左上角的片库入口 (CatalogView)。
     @State private var tabSel = 0
-    @State private var epochs = [0, 0, 0, 0, 0]
+    @State private var epochs = [0, 0, 0, 0]
     @State private var visited: Set<Int> = [0]
 
     /// 再次点击当前项: 把该页导航栈换新 (回到根页+顶部), iOS 通用习惯。
@@ -80,18 +81,20 @@ struct RootView: View {
     }
 
     private var mainTabs: some View {
-        ZStack {
-            if visited.contains(0) { tabPage(0, inset: true) { HomeView() } }
-            if visited.contains(1) { tabPage(1, inset: true) { LibraryView() } }
-            if visited.contains(2) { tabPage(2, inset: false) { SwipeFeedView(dockInset: true) } }
-            if visited.contains(3) { tabPage(3, inset: true) { FriendsView() } }
-            if visited.contains(4) { tabPage(4, inset: true) { MeView() } }
+        VStack(spacing: 0) {
+            ZStack {
+                if visited.contains(0) { tabPage(0) { SwipeFeedView(dockInset: true) } }
+                if visited.contains(1) { tabPage(1) { InboxView() } }
+                if visited.contains(2) { tabPage(2) { FriendsView() } }
+                if visited.contains(3) { tabPage(3) { ProfileHomeView() } }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            dock
         }
-        .overlay(alignment: .bottom) { dock }
     }
 
     @ViewBuilder
-    private func tabPage<V: View>(_ idx: Int, inset: Bool, @ViewBuilder content: () -> V) -> some View {
+    private func tabPage<V: View>(_ idx: Int, @ViewBuilder content: () -> V) -> some View {
         NavigationView { content() }
             .navigationViewStyle(.stack)
             .id(epochs[idx])
@@ -99,40 +102,24 @@ struct RootView: View {
             .opacity(tabSel == idx ? 1 : 0)
             .allowsHitTesting(tabSel == idx)
             .zIndex(tabSel == idx ? 1 : 0)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if inset { Color.clear.frame(height: 76) }
-            }
     }
 
     private var dock: some View {
-        // 玻璃条与主按钮分开叠放: 玻璃条自身带圆角裁剪, 主按钮必须在裁剪之外,
-        // 否则凸起的圆会被切掉一截 (v3.0 的按钮位置 bug)
-        ZStack {
-            HStack(spacing: 0) {
-                dockItem(0, icon: "house.fill", label: "首页")
-                dockItem(1, icon: "books.vertical.fill", label: "片库")
-                Spacer()
-                dockItem(3, icon: "person.2.fill", label: "好友", badge: notices.socialBadge)
-                dockItem(4, icon: "person.crop.circle.fill", label: "我的", badge: notices.meBadge)
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-            .glassPanel(24, live: true, shadow: true)
-            Button { selectTab(2) } label: {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(width: 54, height: 54)
-                    .background(Theme.goldGradient)
-                    .clipShape(Circle())
-                    .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 4)
-            }
-            .buttonStyle(.plain)
-            .offset(y: -16)
+        HStack(spacing: 0) {
+            dockItem(0, icon: "house.fill", label: "首页")
+            dockItem(1, icon: "bell.fill", label: "信息", badge: notices.socialBadge)
+            dockItem(2, icon: "person.2.fill", label: "朋友")
+            dockItem(3, icon: "person.crop.circle.fill", label: "我的", badge: notices.meBadge)
         }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .background(Theme.bg)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.5)
+        }
     }
 
     private func dockItem(_ idx: Int, icon: String, label: String, badge: Int = 0) -> some View {
@@ -159,6 +146,31 @@ struct RootView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// 片库总入口: 老首页货架 / 片库 / 栏目三页收纳 (刷视频页左上角按钮打开)
+struct CatalogView: View {
+    @State private var seg = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("片库", selection: $seg) {
+                Text("货架").tag(0)
+                Text("片库").tag(1)
+                Text("栏目").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .padding(12)
+            switch seg {
+            case 1: LibraryView()
+            case 2: SectionsView()
+            default: HomeView()
+            }
+        }
+        .background(Theme.bg.ignoresSafeArea())
+        .navigationTitle("片库")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

@@ -31,6 +31,9 @@ struct SwipeFeedView: View {
     @State private var heartTick = 0       // 双击爱心动画触发计数
     @State private var likeLiked = false   // 真点赞状态 (当前视频)
     @State private var likeTotal = 0       // 真点赞数 (当前视频)
+    @State private var showCatalog = false // 片库/货架/栏目 (首页左上角入口)
+    @State private var showSearch = false
+    @State private var friendWorks: [VideoItem]? = nil  // 互关模式缓存
 
     private var current: VideoItem? { items.indices.contains(index) ? items[index] : nil }
     private var prevItem: VideoItem? { items.indices.contains(index - 1) ? items[index - 1] : nil }
@@ -53,7 +56,9 @@ struct SwipeFeedView: View {
                     } else if loading {
                         ProgressView().tint(.white)
                     } else {
-                        Text("暂无可播视频").foregroundColor(Theme.sub)
+                        Text(mode == 3 ? "还没有互关好友发布的作品\n去「朋友」加好友, 或在「我的」里发布作品" : "暂无可播视频")
+                            .foregroundColor(Theme.sub)
+                            .multilineTextAlignment(.center)
                     }
                     if let nv = nextItem {
                         pageLayer(nv, isCurrent: false)
@@ -99,6 +104,13 @@ struct SwipeFeedView: View {
         .navigationTitle("刷视频")
         .task {
             ctrl.onEnded = { goNext() }
+            ctrl.onFailed = {
+                // 坏视频自动跳过: 先让封面+提示闪一下 (0.7 秒), 还停在这条就翻下一条
+                Task {
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    if let c = current, ctrl.failedIds.contains(c.video_id) { goNext() }
+                }
+            }
             await initialLoad()
         }
         .onDisappear { ctrl.stop() }
@@ -119,6 +131,12 @@ struct SwipeFeedView: View {
                 ActivityView(items: [URL(string: "https://jiajiababa1.github.io/video-db/watch.html?v=" + v.video_id)!])
             }
         }
+        .sheet(isPresented: $showCatalog) {
+            NavigationView { CatalogView() }
+        }
+        .sheet(isPresented: $showSearch) {
+            NavigationView { SearchView() }
+        }
     }
 
     // MARK: - 单页 (氛围背景 + 原比例画面 + 底部信息)
@@ -128,12 +146,11 @@ struct SwipeFeedView: View {
             // 纯黑底: 库里横竖屏视频混杂 (实测约 1/3 横屏 16:9、2/3 竖屏),
             // 统一按原比例完整显示 —— 横屏居中留黑, 竖屏满高, 不裁不拉伸
             Color.black
+            // 封面常驻垫底: 播放层就绪前先看封面, 链接坏了也停在封面上, 不再整屏黑
+            CachedImage(urlString: v.thumbnail_url, fit: true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             if isCurrent, ctrl.activePlayer != nil {
                 SwipePlayerLayer(ctrl: ctrl)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                // 邻居页/未就绪: 封面同样按原比例完整显示, 与播放层构图一致, 切换不跳
-                CachedImage(urlString: v.thumbnail_url, fit: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if isCurrent, !ctrl.readyIds.contains(v.video_id), !ctrl.failedIds.contains(v.video_id) {
@@ -171,7 +188,7 @@ struct SwipeFeedView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 14)
                 .padding(.trailing, 76)   // 给右侧栏让位
-                .padding(.bottom, dockInset ? 104 : 30)
+                .padding(.bottom, dockInset ? 36 : 30)
             }
         }
     }
@@ -181,21 +198,38 @@ struct SwipeFeedView: View {
     private var topBar: some View {
         VStack {
             HStack {
+                Button { showCatalog = true } label: {
+                    Image(systemName: "square.grid.2x2.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(.white)
+                        .frame(width: 36, height: 36)
+                        .glassCircle()
+                }
+                .buttonStyle(.plain)
                 Spacer()
                 Picker("模式", selection: $mode) {
                     Text("最新").tag(0)
                     Text("热门").tag(1)
                     Text("随机").tag(2)
+                    Text("互关").tag(3)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 190)
+                .frame(width: 216)
                 .colorScheme(.dark)
                 .padding(3)
                 .glassCapsule(live: true)
                 .onChange(of: mode) { _ in Task { await reload() } }
                 Spacer()
+                Button { showSearch = true } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 36, height: 36)
+                        .glassCircle()
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 50)
+            .padding(.horizontal, 12)
             .padding(.top, 6)
             Spacer()
         }
@@ -269,7 +303,7 @@ struct SwipeFeedView: View {
                 .simultaneousGesture(TapGesture().onEnded { ctrl.pauseActive() })
             }
             .padding(.trailing, 10)
-            .padding(.bottom, dockInset ? 128 : 64)
+            .padding(.bottom, dockInset ? 64 : 64)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .task(id: v.video_id) { await refreshLike(v) }
@@ -318,7 +352,7 @@ struct SwipeFeedView: View {
                 }
                 .frame(height: 22)
                 .padding(.horizontal, 14)
-                .padding(.bottom, dockInset ? 88 : 6)
+                .padding(.bottom, dockInset ? 12 : 6)
             }
         }
     }
@@ -505,6 +539,14 @@ struct SwipeFeedView: View {
         case 2:
             // 服务端表采样随机取片 (每次都是新的一批, seenIds 负责去重)
             return await FeedService.fetchRandom()
+        case 3:
+            // 互关: 互为好友的用户发布的作品 (一次取全, 不分页)
+            if friendWorks == nil {
+                friendWorks = await FeedService.fetchFriendWorks(me: session.username)
+            }
+            if page > 1 { return [] }
+            hasMore = false
+            return friendWorks ?? []
         default:
             let r = (try? await FeedService.fetchPage(page: page)) ?? (items: [], total: nil)
             if r.items.count < FeedService.pageSize { hasMore = false }
@@ -523,6 +565,8 @@ final class SwipeController: ObservableObject {
     @Published var duration: Double = 0
     @Published var userPaused = false
     var onEnded: (() -> Void)? = nil
+    var onFailed: (() -> Void)? = nil
+    private var statusObs: [String: NSKeyValueObservation] = [:]
 
     func togglePlay() {
         guard let p = activePlayer else { return }
@@ -569,6 +613,7 @@ final class SwipeController: ObservableObject {
             p.replaceCurrentItem(with: nil)
             if let o = observers[id] { NotificationCenter.default.removeObserver(o) }
             observers[id] = nil
+            statusObs[id] = nil
             pool[id] = nil
         }
         for i in windowIdx { ensurePlayer(items[i]) }
@@ -586,6 +631,7 @@ final class SwipeController: ObservableObject {
                     self.failedIds.insert(v.video_id)
                     Resolver.markRescrape(v)
                     ErrLog.log("swipe", "解链失败 \(v.video_id)")
+                    if self.activeId == v.video_id { self.onFailed?() }
                     return
                 }
                 let p = AVPlayer()
@@ -596,9 +642,24 @@ final class SwipeController: ObservableObject {
                     forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
                     if self?.activeId == v.video_id { self?.onEnded?() }
                 }
+                // 真就绪/真失败都听播放条目自己的状态: 以前没监听, 坏链接 (403/过期签名)
+                // 会永远停在黑屏 —— 这就是"有的视频黑屏"的根因
+                let obs = item.observe(\.status, options: [.new]) { [weak self] it, _ in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        if it.status == .readyToPlay {
+                            self.readyIds.insert(v.video_id)
+                        } else if it.status == .failed, !self.failedIds.contains(v.video_id) {
+                            self.failedIds.insert(v.video_id)
+                            Resolver.markRescrape(v)
+                            ErrLog.log("swipe", "播放失败 \(v.video_id): \(it.error?.localizedDescription ?? "?")")
+                            if self.activeId == v.video_id { self.onFailed?() }
+                        }
+                    }
+                }
+                self.statusObs[v.video_id] = obs
                 p.replaceCurrentItem(with: item)
                 self.pool[v.video_id] = p
-                self.readyIds.insert(v.video_id)
                 if self.activeId == v.video_id {
                     self.attach(p, id: v.video_id)
                     p.playImmediately(atRate: 1)
@@ -625,6 +686,19 @@ final class SwipeController: ObservableObject {
             if let t = timeToken { activePlayer?.removeTimeObserver(t); timeToken = nil }
             activePlayer = nil
             ensurePlayer(v)
+        }
+        // 看门狗: 10 秒还没就绪 (链接挂死/服务器不响应) 按失败处理, 界面会自动跳下一条
+        let vid = v.video_id
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            await MainActor.run {
+                guard let self = self, self.activeId == vid,
+                      !self.readyIds.contains(vid), !self.failedIds.contains(vid) else { return }
+                self.failedIds.insert(vid)
+                Resolver.markRescrape(v)
+                ErrLog.log("swipe", "播放超时 \(vid)")
+                self.onFailed?()
+            }
         }
     }
 

@@ -82,6 +82,27 @@ enum FeedService {
         return rows
     }
 
+    /// 互关作品流: 已互为好友的用户发布的作品, 映射成 VideoItem (id 为 work:<id>,
+    /// file_url 存进 duration 字段按站内约定直链播放; 点赞/评论/弹幕都用这个 id 通用)
+    static func fetchFriendWorks(me: String?) async -> [VideoItem] {
+        guard let me = me, !me.isEmpty else { return [] }
+        let rows = await SocialAPI.myFriendRows(me: me)
+        let friends = Set(rows.filter { $0.status == "accepted" }
+            .map { $0.user1 == me ? $0.user2 : $0.user1 })
+        guard !friends.isEmpty else { return [] }
+        let works = await SocialAPI.works()
+        return works.filter { w in
+            guard let a = w.author, friends.contains(a), let f = w.file_url else { return false }
+            return f.contains(".mp4") || f.contains(".m3u8")
+        }.map { w in
+            VideoItem(video_id: "work:" + String(w.id), title: w.title, author: w.author,
+                      thumbnail_url: w.cover_url, duration: w.file_url, source_section: "work",
+                      views: nil, has_mp4: true, needs_rescrape: nil, video_url: nil,
+                      vote_up: nil, vote_down: nil, created_at: w.created_at,
+                      monsnode_video_id: nil, source_page: nil, playable: true, vip_early: nil)
+        }
+    }
+
     /// 栏目计数 (单独的 count 查询, 与网站计数口径一致)
     static func count(section: AppSection) async -> Int? {
         let filters = filterString(section: section, playableOnly: true, author: nil, search: nil, personalIds: nil)

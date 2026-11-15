@@ -319,8 +319,9 @@ struct PlayerView: View {
                             .background(Color.black.opacity(0.65))
                             .foregroundColor(.yellow)
                             .cornerRadius(99)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            .padding(.top, 10)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                            .padding(.trailing, 12)
+                            .padding(.bottom, 10)
                             .allowsHitTesting(false)
                     }
                 }
@@ -336,13 +337,15 @@ struct PlayerView: View {
                 ProgressView().tint(Theme.gold)
             }
             if danmakuOn {
-                DanmakuOverlay(items: danmaku, currentTime: vm.currentTime)
+                DanmakuOverlay(items: danmaku, currentTime: vm.currentTime, playing: vm.rate != 0)
             }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
-        .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 40, pressing: { pressing in
-            if pressing { vm.beginBoost() } else { vm.endBoost() }
-        }, perform: {})
+        // 长按倍速: pressing 回调在手指刚落下就触发 (旧写法一点就倍速的根因),
+        // 启动必须放在 perform 里 —— 按满 0.5 秒才算长按; 抬手时 pressing=false 再停
+        .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 20, pressing: { pressing in
+            if !pressing { vm.endBoost() }
+        }, perform: { vm.beginBoost() })
     }
 
     private func loadDanmaku() async {

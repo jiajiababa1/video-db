@@ -139,39 +139,63 @@ struct DanmakuItem: Decodable, Identifiable {
     var created_at: String?
 }
 
-/// 弹幕层: 弹幕从其出现时间点起 9 秒内从右向左飘过, 4 条轨道轮转
+/// 弹幕层: 弹幕从其出现时间点起 9 秒内从右向左飘过, 4 条轨道轮转。
+/// 丝滑做法: 播放器的时间 tick 只有约 4 次/秒, 直接拿它定位会一跳一跳;
+/// 这里用 TimelineView 按帧渲染, 以最近一次 tick 为锚点按墙钟时间外推视频时间,
+/// 每次 tick 到达再重新锚定校正漂移 —— 30fps 平滑流动, 暂停时自动冻结。
 struct DanmakuOverlay: View {
     let items: [DanmakuItem]
     let currentTime: Double
+    var playing: Bool = true
+
+    @State private var anchorVideo: Double = 0
+    @State private var anchorWall: Date = Date()
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                ForEach(active) { d in
-                    Text(d.content ?? "")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .shadow(color: .black.opacity(0.85), radius: 2, x: 0, y: 1)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .offset(x: xPos(d, width: geo.size.width),
-                                y: 4 + CGFloat(lane(d)) * 22)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !playing)) { ctx in
+            let vt = videoTime(ctx.date)
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    ForEach(active(at: vt)) { d in
+                        Text(d.content ?? "")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.85), radius: 2, x: 0, y: 1)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .offset(x: xPos(d, width: geo.size.width, vt: vt),
+                                    y: 4 + CGFloat(lane(d)) * 22)
+                    }
                 }
             }
         }
         .allowsHitTesting(false)
         .clipped()
-    }
-
-    private var active: [DanmakuItem] {
-        items.filter { d in
-            let t = d.time_offset ?? 0
-            return currentTime >= t && currentTime - t < 9
+        .onAppear { anchorVideo = currentTime; anchorWall = Date() }
+        .onChange(of: currentTime) { t in
+            anchorVideo = t
+            anchorWall = Date()
+        }
+        .onChange(of: playing) { _ in
+            anchorVideo = currentTime
+            anchorWall = Date()
         }
     }
 
-    private func xPos(_ d: DanmakuItem, width: CGFloat) -> CGFloat {
-        let age = currentTime - (d.time_offset ?? 0)
+    private func videoTime(_ now: Date) -> Double {
+        if !playing { return anchorVideo }
+        return anchorVideo + now.timeIntervalSince(anchorWall)
+    }
+
+    private func active(at vt: Double) -> [DanmakuItem] {
+        items.filter { d in
+            let t = d.time_offset ?? 0
+            return vt >= t && vt - t < 9
+        }
+    }
+
+    private func xPos(_ d: DanmakuItem, width: CGFloat, vt: Double) -> CGFloat {
+        let age = vt - (d.time_offset ?? 0)
         return width * CGFloat(1 - age / 9) - 30
     }
 
