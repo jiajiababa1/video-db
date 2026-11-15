@@ -190,7 +190,7 @@ struct SwipeFeedView: View {
             }
             await initialLoad()
         }
-        .onAppear { ChromeState.shared.hidden = true }
+        .onAppear { ChromeState.shared.hidden = true; MiniPlayerState.shared.close() }
         .onDisappear { ctrl.stop(); ChromeState.shared.hidden = false }
         .onChange(of: tabActive) { active in
             // Dock 模式下切走 Tab 自动暂停, 切回自动恢复 (导航 push 进来时不受影响)

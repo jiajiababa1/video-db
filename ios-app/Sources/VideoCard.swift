@@ -1,5 +1,62 @@
 import SwiftUI
 import AVKit
+import UIKit
+
+/// 列表内联自动播放 (v5.0, 学 ZFPlayer 的列表自动播): 网格滚动时, 屏幕中央那张卡
+/// 直接在格子里无声循环播 (仅直链 mp4, 省流量模式下关), 点卡片照常进播放页。
+/// 全局只有一个共享播放器, 谁占住中央谁播。
+struct CardFrameKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+final class InlinePlayCenter: ObservableObject {
+    static let shared = InlinePlayCenter()
+    @Published var activeId: String? = nil
+    let player = AVQueuePlayer()
+    private var looper: AVPlayerLooper? = nil
+    private var currentURL: URL? = nil
+
+    func consider(frames: [String: CGRect], items: [VideoItem], screenH: CGFloat) {
+        var bestId: String? = nil
+        var bestScore = -Double.infinity
+        for v in items {
+            guard let f = frames[v.video_id], let u = v.storedURL,
+                  u.pathExtension.lowercased() != "m3u8" else { continue }
+            let visible = max(0, min(f.maxY, screenH) - max(f.minY, 0))
+            let frac = Double(visible / max(1, f.height))
+            guard frac > 0.7 else { continue }
+            let centerDist = abs(Double(f.midY - screenH / 2)) / Double(max(1, screenH))
+            let score = frac - centerDist
+            if score > bestScore { bestScore = score; bestId = v.video_id }
+        }
+        if let id = bestId, id != activeId, let v = items.first(where: { $0.video_id == id }) {
+            activate(v)
+        }
+    }
+
+    private func activate(_ v: VideoItem) {
+        guard let u = v.storedURL else { return }
+        activeId = v.video_id
+        if currentURL != u {
+            currentURL = u
+            player.removeAllItems()
+            looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: u))
+        }
+        player.isMuted = true
+        player.play()
+    }
+
+    func stop() {
+        player.pause()
+        player.removeAllItems()
+        looper = nil
+        currentURL = nil
+        activeId = nil
+    }
+}
 
 /// 长按封面快速预览: 无声自动播放, 松手/点空白关闭 (contextMenu preview)
 struct CardPreview: View {
@@ -121,6 +178,7 @@ struct VideoCard: View {
     let video: VideoItem
     var progress: Double? = nil
     @EnvironmentObject var library: Library
+    @ObservedObject private var inline = InlinePlayCenter.shared
     @State private var showPreview = false
 
     var body: some View {
@@ -129,6 +187,18 @@ struct VideoCard: View {
                 CachedImage(urlString: video.thumbnail_url)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .opacity(library.isWatched(video.video_id) ? 0.65 : 1)
+                if inline.activeId == video.video_id, video.storedURL != nil {
+                    PreviewLayer(player: inline.player)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                    Text("▶ 自动播放")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Color.black.opacity(0.6))
+                        .foregroundColor(.white)
+                        .cornerRadius(4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(6)
+                }
                 if library.isWatched(video.video_id) {
                     Text("已看")
                         .font(.system(size: 10, weight: .bold))
@@ -181,6 +251,10 @@ struct VideoCard: View {
             .padding(.vertical, 7)
         }
         .glassPanel()
+        .background(GeometryReader { geo in
+            Color.clear.preference(key: CardFrameKey.self,
+                                   value: [video.video_id: geo.frame(in: .global)])
+        })
         .contextMenu {
             contextMenuItems
         }
@@ -244,8 +318,7 @@ struct VideoCard: View {
             }
             Button {
                 Task {
-                    if let u = await Resolver.resolve(video),
-                       u.pathExtension.lowercased() != "m3u8" {
+                    if let u = await Resolver.resolve(video) {
                         Downloader.shared.enqueue(video, url: u)
                     }
                 }
@@ -298,6 +371,8 @@ struct VideoGrid: View {
     var onReachEnd: (() -> Void)? = nil
     var selectMode: Bool = false
     var selected: Binding<Set<String>>? = nil
+    @Environment(\.vdbTabActive) private var tabActive
+    @ObservedObject private var inline = InlinePlayCenter.shared
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
@@ -343,5 +418,13 @@ struct VideoGrid: View {
                 }
             }
         }
+        .onPreferenceChange(CardFrameKey.self) { frames in
+            guard tabActive, !selectMode, !AppSettings.saverActive else { return }
+            inline.consider(frames: frames, items: items, screenH: UIScreen.main.bounds.height)
+        }
+        .onChange(of: tabActive) { active in
+            if !active { inline.stop() }
+        }
+        .onDisappear { inline.stop() }
     }
 }

@@ -17,6 +17,7 @@ struct RootView: View {
     @State private var banSnoozed = false    // 封禁弹窗点了"下次再弹" (本次运行内不再弹)
     @State private var showBanAppeal = false
     @State private var expiredSnoozed = false  // 登录失效弹窗点了"稍后再说" (本次运行内不再弹)
+    @State private var expandItem: VideoItem? = nil  // 迷你播放器点开要放大的视频
 
     var body: some View {
         Group {
@@ -42,6 +43,17 @@ struct RootView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 100)
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            MiniPlayerView { v in
+                MiniPlayerState.shared.close()
+                expandItem = v
+            }
+            .padding(.trailing, 12)
+            .padding(.bottom, 84)
+        }
+        .sheet(item: $expandItem) { v in
+            NavigationView { PlayerView(video: v) }
         }
         .task {
             bridge.bootstrap()

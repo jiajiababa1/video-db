@@ -134,7 +134,25 @@ final class PlayerVM: ObservableObject {
         }
     }
 
+    /// 迷你播放器接管: 摘掉本 VM 的观察者, 把播放器原样交出去 (不暂停、进度无缝);
+    /// 之后 stop() 不再碰这个播放器
+    private(set) var detached = false
+    func detachPlayer() -> AVPlayer? {
+        guard let p = player else { return nil }
+        detached = true
+        sleepTimer?.invalidate()
+        if let token = token { p.removeTimeObserver(token) }
+        token = nil
+        if let o = endObserver { NotificationCenter.default.removeObserver(o) }
+        endObserver = nil
+        return p
+    }
+
     func stop() {
+        if detached {
+            sleepTimer?.invalidate()
+            return
+        }
         player?.pause()
         sleepTimer?.invalidate()
         if let token = token { player?.removeTimeObserver(token) }
@@ -149,6 +167,7 @@ struct PlayerView: View {
     let video: VideoItem
     @EnvironmentObject var library: Library
     @EnvironmentObject var session: Session
+    @Environment(\.presentationMode) private var presentationMode
     @StateObject private var vm: PlayerVM
     @State private var upNext: [VideoItem] = []
     @State private var showShare = false
@@ -203,6 +222,7 @@ struct PlayerView: View {
         .background(Theme.bg.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            MiniPlayerState.shared.close()
             await loadDanmaku()
             ProgressSync.shared.pullIntoLibrary(library)
         }
@@ -267,6 +287,14 @@ struct PlayerView: View {
             } label: {
                 ctrlLabel("play.rectangle.on.rectangle", autoNext ? "连播开" : "连播关")
             }
+            Button {
+                if let p = vm.detachPlayer() {
+                    MiniPlayerState.shared.adopt(p, video: video)
+                    presentationMode.wrappedValue.dismiss()
+                }
+            } label: {
+                ctrlLabel("pip.enter", "小窗")
+            }
             if let n = vm.sleepNote {
                 Text(n).font(.caption2).foregroundColor(Theme.gold2).lineLimit(1)
             }
@@ -290,20 +318,15 @@ struct PlayerView: View {
     }
 
     private func downloadCurrent() {
+        // v5.0: m3u8 也能下了 (原生 HLS 离线包), 统一走下载队列
         if let u = vm.resolvedURL {
-            if u.pathExtension.lowercased() == "m3u8" {
-                vm.sleepNote = "该视频是流媒体格式, 暂不支持离线下载"
-            } else {
-                dl.enqueue(video, url: u)
-            }
+            dl.enqueue(video, url: u)
+            vm.sleepNote = u.pathExtension.lowercased() == "m3u8" ? "已加入下载队列 (HLS 离线包)" : "已加入下载队列"
         } else {
             Task {
                 if let u = await Resolver.resolve(video) {
-                    if u.pathExtension.lowercased() == "m3u8" {
-                        vm.sleepNote = "该视频是流媒体格式, 暂不支持离线下载"
-                    } else {
-                        dl.enqueue(video, url: u)
-                    }
+                    dl.enqueue(video, url: u)
+                    vm.sleepNote = "已加入下载队列"
                 }
             }
         }
