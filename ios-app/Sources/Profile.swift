@@ -311,6 +311,10 @@ struct ProfileHomeView: View {
             HStack(spacing: 0) {
                 statItem(value: likeCount, label: "获赞")
                 statItem(value: friendCount, label: "互关")
+                NavigationLink { FollowingListView() } label: {
+                    statItem(value: library.follows.count, label: "关注")
+                }
+                .buttonStyle(.plain)
                 statItem(value: myWorks.count, label: "发布")
             }
             .padding(.top, 12)
@@ -488,7 +492,7 @@ struct ProfileHomeView: View {
                         },
                         .link(icon: "arrow.left.arrow.right", title: "切换账号", dest: AnyView(AccountSwitcherView())),
                     ])
-                    Text("2048 影院 · 原生版 v4.6")
+                    Text("2048 影院 · 原生版 v4.7")
                         .font(.caption2)
                         .foregroundColor(Theme.sub)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -591,6 +595,35 @@ struct ProfileHomeView: View {
 }
 
 // MARK: - 编辑主页
+
+/// 我关注的人 (作者): 数据 = Library.follows (跟账号走), 点任意一位进作者主页
+struct FollowingListView: View {
+    @EnvironmentObject var library: Library
+
+    var body: some View {
+        List {
+            if library.follows.isEmpty {
+                Text("还没关注任何作者。在视频右侧或作者主页点「关注」，他们就会出现在这里。")
+                    .font(.callout).foregroundColor(.secondary)
+            }
+            ForEach(library.follows, id: \.self) { name in
+                NavigationLink { AuthorView(name: name) } label: {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            Circle().fill(Theme.surface2).frame(width: 40, height: 40)
+                            Text(String(name.prefix(1)))
+                                .font(.headline).foregroundColor(Theme.gold2)
+                        }
+                        Text(name).font(.body.weight(.medium))
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .navigationTitle("我关注的人")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
 
 /// 兑换 VIP 页: 输入兑换码走 redeem_code (服务端验码), 成功后刷新会话等级。
 /// (入口曾在旧「我的」页里, v4.0 改版换主页时丢了, 这里正式补回: 设置 + 抽屉各一个入口)
@@ -864,7 +897,7 @@ struct SettingsView: View {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("v4.6").foregroundColor(Theme.sub)
+                    Text("v4.7").foregroundColor(Theme.sub)
                 }
                 if session.isLoggedIn {
                     Button(role: .destructive) { session.logout() } label: {

@@ -72,7 +72,7 @@ struct AuthorView: View {
     /// 站主专属: 按当前作者云端抓取 (与网站「🎯 作者抓」同通道)
     private func scrapeAuthor() async {
         let token = session.ghToken
-        guard !token.isEmpty else { scrapeNote = "无令牌"; return }
+        guard !token.isEmpty else { scrapeNote = "无令牌：先到 站主功能 → 令牌配置 填入 GitHub 令牌"; return }
         scrapeNote = "触发中…"
         let ok = await GitHub.dispatchWorkflow("author-scrape.yml", inputs: [
             "authors": name, "max_pages": "5", "resolve": "300",

@@ -59,6 +59,7 @@ struct AdminView: View {
             }
             Section("运营") {
                 nav("兑换码", "ticket") { AdminCodesView() }
+                nav("令牌配置", "key") { TokenConfigView() }
                 nav("系统配置", "slider.horizontal.3") { AdminConfigView() }
                 nav("审计日志", "list.bullet.rectangle") { AuditLogView() }
             }

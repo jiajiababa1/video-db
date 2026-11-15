@@ -341,6 +341,81 @@ struct AdminCodesView: View {
     }
 }
 
+// MARK: - 令牌配置 (站主的 GitHub / Supabase 令牌; 入口曾随旧「我的」页一起丢失, 这里补回)
+
+struct TokenConfigView: View {
+    @EnvironmentObject var session: Session
+    @State private var gh = ""
+    @State private var sb = ""
+    @State private var note = ""
+    @State private var hasKey = false
+
+    var body: some View {
+        List {
+            Section {
+                Text("爬作者、触发爬虫要用 GitHub 令牌；Supabase 令牌用于后台维护。令牌加密后跟账号存云端，换设备登录同一账号会自动取回。")
+                    .font(.callout).foregroundColor(.secondary)
+            }
+            Section("GitHub 令牌") {
+                HStack {
+                    Text("当前状态")
+                    Spacer()
+                    Text(session.ghToken.isEmpty ? "未配置" : "已配置 ✓")
+                        .foregroundColor(session.ghToken.isEmpty ? .red : .green)
+                }
+                SecureField("粘贴新的 GitHub 令牌", text: $gh)
+                    .autocapitalization(.none)
+                    .autocorrectionDisabled(true)
+                Button("从剪贴板粘贴") {
+                    if let s = UIPasteboard.general.string { gh = s.trimmingCharacters(in: .whitespacesAndNewlines) }
+                }
+            }
+            Section("Supabase 令牌") {
+                HStack {
+                    Text("当前状态")
+                    Spacer()
+                    Text(session.sbToken.isEmpty ? "未配置" : "已配置 ✓")
+                        .foregroundColor(session.sbToken.isEmpty ? .red : .green)
+                }
+                SecureField("粘贴新的 Supabase 令牌", text: $sb)
+                    .autocapitalization(.none)
+                    .autocorrectionDisabled(true)
+                Button("从剪贴板粘贴") {
+                    if let s = UIPasteboard.general.string { sb = s.trimmingCharacters(in: .whitespacesAndNewlines) }
+                }
+            }
+            Section {
+                Button("保存") { Task { await save() } }
+                    .disabled(gh.isEmpty && sb.isEmpty)
+                Button("从云端重新拉取") {
+                    Task {
+                        await TokenVault.pullTokens(session: session)
+                        note = "已从云端拉取（状态见上方）"
+                    }
+                }
+            }
+            if !hasKey {
+                Section {
+                    Text("⚠️ 当前没有解密密钥（多半是自动登录进来的）：保存后本机立刻能用，但暂时同步不到云端。退出后用密码重新登录一次，密钥会自动重建，之后就跟账号走了。")
+                        .font(.callout).foregroundColor(.orange)
+                }
+            }
+            if !note.isEmpty { Section { Text(note).font(.callout) } }
+        }
+        .navigationTitle("令牌配置")
+        .onAppear { hasKey = TokenVault.loadKey() != nil }
+    }
+
+    private func save() async {
+        if !gh.isEmpty { session.ghToken = gh.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if !sb.isEmpty { session.sbToken = sb.trimmingCharacters(in: .whitespacesAndNewlines) }
+        await TokenVault.pushTokens(session: session)
+        note = "已保存 ✓ 现在可以去爬作者了"
+        gh = ""; sb = ""
+        hasKey = TokenVault.loadKey() != nil
+    }
+}
+
 // MARK: - 系统配置
 
 struct AdminConfigView: View {

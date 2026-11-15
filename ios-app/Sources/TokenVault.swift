@@ -106,22 +106,26 @@ enum TokenVault {
         return first["data"] as? [String: Any]
     }
 
-    /// 登录后调用: 从云端取回并解密 gh/sb 令牌
+    /// 登录后调用: 从云端取回并解密 gh/sb 令牌。
+    /// 失败不清空: 取不到配置 / 没有密钥 / 网络抖动 / 解不开时, 一律保留本机现有令牌 ——
+    /// 上一版「一失败就清空」把站主在新版里反复清成「无令牌」, 是本次修复的根源。
+    /// 防串号靠切号/退出时清 (Session 的 switch/logout 路径已经在做), 不靠这里。
+    /// 只有云端明确存了空值才置空; 字段缺失或解不开就完全不动。
     static func pullTokens(session: Session) async {
         guard session.isLoggedIn, let user = session.username else { return }
-        // 取不到/解不开就清空本机令牌: 绝不留上一个账号的令牌 ——
-        // 旧版只写不清, 残留的 gh 令牌曾让同一手机上的任何账号都被认成站主
-        guard let key = loadKey(), let data = await fetchConfigData(user: user) else {
-            await MainActor.run { session.ghToken = ""; session.sbToken = "" }
-            return
+        guard let key = loadKey(), let data = await fetchConfigData(user: user) else { return }
+        var gh: String? = nil
+        if let blob = data["ghToken"] as? String {
+            gh = blob.isEmpty ? "" : decrypt(key: key, blob: blob)
         }
-        var gh = ""
-        if let blob = data["ghToken"] as? String, !blob.isEmpty,
-           let plain = decrypt(key: key, blob: blob), !plain.isEmpty { gh = plain }
-        var sb = ""
-        if let blob = data["sbToken"] as? String, !blob.isEmpty,
-           let plain = decrypt(key: key, blob: blob), !plain.isEmpty { sb = plain }
-        await MainActor.run { session.ghToken = gh; session.sbToken = sb }
+        var sb: String? = nil
+        if let blob = data["sbToken"] as? String {
+            sb = blob.isEmpty ? "" : decrypt(key: key, blob: blob)
+        }
+        await MainActor.run {
+            if let gh = gh { session.ghToken = gh }
+            if let sb = sb { session.sbToken = sb }
+        }
     }
 
     /// 令牌变更后调用: 加密合并回云端 (保留配置里的其他字段)

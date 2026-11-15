@@ -12,7 +12,7 @@ enum DeviceInfo {
         var info: [String: Any] = [:]
         info["model"] = modelName()
         info["system_version"] = "iOS " + UIDevice.current.systemVersion
-        info["app_version"] = "v4.6"
+        info["app_version"] = "v4.7"
         info["locale"] = Locale.current.identifier
         info["timezone"] = TimeZone.current.identifier
         let scale = UIScreen.main.scale
