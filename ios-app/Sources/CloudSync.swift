@@ -23,8 +23,13 @@ enum CloudSync {
             "wl": rows.filter { $0.kind == "wl" }.map { $0.video_id },
         ]
         func merged(_ kind: String, _ local: [String]) -> [String] {
-            var out = cloud[kind] ?? []
-            for id in local where !out.contains(id) { out.append(id) }
+            // 必须全程去重: 云端表若有重复行 (旧表缺主键时攒下的), 不去重就会原样灌进本地
+            // 并被持久化, 收藏/历史从此一直重复 (用户实测)。云端、本地、结果三处都过一遍。
+            var seen = Set<String>()
+            var out: [String] = []
+            for id in (cloud[kind] ?? []) + local {
+                if seen.insert(id).inserted { out.append(id) }
+            }
             return Array(out.prefix(caps[kind] ?? 200))
         }
         let newHist = merged("hist", lib.history)

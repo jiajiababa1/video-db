@@ -58,6 +58,23 @@ enum SB {
         return (decoded, total)
     }
 
+    /// 精确计数 (count=exact): 只用于小表 (评论/用户/板块/弹幕等)。
+    /// 大表 videos 精确计数会超时 (实测), 那边继续用 get 的 planned 估算;
+    /// 小表用 planned 估算会严重失真 (统计信息过期时能差出几十倍), 管理面板数字对不上就是这个原因。
+    static func exactCount(_ path: String, query: [URLQueryItem] = []) async -> Int? {
+        var comps = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        comps.queryItems = query + [URLQueryItem(name: "limit", value: "1")]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 25
+        for (k, v) in headers(extra: ["Prefer": "count=exact"]) { req.setValue(v, forHTTPHeaderField: k) }
+        guard let (_, resp) = try? await dataWithRetry(req),
+              let http = resp as? HTTPURLResponse,
+              let cr = http.value(forHTTPHeaderField: "Content-Range"),
+              let tail = cr.split(separator: "/").last else { return nil }
+        return Int(tail)
+    }
+
     /// PATCH 更新行 (query 里给匹配条件, 如 video_id=eq.xxx)
     static func patch(_ path: String, query: [URLQueryItem], body: [String: Any]) async throws {
         var comps = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!

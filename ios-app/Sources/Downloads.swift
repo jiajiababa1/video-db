@@ -56,6 +56,9 @@ final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, 
     }
     func attemptVideo(_ id: String) -> VideoItem? { attempts[id]?.video }
 
+    /// 下载文件夹 (Documents/downloads), 供「打开文件夹」跳转系统文件 App
+    var folderURL: URL { dir }
+
     func localURL(for id: String) -> URL? {
         guard let r = records.first(where: { $0.id == id }) else { return nil }
         let u = dir.appendingPathComponent(r.fileName)
@@ -280,6 +283,15 @@ struct DownloadsView: View {
     @EnvironmentObject var library: Library
     @State private var playFile: IdentifiedString? = nil
     @State private var batchNote = ""
+    @State private var shareFile: IdentifiedString? = nil
+
+    /// 在系统「文件」App 里打开下载文件夹 (shareddocuments 深链到本 App 的 Documents/downloads)
+    private func openFolder() {
+        let path = dl.folderURL.path
+        if let url = URL(string: "shareddocuments://" + (path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)) {
+            UIApplication.shared.open(url)
+        }
+    }
 
     private var activeIds: [String] {
         Array(Set(dl.progresses.keys).union(dl.notes.keys)).sorted()
@@ -298,9 +310,18 @@ struct DownloadsView: View {
                         .foregroundColor(Theme.sub).padding(.top, 60)
                 }
                 if !dl.records.isEmpty {
-                    Text("共 \(dl.records.count) 个 · 占用 " + ByteCountFormatter.string(fromByteCount: dl.totalSize, countStyle: .file))
-                        .font(.caption).foregroundColor(Theme.sub)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack {
+                        Text("共 \(dl.records.count) 个 · 占用 " + ByteCountFormatter.string(fromByteCount: dl.totalSize, countStyle: .file))
+                            .font(.caption).foregroundColor(Theme.sub)
+                        Spacer()
+                        Button {
+                            openFolder()
+                        } label: {
+                            Label("打开文件夹", systemImage: "folder")
+                                .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 ForEach(dl.records) { r in
                     recordRow(r)
@@ -313,6 +334,11 @@ struct DownloadsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $playFile) { w in
             SimpleVideoPlayer(urlString: w.value)
+        }
+        .sheet(item: $shareFile) { w in
+            if let u = URL(string: w.value) {
+                ActivityView(items: [u])
+            }
         }
     }
 
@@ -395,6 +421,12 @@ struct DownloadsView: View {
                     Button("▶ 播放") {
                         if let u = dl.localURL(for: r.id) {
                             playFile = IdentifiedString(value: u.absoluteString)
+                        }
+                    }
+                    .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)
+                    Button("导出") {
+                        if let u = dl.localURL(for: r.id) {
+                            shareFile = IdentifiedString(value: u.absoluteString)
                         }
                     }
                     .font(.caption.weight(.bold)).foregroundColor(Theme.gold2)

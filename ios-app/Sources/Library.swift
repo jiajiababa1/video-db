@@ -349,19 +349,25 @@ final class Library: ObservableObject {
         var snapshots: [String: VideoItem] = [:]
     }
 
+    /// 保序去重: 旧版本同步灌进来的重复 id 会存进本地文件, 载入时自愈一遍
+    private static func dedup(_ a: [String]) -> [String] {
+        var seen = Set<String>()
+        return a.filter { seen.insert($0).inserted }
+    }
+
     private func load() {
         guard let data = try? Data(contentsOf: fileURL) else { return }
         if let p = try? JSONDecoder().decode(Persist.self, from: data) {
-            favorites = p.favorites; watchLater = p.watchLater; history = p.history
-            progress = p.progress; follows = p.follows; blockedAuthors = p.blockedAuthors
+            favorites = Self.dedup(p.favorites); watchLater = Self.dedup(p.watchLater); history = Self.dedup(p.history)
+            progress = p.progress; follows = Self.dedup(p.follows); blockedAuthors = p.blockedAuthors
             snapshots = p.snapshots; favFolders = p.favFolders; hiddenIds = p.hiddenIds
             badwords = p.badwords; searchRecent = p.searchRecent; recycle = p.recycle
             countedViews = p.countedViews
             return
         }
         if let p = try? JSONDecoder().decode(PersistV1.self, from: data) {
-            favorites = p.favorites; watchLater = p.watchLater; history = p.history
-            progress = p.progress; follows = p.follows; blockedAuthors = p.blockedAuthors
+            favorites = Self.dedup(p.favorites); watchLater = Self.dedup(p.watchLater); history = Self.dedup(p.history)
+            progress = p.progress; follows = Self.dedup(p.follows); blockedAuthors = p.blockedAuthors
             snapshots = p.snapshots
         }
     }

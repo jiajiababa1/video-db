@@ -212,4 +212,9 @@ enum AdminAPI {
         let (_, total): ([E], Int?) = (try? await SB.get(path, query: query)) ?? ([], nil)
         return total
     }
+
+    /// 小表精确计数 (评论/用户/板块/弹幕/会话等): planned 估算在小表上严重失真, 面板数字必须用这个
+    static func restCountExact(_ path: String, query: [URLQueryItem]) async -> Int? {
+        await SB.exactCount(path, query: query)
+    }
 }

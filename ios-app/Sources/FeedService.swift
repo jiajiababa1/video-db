@@ -136,6 +136,9 @@ enum FeedService {
 
     /// 按 id 批量取行 (个人栏目/收藏刷新用)
     static func fetchByIds(_ ids: [String]) async -> [VideoItem] {
+        // 输入先去重: 本函数按输入顺序逐个映射输出, 输入里有重复 id 就会渲染出重复卡片
+        var seen = Set<String>()
+        let ids = ids.filter { seen.insert($0).inserted }
         guard !ids.isEmpty else { return [] }
         let list = ids.map { "%22" + enc($0) + "%22" }.joined(separator: ",")
         let url = SB.base.absoluteString + "/rest/v1/videos?" + cols

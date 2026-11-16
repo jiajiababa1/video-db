@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-// 由 Profile.swift 拆分 (v5.2: 每个功能一个文件, 方便定位问题)
+// 由 Profile.swift 拆分 (v5.3: 每个功能一个文件, 方便定位问题)
 
 /// 图片缓存 (caches/imgcache) 的大小与清理
 enum CacheTool {
@@ -108,7 +108,7 @@ struct SettingsView: View {
                 HStack {
                     Text("版本")
                     Spacer()
-                    Text("v5.2").foregroundColor(Theme.sub)
+                    Text("v5.3").foregroundColor(Theme.sub)
                 }
                 if session.isLoggedIn {
                     Button(role: .destructive) { session.logout() } label: {

@@ -22,7 +22,11 @@ struct VideoItem: Codable, Identifiable, Hashable {
 
     var id: String { video_id }
 
-    var displayTitle: String { (title?.isEmpty == false) ? title! : "无标题" }
+    /// 空标题时带上编号尾号区分: 库里有一批标题待回填的视频, 全显示「无标题」会连成一排像重复收藏 (用户实测)
+    var displayTitle: String {
+        if let t = title, !t.isEmpty { return t }
+        return "无标题 · " + String(video_id.suffix(6))
+    }
     var displayAuthor: String { author ?? "" }
 
     var isHx: Bool { video_id.hasPrefix("hx_") }

@@ -69,6 +69,18 @@ struct AdminView: View {
             Section("维护") {
                 nav("数据维护", "wrench.and.screwdriver") { AdminDataView() }
             }
+            Section("站主专属") {
+                nav("健康巡检", "heart.text.square") { HealthCheckView() }
+                nav("弹幕管理", "text.bubble.fill") { AdminDanmakuView() }
+                nav("作品审核", "photo.badge.checkmark") { AdminWorksView() }
+                nav("敏感词管理", "eye.slash") { BadWordsView() }
+                nav("批量兑换码", "tickets") { BatchCodesView() }
+                nav("核心备份", "externaldrive.badge.checkmark") { BackupView() }
+                nav("待重爬队列", "arrow.triangle.2.circlepath") { RescrapeQueueView() }
+                nav("VIP 总览", "crown") { VipOverviewView() }
+                nav("作者管理", "person.crop.rectangle.stack") { AuthorAdminView() }
+                nav("封禁名单", "hand.raised.fill") { BannedUsersView() }
+            }
         }
         .navigationTitle("管理面板")
         .task { await loadStats() }
@@ -88,9 +100,9 @@ struct AdminView: View {
             URLQueryItem(name: "select", value: "video_id"), URLQueryItem(name: "needs_rescrape", value: "eq.true")])
         async let removed = AdminAPI.restCount("rest/v1/videos", query: [
             URLQueryItem(name: "select", value: "video_id"), URLQueryItem(name: "removed", value: "eq.true")])
-        async let users = AdminAPI.restCount("rest/v1/user_accounts", query: [URLQueryItem(name: "select", value: "username")])
-        async let comments = AdminAPI.restCount("rest/v1/video_comments", query: [URLQueryItem(name: "select", value: "id")])
-        async let boards = AdminAPI.restCount("rest/v1/board_groups", query: [URLQueryItem(name: "select", value: "id")])
+        async let users = AdminAPI.restCountExact("rest/v1/user_accounts", query: [URLQueryItem(name: "select", value: "username")])
+        async let comments = AdminAPI.restCountExact("rest/v1/video_comments", query: [URLQueryItem(name: "select", value: "id")])
+        async let boards = AdminAPI.restCountExact("rest/v1/board_groups", query: [URLQueryItem(name: "select", value: "id")])
         let (t, p, r, rm, u, c, b) = await (total, playable, rescrape, removed, users, comments, boards)
         stats = [
             ("视频总数", fmt(t)), ("可播放（有直链）", fmt(p)), ("待重爬", fmt(r)),
