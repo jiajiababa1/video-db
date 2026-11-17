@@ -40,6 +40,10 @@ struct VideoItem: Codable, Identifiable, Hashable {
         return nil
     }
 
+    /// 实际播放地址: storedURL 的中转改写版 (twimg 走 Cloudflare 中转, 其余原样)。
+    /// playable 判定与回存仍看 storedURL, 不受此影响。
+    var playURL: URL? { storedURL.map { Relay.rewrite($0) } }
+
     /// 卡片上显示的时长文本 (duration 是直链时不显示)
     var durationText: String? {
         guard let d = duration, !d.hasPrefix("http"), !d.isEmpty else { return nil }

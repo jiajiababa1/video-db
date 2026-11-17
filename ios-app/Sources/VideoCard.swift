@@ -53,7 +53,7 @@ final class InlinePlayCenter: ObservableObject {
     }
 
     private func activate(_ v: VideoItem) {
-        guard let u = v.storedURL else { return }
+        guard let u = v.playURL else { return }
         activeId = v.video_id
         if currentURL != u {
             currentURL = u
@@ -100,7 +100,7 @@ struct CardPreview: View {
         .background(Color.black)
         .task {
             if let u = await Resolver.resolve(video) {
-                let p = AVPlayer(playerItem: AVPlayerItem(url: u))
+                let p = AVPlayer(playerItem: AVPlayerItem(url: Relay.rewrite(u)))
                 p.isMuted = true
                 player = p
                 p.play()

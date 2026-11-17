@@ -749,7 +749,7 @@ final class SwipeController: ObservableObject {
                 }
                 let p = AVPlayer()
                 p.automaticallyWaitsToMinimizeStalling = false
-                let item = AVPlayerItem(url: url)
+                let item = AVPlayerItem(url: Relay.rewrite(url))
                 item.preferredForwardBufferDuration = 10
                 self.observers[v.video_id] = NotificationCenter.default.addObserver(
                     forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in

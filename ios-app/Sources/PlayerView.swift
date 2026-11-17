@@ -100,7 +100,7 @@ final class PlayerVM: ObservableObject {
                 return
             }
             resolvedURL = url
-            let item = AVPlayerItem(url: url)
+            let item = AVPlayerItem(url: Relay.rewrite(url))
             let p = AVPlayer(playerItem: item)
             player = p
             state = "ready"

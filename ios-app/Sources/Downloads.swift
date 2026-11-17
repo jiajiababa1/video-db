@@ -73,8 +73,10 @@ final class Downloader: NSObject, ObservableObject, URLSessionDownloadDelegate, 
         }
         guard !isDownloaded(v.video_id), !isBusy(v.video_id) else { return }
         let hls = url.pathExtension.lowercased() == "m3u8"
-        attempts[v.video_id] = (v, url, hls)
-        queue.append((v, url, hls))
+        // v5.4: mp4 直链走 Cloudflare 中转下载 (不开梯子可达); m3u8 (hsex) 不改写
+        let dlURL = hls ? url : Relay.rewrite(url)
+        attempts[v.video_id] = (v, dlURL, hls)
+        queue.append((v, dlURL, hls))
         notes[v.video_id] = "排队中…"
         pump()
     }
