@@ -1,12 +1,16 @@
 // video-db 国内中转 (Cloudflare Worker, 免费版即可)
-// 用法: https://<你的worker地址>/video.twimg.com/<原路径>?<原参数>
-//      https://<你的worker地址>/pbs.twimg.com/<原路径>?<原参数>
-// 只放行下面白名单域名 (防被陌生人当免费代理刷流量), 其余一律 403。
+// 用法: https://<worker>/<host>/<原路径>?<原参数>
+// 放行白名单域名, 其余一律 403 (防被陌生人当免费代理刷流量)。
 // 透传 Range 头 — 视频拖动进度条靠它; 响应流式转发, 不落地缓存大文件。
+// v2 (2026-11-17): 新增 hsex 的 CDN (hdcdn.store) — 首页大半是 hsex 视频,
+// 其封面/切片不过中转的话关梯子照样看不到。m3u8 播放列表做文本改写:
+// 列表里的绝对地址换成中转地址, 相对地址天然会回到 Worker 取切片。
 
 const ALLOWED_HOSTS = new Set([
   "video.twimg.com",   // 视频文件
   "pbs.twimg.com",     // 封面图
+  "i.hdcdn.store",     // hsex 封面图
+  "cdn.hdcdn.store",   // hsex 视频 (m3u8 + 切片)
 ]);
 
 export default {
@@ -39,8 +43,21 @@ export default {
     }
     respHeaders.set("Access-Control-Allow-Origin", "*");
     // 封面图在边缘多缓存一会儿, 省请求数
-    if (host === "pbs.twimg.com" && upstream.ok) {
+    if ((host === "pbs.twimg.com" || host === "i.hdcdn.store") && upstream.ok) {
       respHeaders.set("Cache-Control", "public, max-age=86400");
+    }
+
+    // m3u8 播放列表: 缓冲后改写里面的绝对地址, 让切片也走中转
+    const ct = upstream.headers.get("Content-Type") || "";
+    const isPlaylist = target.includes(".m3u8") || ct.includes("mpegurl");
+    if (isPlaylist && upstream.ok) {
+      let text = await upstream.text();
+      const self = url.origin;
+      text = text.split("https://cdn.hdcdn.store").join(self + "/cdn.hdcdn.store");
+      text = text.split("https://i.hdcdn.store").join(self + "/i.hdcdn.store");
+      respHeaders.delete("Content-Length");
+      respHeaders.set("Content-Type", "application/vnd.apple.mpegurl");
+      return new Response(text, { status: 200, headers: respHeaders });
     }
 
     return new Response(upstream.body, {
