@@ -10,7 +10,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.0";
+static NSString * const kDCMenuVersion = @"v2.1";
 
 #pragma mark - Passthrough window
 
@@ -76,7 +76,7 @@ static NSString * const kDCMenuVersion = @"v2.0";
         f.dateFormat = @"HH:mm:ss";
         line = [NSString stringWithFormat:@"%@ %@", [f stringFromDate:[NSDate date]], text];
         [self.events addObject:line];
-        while (self.events.count > 60) [self.events removeObjectAtIndex:0];
+        while (self.events.count > 150) [self.events removeObjectAtIndex:0];
     }
     dispatch_async(dispatch_get_main_queue(), ^{ [self renderLog]; });
 }
@@ -306,15 +306,16 @@ static NSString * const kDCMenuVersion = @"v2.0";
 - (void)runRecon {
     [self logEvent:@"—— 存档侦查开始 ——"];
     NSString *home = NSHomeDirectory();
-    NSArray *roots = @[@"Documents", @"Library", @"tmp"];
+    [self logEvent:[NSString stringWithFormat:@"容器：%@", home]];
+    NSArray *roots = @[@"Documents", @"Library"];
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSInteger total = 0;
+    NSMutableArray<NSString *> *hot = [NSMutableArray array];
+    NSMutableArray<NSString *> *normal = [NSMutableArray array];
     for (NSString *rel in roots) {
         NSString *base = [home stringByAppendingPathComponent:rel];
         NSDirectoryEnumerator *en = [fm enumeratorAtPath:base];
         NSString *sub;
         while ((sub = [en nextObject])) {
-            if (total >= 90) break;
             NSString *full = [base stringByAppendingPathComponent:sub];
             BOOL isDir = NO;
             [fm fileExistsAtPath:full isDirectory:&isDir];
@@ -322,16 +323,25 @@ static NSString * const kDCMenuVersion = @"v2.0";
             NSDictionary *attrs = [fm attributesOfItemAtPath:full error:nil];
             unsigned long long sz = [attrs fileSize];
             NSString *low = sub.lowercaseString;
-            BOOL hot = [low containsString:@"save"] || [low containsString:@"option"] ||
-                       [low containsString:@"profile"] || [low containsString:@"user"] ||
-                       [low hasSuffix:@".dat"] || [low hasSuffix:@".sav"] ||
-                       [low containsString:@"steam"] || [low containsString:@"settings"];
-            [self logEvent:[NSString stringWithFormat:@"%@%@/%@ (%llu)",
-                            hot ? @"★" : @"", rel, sub, sz]];
-            total++;
+            BOOL isHot = [low containsString:@"save"] || [low containsString:@"option"] ||
+                         [low containsString:@"profile"] || [low containsString:@"user"] ||
+                         [low hasSuffix:@".dat"] || [low hasSuffix:@".sav"] ||
+                         [low containsString:@"steam"] || [low containsString:@"settings"] ||
+                         [low containsString:@"deadcells"] || [low containsString:@"progress"];
+            NSString *line = [NSString stringWithFormat:@"%@/%@ (%llu)", rel, sub, sz];
+            if (isHot) [hot addObject:[@"★" stringByAppendingString:line]];
+            else [normal addObject:line];
         }
     }
-    [self logEvent:[NSString stringWithFormat:@"—— 侦查完，共 %ld 个文件 ——", (long)total]];
+    for (NSString *l in hot) [self logEvent:l];
+    NSInteger room = 120 - (NSInteger)hot.count;
+    NSInteger shown = 0;
+    for (NSString *l in normal) {
+        if (shown++ >= room) break;
+        [self logEvent:l];
+    }
+    [self logEvent:[NSString stringWithFormat:@"—— 侦查完：★%ld 个，共 %ld 个文件 ——",
+                    (long)hot.count, (long)(hot.count + normal.count)]];
 }
 
 @end
