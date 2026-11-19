@@ -207,6 +207,13 @@ static void rep_didGetUserInfoFail(id s, SEL c, id a) { [[DCMenu shared] logEven
 static void rep_didLoginFailure(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"登录失败回调"]; if (orig_didLoginFailure) orig_didLoginFailure(s, c, a); }
 static void rep_onGameAddiction(id s, SEL c, id a, id b, BOOL f) { [[DCMenu shared] logEvent:@"防沉迷回调到达"]; if (orig_onGameAddiction) orig_onGameAddiction(s, c, a, b, f); }
 
+typedef void (*ImpPresent)(id, SEL, UIViewController *, BOOL, id);
+static ImpPresent orig_presentVC;
+static void rep_presentVC(id s, SEL c, UIViewController *vc, BOOL animated, id completion) {
+    [[DCMenu shared] logEvent:[NSString stringWithFormat:@"弹出界面: %@", NSStringFromClass([vc class])]];
+    if (orig_presentVC) orig_presentVC(s, c, vc, animated, completion);
+}
+
 static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     if (!cls) return 0;
     Method m = class_getInstanceMethod(cls, sel);
@@ -227,6 +234,8 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     n += DCProbe(impl, @selector(didGetUserInfoFailureWithError:), (IMP)rep_didGetUserInfoFail, (IMP *)&orig_didGetUserInfoFail);
     n += DCProbe(impl, @selector(didLoginFailureWithError:), (IMP)rep_didLoginFailure, (IMP *)&orig_didLoginFailure);
     n += DCProbe(addiction, @selector(onGameAddiction:data:appRestrictFirst:), (IMP)rep_onGameAddiction, (IMP *)&orig_onGameAddiction);
+    int p = DCProbe([UIViewController class], @selector(presentViewController:animated:completion:), (IMP)rep_presentVC, (IMP *)&orig_presentVC);
+    if (p > 0) [self logEvent:@"界面探针已装"];
     if (n > 0) {
         self.probesInstalled = YES;
         [self logEvent:[NSString stringWithFormat:@"探针已装 %d/7", n]];
