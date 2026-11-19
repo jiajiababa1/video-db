@@ -16,10 +16,11 @@
 #import <mach-o/dyld.h>
 #import <mach-o/getsect.h>
 #import <mach/mach.h>
+#import <mach/mach_vm.h>
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.6.2";
+static NSString * const kDCMenuVersion = @"v2.6.3";
 
 #pragma mark - Passthrough window
 
@@ -170,6 +171,19 @@ static BOOL dc_seen_add(uintptr_t v) {
     }
     dc_seen_table[h] = v;
     return YES;
+}
+
+// Crash-proof memory copy: the game keeps running (and its GC keeps
+// freeing) while we scan, so a checked-then-dereferenced heap pointer can
+// be unmapped in between. mach_vm_read_overwrite goes through the kernel
+// and simply fails instead of faulting the process.
+static BOOL dc_vread(uintptr_t addr, void *out, size_t n) {
+    mach_vm_size_t got = 0;
+    kern_return_t kr = mach_vm_read_overwrite(mach_task_self(),
+                                              (mach_vm_address_t)addr,
+                                              (mach_vm_size_t)n,
+                                              (mach_vm_address_t)out, &got);
+    return kr == KERN_SUCCESS && got == n;
 }
 
 static BOOL dc_in_spans(uintptr_t addr, size_t n) {
@@ -977,23 +991,22 @@ static BOOL dc_live_init(DCMenu *menu) {
         DCClassInfo *gameCls0 = dc_g_classes[@"pr.Game"];
         if (gameCls0 && !first[@"pr.Game"]) {
             uintptr_t gv = *(const uintptr_t *)(gameCls0.objBase + 56);
-            if (gv && dc_readable2(gv, 8)) {
-                uintptr_t classObj = *(const uintptr_t *)gv;
-                if (classObj && dc_readable2(classObj, 8)) {
-                    DCClassInfo *coCi = dc_class_for_type(*(const uintptr_t *)classObj);
-                    [self logEvent:[NSString stringWithFormat:@"类对象 @0x%lx（类 %@），扫它的字段找实例",
-                                    (unsigned long)classObj, coCi ? coCi.name : @"?"]];
-                    for (uintptr_t off = 8; off <= 1024; off += 8) {
-                        if (!dc_readable2(classObj + off, 8)) break;
-                        uintptr_t child = *(const uintptr_t *)(classObj + off);
-                        if (child < 0x100000000 || (child & 7) || !dc_readable2(child, 16)) continue;
-                        DCClassInfo *cci = dc_class_for_type(*(const uintptr_t *)child);
-                        if (cci && [cci.name isEqualToString:@"pr.Game"] && !first[@"pr.Game"]) {
-                            first[@"pr.Game"] = @(child);
-                            counts[@"pr.Game"] = @1;
-                            [self logEvent:[NSString stringWithFormat:@"类对象 +0x%lx 处就是 pr.Game 实例",
-                                            (unsigned long)off]];
-                        }
+            uintptr_t classObj = 0, coHead = 0;
+            if (gv && dc_vread(gv, &classObj, 8) && classObj && dc_vread(classObj, &coHead, 8)) {
+                DCClassInfo *coCi = dc_class_for_type(coHead);
+                [self logEvent:[NSString stringWithFormat:@"类对象 @0x%lx（类 %@），扫它的字段找实例",
+                                (unsigned long)classObj, coCi ? coCi.name : @"?"]];
+                for (uintptr_t off = 8; off <= 1024; off += 8) {
+                    uintptr_t child = 0, childHead = 0;
+                    if (!dc_vread(classObj + off, &child, 8)) break;
+                    if (child < 0x100000000 || (child & 7)) continue;
+                    if (!dc_vread(child, &childHead, 8)) continue;
+                    DCClassInfo *cci = dc_class_for_type(childHead);
+                    if (cci && [cci.name isEqualToString:@"pr.Game"] && !first[@"pr.Game"]) {
+                        first[@"pr.Game"] = @(child);
+                        counts[@"pr.Game"] = @1;
+                        [self logEvent:[NSString stringWithFormat:@"类对象 +0x%lx 处就是 pr.Game 实例",
+                                        (unsigned long)off]];
                     }
                 }
             }
@@ -1001,10 +1014,15 @@ static BOOL dc_live_init(DCMenu *menu) {
         }
         // 1b) Globals scan: qwords in the game's data segments that point at
         //     live HL objects (first word = hl_type* in the types window).
-        //     Hardened: precomputed region table + allocation-free dedupe.
+        //     Object heads are copied with mach_vm_read_overwrite (never
+        //     dereferenced): the game + its GC keep freeing memory while we
+        //     scan, and a direct deref of a just-freed page is what crashed
+        //     the earlier probes. Stops early once all 3 targets are found.
         memset(dc_seen_table, 0, sizeof(dc_seen_table));
         unsigned long candidates = 0;
+        BOOL allFound = NO;
         for (NSDictionary *span in dc_g_dataSpans) {
+            if (allFound) break;
             uintptr_t lo = (uintptr_t)[span[@"ptr"] pointerValue];
             uintptr_t hi = lo + [span[@"len"] unsignedLongValue];
             for (uintptr_t s = lo; s + 8 <= hi; s += 8) {
@@ -1013,16 +1031,24 @@ static BOOL dc_live_init(DCMenu *menu) {
                 if (v >= dc_g_textLo && v < dc_g_typesHi) continue;
                 if (!dc_seen_add(v)) continue;
                 candidates++;
-                if ((candidates & 0xFFFF) == 0) {
+                if ((candidates & 0x3FFF) == 0) {
                     dc_stage([NSString stringWithFormat:@"阶段：扫描中 候选 %lu、已认出 %lu 类",
                               candidates, (unsigned long)counts.count]);
                 }
                 if (!dc_readable2(v, 16)) continue;
-                uintptr_t t = *(const uintptr_t *)v;
+                uintptr_t t = 0;
+                if (!dc_vread(v, &t, 8)) continue;
                 DCClassInfo *ci = dc_class_for_type(t);
                 if (!ci) continue;
                 counts[ci.name] = @([counts[ci.name] unsignedLongLongValue] + 1);
-                if (!first[ci.name]) first[ci.name] = @(v);
+                if (!first[ci.name]) {
+                    first[ci.name] = @(v);
+                    if (first[@"pr.Game"] && first[@"en.Hero"] && first[@"tool.GameData"]) {
+                        allFound = YES;
+                        dc_stage(@"阶段：三个目标都找到，提前收尾");
+                        break;
+                    }
+                }
             }
             dc_stage([NSString stringWithFormat:@"阶段：扫完一个数据段，候选 %lu", candidates]);
         }
@@ -1050,11 +1076,13 @@ static BOOL dc_live_init(DCMenu *menu) {
                         (long)gl.size, rt ? *(const int *)(rt + 16) : -1,
                         gl.offsets[@"hero"], gl.offsets[@"data"]]];
         uintptr_t g = [gameAddr unsignedLongLongValue];
-        if (!dc_readable(g, (size_t)gl.size)) { [self logEvent:@"Game 对象不可读"]; return; }
-        uintptr_t hero = *(const uintptr_t *)(g + [gl.offsets[@"hero"] unsignedLongValue]);
-        uintptr_t gdata = *(const uintptr_t *)(g + [gl.offsets[@"data"] unsignedLongValue]);
-        DCClassInfo *heroCls = hero ? dc_class_for_type(*(const uintptr_t *)hero) : nil;
-        DCClassInfo *dataCls = gdata ? dc_class_for_type(*(const uintptr_t *)gdata) : nil;
+        uintptr_t hero = 0, gdata = 0, heroHead = 0, dataHead = 0;
+        if (!dc_vread(g + [gl.offsets[@"hero"] unsignedLongValue], &hero, 8) ||
+            !dc_vread(g + [gl.offsets[@"data"] unsignedLongValue], &gdata, 8)) {
+            [self logEvent:@"Game 对象读不到（vm_read 失败）"]; return;
+        }
+        DCClassInfo *heroCls = (hero && dc_vread(hero, &heroHead, 8)) ? dc_class_for_type(heroHead) : nil;
+        DCClassInfo *dataCls = (gdata && dc_vread(gdata, &dataHead, 8)) ? dc_class_for_type(dataHead) : nil;
         [self logEvent:[NSString stringWithFormat:@"Game.hero -> %@ @0x%lx", heroCls.name ?: @"?", (unsigned long)hero]];
         [self logEvent:[NSString stringWithFormat:@"Game.data -> %@ @0x%lx", dataCls.name ?: @"?", (unsigned long)gdata]];
         if (!heroCls || !dataCls) { [self logEvent:@"子对象类名不对，先到此"]; return; }
@@ -1063,11 +1091,18 @@ static BOOL dc_live_init(DCMenu *menu) {
         uintptr_t hrt = *(const uintptr_t *)(heroCls.objBase + 72);
         [self logEvent:[NSString stringWithFormat:@"Hero 布局 size=%ld（rt size=%d，离线算 1656）",
                         (long)hl.size, hrt ? *(const int *)(hrt + 16) : -1]];
-        if (!dc_readable(hero, (size_t)hl.size) || !dc_readable(gdata, (size_t)dl.size)) {
-            [self logEvent:@"Hero/GameData 不可读"]; return;
+        size_t hsz = (size_t)hl.size, dsz = (size_t)dl.size;
+        if (hsz == 0 || dsz == 0 || hsz > 16384 || dsz > 16384) {
+            [self logEvent:@"布局 size 异常，先到此"]; return;
         }
-        const uint8_t *hb = (const uint8_t *)hero;
-        const uint8_t *db = (const uint8_t *)gdata;
+        uint8_t *hbuf = (uint8_t *)malloc(hsz);
+        uint8_t *dbuf = (uint8_t *)malloc(dsz);
+        if (!hbuf || !dbuf || !dc_vread(hero, hbuf, hsz) || !dc_vread(gdata, dbuf, dsz)) {
+            free(hbuf); free(dbuf);
+            [self logEvent:@"Hero/GameData 拷贝失败（vm_read）"]; return;
+        }
+        const uint8_t *hb = hbuf;
+        const uint8_t *db = dbuf;
         int life = *(const int *)(hb + [hl.offsets[@"life"] unsignedLongValue]);
         int maxLife = *(const int *)(hb + [hl.offsets[@"maxLife"] unsignedLongValue]);
         double pdm = *(const double *)(hb + [hl.offsets[@"powerDistMul"] unsignedLongValue]);
@@ -1082,6 +1117,7 @@ static BOOL dc_live_init(DCMenu *menu) {
                         life, maxLife, pdm, bT, tT, sT]];
         [self logEvent:[NSString stringWithFormat:@"实时读数：金币 %d · 细胞 %d（Hero 侧 %d） · 血瓶 %d",
                         money, cells, hCells, heal]];
+        free(hbuf); free(dbuf);
         dispatch_async(dispatch_get_main_queue(), ^{
             self.statusLabel.text = [NSString stringWithFormat:@"实时：生命 %d/%d · 金币 %d · 细胞 %d",
                                      life, maxLife, money, cells];
