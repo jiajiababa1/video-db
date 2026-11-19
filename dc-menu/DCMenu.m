@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.1";
+static NSString * const kDCMenuVersion = @"v2.8.2";
 
 #pragma mark - Passthrough window
 
@@ -233,6 +233,19 @@ static uintptr_t dc_array_elem(uintptr_t arr, int idx) {
     return v;
 }
 
+// Haxe Array<T> fields hold an hl.types.ArrayObj wrapper object, not a
+// raw varray: { t, length(i32) @+8, varray * @+16 }. Return the raw
+// varray (or obj itself when it already is one), verified by reading
+// the candidate's array header.
+static uintptr_t dc_unwrap_array(uintptr_t obj) {
+    if (!obj) return 0;
+    if (dc_array_info(obj, NULL, NULL)) return obj;
+    uintptr_t p = 0;
+    if (dc_vread(obj + 16, &p, 8) && p && dc_array_info(p, NULL, NULL)) return p;
+    if (dc_vread(obj + 8, &p, 8) && p && dc_array_info(p, NULL, NULL)) return p;
+    return 0;
+}
+
 
 static BOOL dc_in_spans(uintptr_t addr, size_t n) {
     for (NSDictionary *span in dc_g_dataSpans) {
@@ -439,6 +452,51 @@ static BOOL dc_is_exit_class(DCClassInfo *ci) {
 // arrays, the element class census. Any Exit entity found gets its cell
 // coords cached for the teleport button.
 static NSInteger dc_g_walkLines = 0;
+
+// Log an array's element-class census; cache the first Exit entity's
+// cell coords for the teleport button.
+static void dc_census_array(DCMenu *menu, uintptr_t arr, NSString *label) {
+    int arrSize = 0;
+    uintptr_t elemT = 0;
+    if (!dc_array_info(arr, &elemT, &arrSize)) return;
+    dc_g_walkLines++;
+    [menu logEvent:[NSString stringWithFormat:@"%@：数组 %d 个", label, arrSize]];
+    int n = MIN(arrSize, 1500);
+    NSMutableDictionary<NSString *, NSNumber *> *ec = [NSMutableDictionary dictionary];
+    for (int i = 0; i < n; i++) {
+        uintptr_t e = dc_array_elem(arr, i);
+        uintptr_t eh = 0;
+        if (!e || !dc_vread(e, &eh, 8)) continue;
+        DCClassInfo *eci = dc_class_for_type(eh);
+        if (!eci) continue;
+        ec[eci.name] = @([ec[eci.name] unsignedLongLongValue] + 1);
+        if (!dc_g_hasExit && dc_is_exit_class(eci)) {
+            DCLayout *xl = dc_layout_rec(eci);
+            int32_t cxv = 0, cyv = 0;
+            double xrv = 0, yrv = 0;
+            if (xl.offsets[@"cx"]) dc_vread(e + [xl.offsets[@"cx"] unsignedLongValue], &cxv, 4);
+            if (xl.offsets[@"cy"]) dc_vread(e + [xl.offsets[@"cy"] unsignedLongValue], &cyv, 4);
+            if (xl.offsets[@"xr"]) dc_vread(e + [xl.offsets[@"xr"] unsignedLongValue], &xrv, 8);
+            if (xl.offsets[@"yr"]) dc_vread(e + [xl.offsets[@"yr"] unsignedLongValue], &yrv, 8);
+            dc_g_exitCx = cxv; dc_g_exitCy = cyv;
+            dc_g_exitXr = xrv; dc_g_exitYr = yrv;
+            dc_g_hasExit = YES;
+            NSString *dn = nil;
+            if (xl.offsets[@"destName"]) {
+                uintptr_t sp = 0;
+                if (dc_vread(e + [xl.offsets[@"destName"] unsignedLongValue], &sp, 8) && sp)
+                    dn = dc_hlstring(sp);
+            }
+            [menu logEvent:[NSString stringWithFormat:@"★找到出口 %@ 格(%d,%d) 去向 %@",
+                            eci.name, cxv, cyv, dn ?: @"?"]];
+        }
+    }
+    for (NSString *cn in ec) {
+        dc_g_walkLines++;
+        [menu logEvent:[NSString stringWithFormat:@"%@ 元素：%@ ×%@", label, cn, ec[cn]]];
+    }
+}
+
 static void dc_walk_obj(DCMenu *menu, uintptr_t addr, DCClassInfo *ci, int depth, NSString *label) {
     if (!ci || dc_g_walkLines > 220) return;
     DCLayout *lay = dc_layout_rec(ci);
@@ -454,45 +512,8 @@ static void dc_walk_obj(DCMenu *menu, uintptr_t addr, DCClassInfo *ci, int depth
         if (!off) continue;
         uintptr_t child = 0;
         if (!dc_vread(addr + [off unsignedLongValue], &child, 8) || !child) continue;
-        int arrSize = 0;
-        uintptr_t elemT = 0;
-        if (dc_array_info(child, &elemT, &arrSize)) {
-            dc_g_walkLines++;
-            [menu logEvent:[NSString stringWithFormat:@"%@.%@：数组 %d 个", label, fn, arrSize]];
-            int n = MIN(arrSize, 1500);
-            NSMutableDictionary<NSString *, NSNumber *> *ec = [NSMutableDictionary dictionary];
-            for (int i = 0; i < n; i++) {
-                uintptr_t e = dc_array_elem(child, i);
-                uintptr_t eh = 0;
-                if (!e || !dc_vread(e, &eh, 8)) continue;
-                DCClassInfo *eci = dc_class_for_type(eh);
-                if (!eci) continue;
-                ec[eci.name] = @([ec[eci.name] unsignedLongLongValue] + 1);
-                if (!dc_g_hasExit && dc_is_exit_class(eci)) {
-                    DCLayout *xl = dc_layout_rec(eci);
-                    int32_t cxv = 0, cyv = 0;
-                    double xrv = 0, yrv = 0;
-                    if (xl.offsets[@"cx"]) dc_vread(e + [xl.offsets[@"cx"] unsignedLongValue], &cxv, 4);
-                    if (xl.offsets[@"cy"]) dc_vread(e + [xl.offsets[@"cy"] unsignedLongValue], &cyv, 4);
-                    if (xl.offsets[@"xr"]) dc_vread(e + [xl.offsets[@"xr"] unsignedLongValue], &xrv, 8);
-                    if (xl.offsets[@"yr"]) dc_vread(e + [xl.offsets[@"yr"] unsignedLongValue], &yrv, 8);
-                    dc_g_exitCx = cxv; dc_g_exitCy = cyv;
-                    dc_g_exitXr = xrv; dc_g_exitYr = yrv;
-                    dc_g_hasExit = YES;
-                    NSString *dn = nil;
-                    if (xl.offsets[@"destName"]) {
-                        uintptr_t sp = 0;
-                        if (dc_vread(e + [xl.offsets[@"destName"] unsignedLongValue], &sp, 8) && sp)
-                            dn = dc_hlstring(sp);
-                    }
-                    [menu logEvent:[NSString stringWithFormat:@"★找到出口 %@ 格(%d,%d) 去向 %@",
-                                    eci.name, cxv, cyv, dn ?: @"?"]];
-                }
-            }
-            for (NSString *cn in ec) {
-                dc_g_walkLines++;
-                [menu logEvent:[NSString stringWithFormat:@"%@.%@ 元素：%@ ×%@", label, fn, cn, ec[cn]]];
-            }
+        if (kind == 12) {
+            dc_census_array(menu, child, [NSString stringWithFormat:@"%@.%@", label, fn]);
         } else if (kind == 11) {
             uintptr_t ch = 0;
             DCClassInfo *cci = dc_vread(child, &ch, 8) ? dc_class_for_type(ch) : nil;
@@ -503,10 +524,17 @@ static void dc_walk_obj(DCMenu *menu, uintptr_t addr, DCClassInfo *ci, int depth
                                  [cci.name isEqualToString:@"level.LevelMap"] ||
                                  [cci.name isEqualToString:@"tool.Team"] ||
                                  [cci.name isEqualToString:@"Fx"] ||
+                                 [cci.name isEqualToString:@"Viewport"] ||
+                                 [cci.name isEqualToString:@"light.LightedLayers"] ||
+                                 [cci.name isEqualToString:@"level.LevelAudio"] ||
+                                 [cci.name hasPrefix:@"level.disp."] ||
                                  [cci.name hasPrefix:@"h2d."] ||
                                  [cci.name hasPrefix:@"ui."] ||
                                  [cci.name hasPrefix:@"libs."]);
-            if (cci && !noisy && (depth < 1 || isArrObj)) {
+            if (isArrObj) {
+                uintptr_t raw = dc_unwrap_array(child);
+                if (raw) dc_census_array(menu, raw, [NSString stringWithFormat:@"%@.%@", label, fn]);
+            } else if (cci && !noisy && depth < 1) {
                 dc_walk_obj(menu, child, cci, depth + 1,
                             [NSString stringWithFormat:@"%@.%@", label, fn]);
             }
@@ -1673,10 +1701,12 @@ static BOOL dc_live_init(DCMenu *menu) {
                     int asz = 0;
                     uintptr_t et = 0;
                     if (!aOff || !dc_vread(wm + [aOff unsignedLongValue], &arr, 8) || !arr) continue;
-                    if (!dc_array_info(arr, &et, &asz)) {
+                    uintptr_t rawArr = dc_unwrap_array(arr);
+                    if (!rawArr || !dc_array_info(rawArr, &et, &asz)) {
                         [self logEvent:[NSString stringWithFormat:@"%@ 不是数组", arrName]];
                         continue;
                     }
+                    arr = rawArr;
                     [self logEvent:[NSString stringWithFormat:@"%@：%d 件", arrName, asz]];
                     for (int i = 0; i < MIN(asz, 6); i++) {
                         uintptr_t w = dc_array_elem(arr, i);
