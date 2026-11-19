@@ -10,7 +10,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.2";
+static NSString * const kDCMenuVersion = @"v2.3";
 
 #pragma mark - Passthrough window
 
@@ -47,6 +47,8 @@ static NSString * const kDCMenuVersion = @"v2.2";
 - (void)fetchConfig;
 - (void)logEvent:(NSString *)text;
 - (void)runRecon;
+- (void)applyAssistBoost;
+- (void)restoreAssist;
 @end
 
 @implementation DCMenu
@@ -213,9 +215,9 @@ static NSString * const kDCMenuVersion = @"v2.2";
     [panel addSubview:log];
     self.logView = log;
 
-    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"关闭", @"togglePanel"]];
-    CGFloat bw = (pw - 32 - 16) / 3;
-    for (NSInteger i = 0; i < 3; i++) {
+    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
+    CGFloat bw = (pw - 32 - 24) / 4;
+    for (NSInteger i = 0; i < 4; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16 + i * (bw + 8), ph - 44, bw, 34);
         b.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
@@ -257,6 +259,69 @@ static NSString * const kDCMenuVersion = @"v2.2";
 - (void)onCheckUpdate { [self fetchConfig]; }
 
 - (void)onRecon { [self runRecon]; }
+
+- (void)onRestoreAssist { [self restoreAssist]; }
+
+#pragma mark Assist mode boost (feature: options file patch)
+
+- (NSString *)dcOptionsPath {
+    return [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/save/dc_options.json"];
+}
+
+- (NSDictionary *)assistBlock {
+    return @{@"enabled": @YES, @"continueEnabled": @YES, @"gameContinue": @99,
+             @"easyParry": @YES, @"easyTrap": @YES, @"revealMap": @YES,
+             @"trapDamage": @0, @"enemyHealth": @0.1, @"enemyDamage": @0.1,
+             @"lockMimicSpawn": @NO, @"autoHeal": @YES, @"modeAuto": @NO,
+             @"autoBreakDoors": @YES, @"slowerMobs": @YES};
+}
+
+// Runs in the constructor, before the game reads its options file:
+// patch assistMode + savedAssistMode in place, keep every other key.
+// First run saves a .bak so the panel can restore the original.
+- (void)applyAssistBoost {
+    NSString *path = [self dcOptionsPath];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:path]) {
+        [self logEvent:@"辅助拉满：没找到 dc_options.json，跳过"];
+        return;
+    }
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    NSDictionary *root = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    if (![root isKindOfClass:[NSDictionary class]]) {
+        [self logEvent:@"辅助拉满：设置文件解析失败，跳过"];
+        return;
+    }
+    NSString *bak = [path stringByAppendingString:@".bak"];
+    if (![fm fileExistsAtPath:bak]) {
+        [fm copyItemAtPath:path toPath:bak error:nil];
+    }
+    NSMutableDictionary *m = [root mutableCopy];
+    m[@"assistMode"] = [self assistBlock];
+    m[@"savedAssistMode"] = [self assistBlock];
+    NSData *out = [NSJSONSerialization dataWithJSONObject:m options:0 error:nil];
+    if (out && [out writeToFile:path atomically:YES]) {
+        [self logEvent:@"辅助模式已拉满（敌血/敌攻 0.1、陷阱 0、续命 99、自动回血、全图揭示）"];
+    } else {
+        [self logEvent:@"辅助拉满：写入失败"];
+    }
+}
+
+- (void)restoreAssist {
+    NSString *path = [self dcOptionsPath];
+    NSString *bak = [path stringByAppendingString:@".bak"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:bak]) {
+        [fm removeItemAtPath:path error:nil];
+        if ([fm copyItemAtPath:bak toPath:path error:nil]) {
+            [self logEvent:@"已恢复原设置，重开游戏生效"];
+        } else {
+            [self logEvent:@"恢复失败：拷贝不回去"];
+        }
+    } else {
+        [self logEvent:@"没有备份可恢复（还没拉满过）"];
+    }
+}
 
 #pragma mark Hot-update config
 
@@ -356,6 +421,12 @@ static NSString * const kDCMenuVersion = @"v2.2";
 #pragma mark - Entry
 
 __attribute__((constructor)) static void DCMenuInit(void) {
+    // Patch the options file before the game reads it (tweak constructors
+    // run during dyld init, ahead of the game's own startup).
+    NSString *bid = [NSBundle mainBundle].bundleIdentifier ?: @"";
+    if ([bid containsString:@"deadcells"]) {
+        [[DCMenu shared] applyAssistBoost];
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
         [[DCMenu shared] setup];
     });
