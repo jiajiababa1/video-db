@@ -5,6 +5,7 @@
 // Remote config: https://api.github.com/repos/jiajiababa1/video-db/contents/dc-menu/menu.json
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 static NSString * const kDCConfigURL = @"https://api.github.com/repos/jiajiababa1/video-db/contents/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
@@ -33,7 +34,10 @@ static NSString * const kDCBundledBadge = @"版本 A";
 @property (nonatomic, strong) UILabel *badgeLabel;
 @property (nonatomic, strong) UILabel *noticeLabel;
 @property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, strong) UILabel *diagLabel;
 @property (nonatomic, strong) NSDictionary *config;
+@property (nonatomic, strong) NSMutableArray<NSString *> *events;
+@property (nonatomic, assign) BOOL probesInstalled;
 @property (nonatomic, assign) BOOL setupDone;
 + (instancetype)shared;
 - (void)setup;
@@ -101,7 +105,7 @@ static NSString * const kDCBundledBadge = @"版本 A";
 
     // Panel
     CGFloat pw = MIN(320, bounds.size.width - 40);
-    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width - pw) / 2.0, bounds.size.height * 0.22, pw, 300)];
+    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width - pw) / 2.0, bounds.size.height * 0.16, pw, 400)];
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
     panel.layer.cornerRadius = 16;
     panel.hidden = YES;
@@ -138,8 +142,16 @@ static NSString * const kDCBundledBadge = @"版本 A";
     [panel addSubview:status];
     self.statusLabel = status;
 
+    UILabel *diag = [[UILabel alloc] initWithFrame:CGRectMake(16, 208, pw - 32, 96)];
+    diag.textColor = [UIColor systemCyanColor];
+    diag.font = [UIFont systemFontOfSize:11];
+    diag.numberOfLines = 0;
+    diag.text = @"登录诊断：等待事件…";
+    [panel addSubview:diag];
+    self.diagLabel = diag;
+
     UIButton *refresh = [UIButton buttonWithType:UIButtonTypeSystem];
-    refresh.frame = CGRectMake(16, 216, (pw - 48) / 2.0, 44);
+    refresh.frame = CGRectMake(16, 316, (pw - 48) / 2.0, 44);
     refresh.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
     refresh.layer.cornerRadius = 10;
     [refresh setTitle:@"检查更新" forState:UIControlStateNormal];
@@ -148,7 +160,7 @@ static NSString * const kDCBundledBadge = @"版本 A";
     [panel addSubview:refresh];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(32 + (pw - 48) / 2.0, 216, (pw - 48) / 2.0, 44);
+    close.frame = CGRectMake(32 + (pw - 48) / 2.0, 316, (pw - 48) / 2.0, 44);
     close.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
     close.layer.cornerRadius = 10;
     [close setTitle:@"关闭" forState:UIControlStateNormal];
@@ -157,6 +169,68 @@ static NSString * const kDCBundledBadge = @"版本 A";
     [panel addSubview:close];
 
     [self fetchConfig];
+    [self installProbes];
+}
+
+- (void)logEvent:(NSString *)name {
+    if (!self.events) self.events = [NSMutableArray array];
+    NSDateFormatter *fmt = [NSDateFormatter new];
+    fmt.dateFormat = @"HH:mm:ss";
+    NSString *line = [NSString stringWithFormat:@"%@ %@", [fmt stringFromDate:[NSDate date]], name];
+    [self.events addObject:line];
+    while (self.events.count > 6) [self.events removeObjectAtIndex:0];
+    NSString *text = [@"登录诊断：\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    if ([NSThread isMainThread]) {
+        self.diagLabel.text = text;
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{ self.diagLabel.text = text; });
+    }
+}
+
+typedef void (*ImpV)(id, SEL);
+typedef void (*ImpV1)(id, SEL, id);
+typedef void (*ImpV2)(id, SEL, id, id);
+typedef void (*ImpV2B)(id, SEL, id, id, BOOL);
+static ImpV   orig_didInitSDKSuccess;
+static ImpV2  orig_didLoginSuccessKey;
+static ImpV1  orig_didLoginSuccessResult;
+static ImpV1  orig_didGetUserInfoOK;
+static ImpV1  orig_didGetUserInfoFail;
+static ImpV1  orig_didLoginFailure;
+static ImpV2B orig_onGameAddiction;
+
+static void rep_didInitSDKSuccess(id s, SEL c) { [[DCMenu shared] logEvent:@"SDK 初始化成功"]; if (orig_didInitSDKSuccess) orig_didInitSDKSuccess(s, c); }
+static void rep_didLoginSuccessKey(id s, SEL c, id a, id b) { [[DCMenu shared] logEvent:@"登录成功 (AccessKey)"]; if (orig_didLoginSuccessKey) orig_didLoginSuccessKey(s, c, a, b); }
+static void rep_didLoginSuccessResult(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"登录成功 (Result)"]; if (orig_didLoginSuccessResult) orig_didLoginSuccessResult(s, c, a); }
+static void rep_didGetUserInfoOK(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"用户信息已拿到"]; if (orig_didGetUserInfoOK) orig_didGetUserInfoOK(s, c, a); }
+static void rep_didGetUserInfoFail(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"用户信息获取失败"]; if (orig_didGetUserInfoFail) orig_didGetUserInfoFail(s, c, a); }
+static void rep_didLoginFailure(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"登录失败回调"]; if (orig_didLoginFailure) orig_didLoginFailure(s, c, a); }
+static void rep_onGameAddiction(id s, SEL c, id a, id b, BOOL f) { [[DCMenu shared] logEvent:@"防沉迷回调到达"]; if (orig_onGameAddiction) orig_onGameAddiction(s, c, a, b, f); }
+
+static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
+    if (!cls) return 0;
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return 0;
+    *store = method_setImplementation(m, rep);
+    return 1;
+}
+
+- (void)installProbes {
+    if (self.probesInstalled) return;
+    Class impl = NSClassFromString(@"BilibiliSDKImpl");
+    Class addiction = NSClassFromString(@"GSCGameAddictionManager");
+    int n = 0;
+    n += DCProbe(impl, @selector(didInitSDKSuccess), (IMP)rep_didInitSDKSuccess, (IMP *)&orig_didInitSDKSuccess);
+    n += DCProbe(impl, @selector(didLoginSuccessWithAccessKey:uid:), (IMP)rep_didLoginSuccessKey, (IMP *)&orig_didLoginSuccessKey);
+    n += DCProbe(impl, @selector(didLoginSuccessWithResult:), (IMP)rep_didLoginSuccessResult, (IMP *)&orig_didLoginSuccessResult);
+    n += DCProbe(impl, @selector(didGetUserInfoSuccessWithBLAuth:), (IMP)rep_didGetUserInfoOK, (IMP *)&orig_didGetUserInfoOK);
+    n += DCProbe(impl, @selector(didGetUserInfoFailureWithError:), (IMP)rep_didGetUserInfoFail, (IMP *)&orig_didGetUserInfoFail);
+    n += DCProbe(impl, @selector(didLoginFailureWithError:), (IMP)rep_didLoginFailure, (IMP *)&orig_didLoginFailure);
+    n += DCProbe(addiction, @selector(onGameAddiction:data:appRestrictFirst:), (IMP)rep_onGameAddiction, (IMP *)&orig_onGameAddiction);
+    if (n > 0) {
+        self.probesInstalled = YES;
+        [self logEvent:[NSString stringWithFormat:@"探针已装 %d/7", n]];
+    }
 }
 
 - (void)onPan:(UIPanGestureRecognizer *)g {
