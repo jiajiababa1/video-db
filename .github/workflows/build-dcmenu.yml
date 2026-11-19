@@ -21,7 +21,7 @@ jobs:
             -isysroot "$SDK" \
             -fobjc-arc -O2 -dynamiclib \
             -install_name @rpath/DCMenu.dylib \
-            -framework UIKit -framework Foundation \
+            -framework UIKit -framework Foundation -framework CoreGraphics \
             -o DCMenu.dylib \
             dc-menu/DCMenu.m
           file DCMenu.dylib
