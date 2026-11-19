@@ -19,7 +19,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.6.1";
+static NSString * const kDCMenuVersion = @"v2.6.2";
 
 #pragma mark - Passthrough window
 
@@ -116,7 +116,60 @@ static BOOL dc_readable(uintptr_t addr, size_t n) {
     kern_return_t kr = vm_region_64(mach_task_self(), &a, &sz, VM_REGION_BASIC_INFO_64,
                                     (vm_region_info_t)&info, &cnt, &obj);
     if (kr != KERN_SUCCESS) return NO;
-    return addr >= a && addr + n <= a + sz && (info.protection & VM_PROT_READ);
+    BOOL ok = addr >= a && addr + n <= a + sz && (info.protection & VM_PROT_READ);
+    if (obj != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), obj);
+    return ok;
+}
+
+// Mapped readable regions of this task, collected once (fast in-memory
+// checks afterwards; no per-candidate mach calls, no port leaks).
+#define DC_MAX_REGIONS 16384
+static uintptr_t dc_g_regions[DC_MAX_REGIONS][2];
+static NSInteger dc_g_nregions = 0;
+
+static void dc_build_regions(void) {
+    if (dc_g_nregions) return;
+    vm_address_t addr = 0;
+    while (dc_g_nregions < DC_MAX_REGIONS) {
+        vm_size_t sz = 0;
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t obj = MACH_PORT_NULL;
+        kern_return_t kr = vm_region_64(mach_task_self(), &addr, &sz, VM_REGION_BASIC_INFO_64,
+                                        (vm_region_info_t)&info, &cnt, &obj);
+        if (kr != KERN_SUCCESS) break;
+        if (obj != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), obj);
+        if (sz == 0) break;
+        if (info.protection & VM_PROT_READ) {
+            dc_g_regions[dc_g_nregions][0] = addr;
+            dc_g_regions[dc_g_nregions][1] = addr + sz;
+            dc_g_nregions++;
+        }
+        addr += sz;
+    }
+}
+
+static BOOL dc_readable2(uintptr_t addr, size_t n) {
+    for (NSInteger i = 0; i < dc_g_nregions; i++) {
+        if (addr >= dc_g_regions[i][0] && addr + n <= dc_g_regions[i][1]) return YES;
+    }
+    return NO;
+}
+
+// Allocation-free dedupe set for scan candidates (open addressing).
+#define DC_SEEN_BITS 19
+#define DC_SEEN_SIZE (1 << DC_SEEN_BITS)
+#define DC_SEEN_MASK (DC_SEEN_SIZE - 1)
+static uintptr_t dc_seen_table[DC_SEEN_SIZE];
+
+static BOOL dc_seen_add(uintptr_t v) {
+    size_t h = (size_t)((v >> 3) & DC_SEEN_MASK);
+    while (dc_seen_table[h]) {
+        if (dc_seen_table[h] == v) return NO;
+        h = (h + 1) & DC_SEEN_MASK;
+    }
+    dc_seen_table[h] = v;
+    return YES;
 }
 
 static BOOL dc_in_spans(uintptr_t addr, size_t n) {
@@ -907,34 +960,75 @@ static BOOL dc_live_init(DCMenu *menu) {
     dc_stage(@"阶段：侦查开始");
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         if (!dc_live_init(self)) return;
-        dc_stage(@"阶段：初始化完成，进入全局扫描");
-        // 1) Globals scan: qwords in the game's data segments that point at
-        //    live HL objects (first word = hl_type* in the types window).
+        dc_stage(@"阶段：初始化完成");
+        dc_build_regions();
+        dc_stage([NSString stringWithFormat:@"阶段：内存区表 %ld 个", (long)dc_g_nregions]);
+        for (NSString *want in @[@"pr.Game", @"en.Hero", @"tool.GameData"]) {
+            DCClassInfo *ci = dc_g_classes[want];
+            NSString *st = ci ? (ci.typeAddr ? @"已登记+已接线" : @"已登记、未接线")
+                              : @"没登记到";
+            [self logEvent:[NSString stringWithFormat:@"类 %@: %@", want, st]];
+            dc_stage([NSString stringWithFormat:@"阶段：类 %@ %@", want, st]);
+        }
         NSMutableDictionary<NSString *, NSNumber *> *counts = [NSMutableDictionary dictionary];
         NSMutableDictionary<NSString *, NSNumber *> *first = [NSMutableDictionary dictionary];
-        NSMutableSet<NSNumber *> *seen = [NSMutableSet set];
-        NSMutableArray<NSNumber *> *objAddrs = [NSMutableArray array];
+        // 1a) Class-object route: pr.Game's global slot holds the class
+        //     object; a static field (inst) may point at the live instance.
+        DCClassInfo *gameCls0 = dc_g_classes[@"pr.Game"];
+        if (gameCls0 && !first[@"pr.Game"]) {
+            uintptr_t gv = *(const uintptr_t *)(gameCls0.objBase + 56);
+            if (gv && dc_readable2(gv, 8)) {
+                uintptr_t classObj = *(const uintptr_t *)gv;
+                if (classObj && dc_readable2(classObj, 8)) {
+                    DCClassInfo *coCi = dc_class_for_type(*(const uintptr_t *)classObj);
+                    [self logEvent:[NSString stringWithFormat:@"类对象 @0x%lx（类 %@），扫它的字段找实例",
+                                    (unsigned long)classObj, coCi ? coCi.name : @"?"]];
+                    for (uintptr_t off = 8; off <= 1024; off += 8) {
+                        if (!dc_readable2(classObj + off, 8)) break;
+                        uintptr_t child = *(const uintptr_t *)(classObj + off);
+                        if (child < 0x100000000 || (child & 7) || !dc_readable2(child, 16)) continue;
+                        DCClassInfo *cci = dc_class_for_type(*(const uintptr_t *)child);
+                        if (cci && [cci.name isEqualToString:@"pr.Game"] && !first[@"pr.Game"]) {
+                            first[@"pr.Game"] = @(child);
+                            counts[@"pr.Game"] = @1;
+                            [self logEvent:[NSString stringWithFormat:@"类对象 +0x%lx 处就是 pr.Game 实例",
+                                            (unsigned long)off]];
+                        }
+                    }
+                }
+            }
+            dc_stage(@"阶段：类对象路线走完");
+        }
+        // 1b) Globals scan: qwords in the game's data segments that point at
+        //     live HL objects (first word = hl_type* in the types window).
+        //     Hardened: precomputed region table + allocation-free dedupe.
+        memset(dc_seen_table, 0, sizeof(dc_seen_table));
+        unsigned long candidates = 0;
         for (NSDictionary *span in dc_g_dataSpans) {
             uintptr_t lo = (uintptr_t)[span[@"ptr"] pointerValue];
             uintptr_t hi = lo + [span[@"len"] unsignedLongValue];
-            for (uintptr_t s = lo; s + 8 <= hi && seen.count < 400000; s += 8) {
+            for (uintptr_t s = lo; s + 8 <= hi; s += 8) {
                 uintptr_t v = *(const uintptr_t *)s;
                 if (v < 0x100000000 || (v & 7)) continue;
-                if (v >= dc_g_textLo && v < dc_g_typesHi && v >= dc_g_slide + 0x100000000) continue;
-                NSNumber *key = @(v);
-                if ([seen containsObject:key]) continue;
-                [seen addObject:key];
-                if (!dc_readable(v, 16)) continue;
+                if (v >= dc_g_textLo && v < dc_g_typesHi) continue;
+                if (!dc_seen_add(v)) continue;
+                candidates++;
+                if ((candidates & 0xFFFF) == 0) {
+                    dc_stage([NSString stringWithFormat:@"阶段：扫描中 候选 %lu、已认出 %lu 类",
+                              candidates, (unsigned long)counts.count]);
+                }
+                if (!dc_readable2(v, 16)) continue;
                 uintptr_t t = *(const uintptr_t *)v;
                 DCClassInfo *ci = dc_class_for_type(t);
                 if (!ci) continue;
                 counts[ci.name] = @([counts[ci.name] unsignedLongLongValue] + 1);
-                if (!first[ci.name]) { first[ci.name] = key; [objAddrs addObject:key]; }
+                if (!first[ci.name]) first[ci.name] = @(v);
             }
+            dc_stage([NSString stringWithFormat:@"阶段：扫完一个数据段，候选 %lu", candidates]);
         }
         dc_stage([NSString stringWithFormat:@"阶段：全局扫描完成 %lu 类", (unsigned long)counts.count]);
-        [self logEvent:[NSString stringWithFormat:@"全局活对象：%lu 类 / %lu 个",
-                        (unsigned long)counts.count, (unsigned long)seen.count]];
+        [self logEvent:[NSString stringWithFormat:@"全局活对象：%lu 类 / 候选 %lu 个",
+                        (unsigned long)counts.count, candidates]];
         for (NSString *want in @[@"pr.Game", @"en.Hero", @"tool.GameData"]) {
             if (first[want]) {
                 [self logEvent:[NSString stringWithFormat:@"找到 %@ 实例 @0x%lx（共 %@ 个）",
