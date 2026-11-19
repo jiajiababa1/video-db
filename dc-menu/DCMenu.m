@@ -13,10 +13,13 @@
 #import <string.h>
 #import <stdarg.h>
 #import <sys/types.h>
+#import <mach-o/dyld.h>
+#import <mach-o/getsect.h>
+#import <mach/mach.h>
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.5";
+static NSString * const kDCMenuVersion = @"v2.6";
 
 #pragma mark - Passthrough window
 
@@ -66,6 +69,7 @@ static NSString * const kDCMenuVersion = @"v2.5";
 - (void)fetchConfig;
 - (void)logEvent:(NSString *)text;
 - (void)runRecon;
+- (void)runLiveRecon;
 - (void)applyAssistBoost;
 - (void)restoreAssist;
 - (void)loadAssistPrefs;
@@ -75,6 +79,228 @@ static NSString * const kDCMenuVersion = @"v2.5";
 - (void)addStepper:(UIView *)panel x:(CGFloat)x y:(CGFloat)y name:(NSString *)name key:(NSString *)key idx:(NSInteger)idx;
 - (void)notePakPath:(NSString *)path;
 @end
+
+#pragma mark - Live recon (HashLink runtime, read-only probe)
+
+// Static layout of the game's HashLink tables (verified offline against
+// the Arcade binary; VAs assume preferred base 0x100000000):
+//   hl_type     : 32B { i32 kind; void *obj @+8; ... }   kind 11 = HOBJ
+//   hl_type_obj : { i32 nfields @0; i32 nproto @4; name @+16; super @+24;
+//                   fields @+32; proto @+40; rt @+72 }
+//   hl_obj_field: 24B { uchar *name; hl_type *t; i32 hash }
+// Object layout follows hl_get_obj_rt: parent fields first, each field
+// aligned to its natural alignment, offsets from object start (incl.
+// the 8-byte type header).
+
+static const int DC_TSIZES[24] = {0,1,2,4,8,4,8,1,8,8,8,8,8,8,8,8,8,8,8,8,8,8,0,8};
+static int dc_align_of(int kind) {
+    switch (kind) {
+        case 1: case 7: return 1;
+        case 2: return 2;
+        case 3: case 5: return 4;
+        default: return 8;
+    }
+}
+
+static uintptr_t dc_g_slide = 0;
+static uintptr_t dc_g_textLo = 0, dc_g_textHi = 0;
+static uintptr_t dc_g_typesLo = 0, dc_g_typesHi = 0;
+static NSMutableArray<NSValue *> *dc_g_dataSpans = nil; // {ptr,len} pairs
+
+static BOOL dc_readable(uintptr_t addr, size_t n) {
+    vm_address_t a = (vm_address_t)addr;
+    vm_size_t sz = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT_64;
+    vm_object_name_t obj;
+    kern_return_t kr = vm_region_64(mach_task_self(), &a, &sz, VM_REGION_BASIC_INFO_64,
+                                    (vm_region_info_t)&info, &cnt, &obj);
+    if (kr != KERN_SUCCESS) return NO;
+    return addr >= a && addr + n <= a + sz && (info.protection & VM_PROT_READ);
+}
+
+static NSString *dc_u16str(uintptr_t addr) {
+    if (addr < dc_g_textLo || addr >= dc_g_textHi) return nil;
+    const uint16_t *p = (const uint16_t *)addr;
+    uint16_t buf[101];
+    NSInteger n = 0;
+    for (NSInteger i = 0; i < 100; i++) {
+        uint16_t c = p[i];
+        if (c == 0) break;
+        if (c < 0x21 || c > 0x7E) return nil; // printable, no spaces
+        buf[n++] = c;
+    }
+    if (n == 0) return nil;
+    return [[NSString alloc] initWithBytes:buf length:(NSUInteger)(n * 2)
+                                  encoding:NSUTF16LittleEndianStringEncoding];
+}
+
+@interface DCLayout : NSObject
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *offsets;
+@property (nonatomic, assign) NSInteger size;
+@property (nonatomic, assign) NSInteger padSize;
+@property (nonatomic, assign) NSInteger largest;
+@end
+@implementation DCLayout
+@end
+
+@interface DCClassInfo : NSObject
+@property (nonatomic, strong) NSString *name;
+@property (nonatomic, assign) uintptr_t objBase;
+@property (nonatomic, assign) uintptr_t typeAddr;
+@property (nonatomic, assign) uintptr_t fields;
+@property (nonatomic, assign) NSInteger nfields;
+@property (nonatomic, assign) uintptr_t superType;
+@property (nonatomic, strong) DCLayout *layout;
+@property (nonatomic, assign) BOOL layoutBusy;
+@end
+@implementation DCClassInfo
+@end
+
+static NSMutableDictionary<NSString *, DCClassInfo *> *dc_g_classes = nil;
+static NSMutableDictionary<NSNumber *, DCClassInfo *> *dc_g_byType = nil;
+
+static DCClassInfo *dc_class_for_type(uintptr_t type) {
+    if (!type) return nil;
+    DCClassInfo *ci = dc_g_byType[@(type)];
+    if (ci) return ci;
+    if (type < dc_g_typesLo || type >= dc_g_typesHi) return nil;
+    if (*(const int *)type != 11) return nil;
+    uintptr_t obj = *(const uintptr_t *)(type + 8);
+    if (!obj) return nil;
+    NSString *nm = dc_u16str(*(const uintptr_t *)(obj + 16));
+    if (!nm) return nil;
+    ci = dc_g_classes[nm];
+    if (ci) {
+        if (!ci.typeAddr) ci.typeAddr = type;
+        dc_g_byType[@(type)] = ci;
+    }
+    return ci;
+}
+
+static DCLayout *dc_layout_rec(DCClassInfo *ci) {
+    if (ci.layout) return ci.layout;
+    if (ci.layoutBusy) return nil;
+    ci.layoutBusy = YES;
+    DCLayout *lay = [[DCLayout alloc] init];
+    lay.offsets = [NSMutableDictionary dictionary];
+    NSInteger size = 8, largest = 8;
+    if (ci.superType) {
+        DCClassInfo *sup = dc_class_for_type(ci.superType);
+        DCLayout *pl = sup ? dc_layout_rec(sup) : nil;
+        if (pl) {
+            [lay.offsets addEntriesFromDictionary:pl.offsets];
+            size = pl.size - pl.padSize;
+            largest = pl.largest;
+        }
+    }
+    const uintptr_t *recs = (const uintptr_t *)ci.fields;
+    for (NSInteger k = 0; k < ci.nfields; k++) {
+        uintptr_t namePtr = recs[k * 3];
+        uintptr_t t = recs[k * 3 + 1];
+        if (!t) continue;
+        NSString *fname = dc_u16str(namePtr);
+        if (!fname) continue;
+        int kind = *(const int *)t;
+        if (kind == 22) { // HPACKED: inline sub-struct
+            uintptr_t tparam = *(const uintptr_t *)(t + 8);
+            DCClassInfo *sub = dc_class_for_type(tparam);
+            DCLayout *sl = sub ? dc_layout_rec(sub) : nil;
+            NSInteger large = sl ? sl.largest : 8;
+            NSInteger pad = size % large;
+            if (pad) size += large - pad;
+            if (large > largest) largest = large;
+            lay.offsets[fname] = @(size);
+            size += sl ? sl.size : 0;
+            continue;
+        }
+        NSInteger al = dc_align_of(kind);
+        size += (-size) & (al - 1);
+        lay.offsets[fname] = @(size);
+        NSInteger sz = (kind >= 0 && kind < 24) ? DC_TSIZES[kind] : 8;
+        size += sz;
+        if (sz > largest) largest = sz;
+    }
+    NSInteger padSize = 0;
+    if (largest > 0) {
+        NSInteger pad = size % largest;
+        if (pad) { padSize = largest - pad; size += padSize; }
+    }
+    lay.size = size; lay.padSize = padSize; lay.largest = largest;
+    ci.layout = lay;
+    ci.layoutBusy = NO;
+    return lay;
+}
+
+// Find the game image, set up ranges, build the static class registry.
+static BOOL dc_live_init(DCMenu *menu) {
+    if (dc_g_classes) return YES;
+    const struct mach_header_64 *hdr = NULL;
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const char *nm = _dyld_get_image_name(i);
+        if (nm && strstr(nm, "DeadCells")) {
+            hdr = (const struct mach_header_64 *)_dyld_get_image_header(i);
+            dc_g_slide = (uintptr_t)_dyld_get_image_vmaddr_slide(i);
+            break;
+        }
+    }
+    if (!hdr) { [menu logEvent:@"实时侦查：没找到游戏镜像"]; return NO; }
+    unsigned long sz = 0;
+    const uint8_t *text = getsegmentdata(hdr, "__TEXT", &sz);
+    if (text) { dc_g_textLo = (uintptr_t)text; dc_g_textHi = dc_g_textLo + sz; }
+    dc_g_dataSpans = [NSMutableArray array];
+    const uint8_t *data = getsegmentdata(hdr, "__DATA", &sz);
+    if (data) [dc_g_dataSpans addObject:@{@"ptr": [NSValue valueWithPointer:data], @"len": @(sz)}];
+    const uint8_t *dcon = getsegmentdata(hdr, "__DATA_CONST", &sz);
+    if (dcon) [dc_g_dataSpans addObject:@{@"ptr": [NSValue valueWithPointer:dcon], @"len": @(sz)}];
+    dc_g_typesLo = dc_g_slide + 0x101d26360;
+    dc_g_typesHi = dc_g_slide + 0x101e59f50;
+    dc_g_classes = [NSMutableDictionary dictionary];
+    dc_g_byType = [NSMutableDictionary dictionary];
+    for (NSDictionary *span in dc_g_dataSpans) {
+        uintptr_t lo = (uintptr_t)[span[@"ptr"] pointerValue];
+        uintptr_t hi = lo + [span[@"len"] unsignedLongValue];
+        for (uintptr_t b = lo; b + 80 <= hi; b += 8) {
+            const int *ip = (const int *)b;
+            NSInteger nf = ip[0], np = ip[1];
+            if (nf < 1 || nf > 1500 || np < 0 || np > 2000) continue;
+            uintptr_t namePtr = *(const uintptr_t *)(b + 16);
+            uintptr_t sup = *(const uintptr_t *)(b + 24);
+            uintptr_t fields = *(const uintptr_t *)(b + 32);
+            uintptr_t proto = *(const uintptr_t *)(b + 40);
+            if (!fields || proto != fields + (uintptr_t)nf * 24) continue;
+            if (sup && (sup < dc_g_typesLo || sup >= dc_g_typesHi)) continue;
+            NSString *nm = dc_u16str(namePtr);
+            if (!nm || [nm containsString:@"/"] || [nm hasSuffix:@".hx"]) continue;
+            uintptr_t fn = *(const uintptr_t *)fields;
+            uintptr_t ft = *(const uintptr_t *)(fields + 8);
+            if (!dc_u16str(fn)) continue;
+            if (ft < dc_g_typesLo || ft >= dc_g_typesHi) continue;
+            DCClassInfo *ci = [[DCClassInfo alloc] init];
+            ci.name = nm; ci.objBase = b; ci.fields = fields;
+            ci.nfields = nf; ci.superType = sup;
+            if (!dc_g_classes[nm]) dc_g_classes[nm] = ci;
+        }
+    }
+    // Wire types: scan the types window for qwords pointing at an obj base
+    // (the obj pointer lives at hl_type + 8 once the game has wired it).
+    NSMutableDictionary<NSNumber *, DCClassInfo *> *byObj = [NSMutableDictionary dictionary];
+    for (DCClassInfo *ci in dc_g_classes.allValues) byObj[@(ci.objBase)] = ci;
+    const uintptr_t *tp = (const uintptr_t *)dc_g_typesLo;
+    const uintptr_t *tend = (const uintptr_t *)dc_g_typesHi;
+    for (const uintptr_t *p = tp; p < tend; p++) {
+        DCClassInfo *ci = byObj[@(*p)];
+        if (ci && !ci.typeAddr) {
+            uintptr_t t = (uintptr_t)p - 8;
+            if (*(const int *)t == 11) { ci.typeAddr = t; dc_g_byType[@(t)] = ci; }
+        }
+    }
+    [menu logEvent:[NSString stringWithFormat:@"实时侦查：类登记 %lu 个，slide 0x%lx",
+                    (unsigned long)dc_g_classes.count, (unsigned long)dc_g_slide]];
+    return YES;
+}
+
 
 @implementation DCMenu
 
@@ -277,9 +503,9 @@ static NSString * const kDCMenuVersion = @"v2.5";
     [panel addSubview:log];
     self.logView = log;
 
-    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"应用辅助", @"onApplyAssist"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
-    CGFloat bw = (pw - 32 - 32) / 5;
-    for (NSInteger i = 0; i < 5; i++) {
+    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"实时侦查", @"onLiveRecon"], @[@"应用辅助", @"onApplyAssist"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
+    CGFloat bw = (pw - 32 - 40) / 6;
+    for (NSInteger i = 0; i < 6; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16 + i * (bw + 8), ph - 44, bw, 34);
         b.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
@@ -288,9 +514,12 @@ static NSString * const kDCMenuVersion = @"v2.5";
         [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         b.titleLabel.font = [UIFont systemFontOfSize:13];
         [b addTarget:self action:NSSelectorFromString(btns[i][1]) forControlEvents:UIControlEventTouchUpInside];
+        b.titleLabel.font = [UIFont systemFontOfSize:12];
         [panel addSubview:b];
     }
 }
+
+- (void)onLiveRecon { [self runLiveRecon]; }
 
 #pragma mark UI actions
 
@@ -538,6 +767,8 @@ static NSString * const kDCMenuVersion = @"v2.5";
     }
 }
 
+#pragma mark Live recon helpers are above the implementation (file scope).
+
 #pragma mark Hot-update config
 
 - (void)fetchConfig {
@@ -629,6 +860,99 @@ static NSString * const kDCMenuVersion = @"v2.5";
     }
     [self logEvent:[NSString stringWithFormat:@"—— 侦查完：★%ld 个，共 %ld 个文件 ——",
                     (long)hot.count, (long)(hot.count + normal.count)]];
+}
+
+#pragma mark Live recon (probe v2.6: locate pr.Game -> Hero/GameData, read back live values)
+
+- (void)runLiveRecon {
+    [self logEvent:@"—— 实时侦查开始（只读） ——"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        if (!dc_live_init(self)) return;
+        // 1) Globals scan: qwords in the game's data segments that point at
+        //    live HL objects (first word = hl_type* in the types window).
+        NSMutableDictionary<NSString *, NSNumber *> *counts = [NSMutableDictionary dictionary];
+        NSMutableDictionary<NSString *, NSNumber *> *first = [NSMutableDictionary dictionary];
+        NSMutableSet<NSNumber *> *seen = [NSMutableSet set];
+        NSMutableArray<NSNumber *> *objAddrs = [NSMutableArray array];
+        for (NSDictionary *span in dc_g_dataSpans) {
+            uintptr_t lo = (uintptr_t)[span[@"ptr"] pointerValue];
+            uintptr_t hi = lo + [span[@"len"] unsignedLongValue];
+            for (uintptr_t s = lo; s + 8 <= hi && seen.count < 400000; s += 8) {
+                uintptr_t v = *(const uintptr_t *)s;
+                if (v < 0x100000000 || (v & 7)) continue;
+                if (v >= dc_g_textLo && v < dc_g_typesHi && v >= dc_g_slide + 0x100000000) continue;
+                NSNumber *key = @(v);
+                if ([seen containsObject:key]) continue;
+                [seen addObject:key];
+                if (!dc_readable(v, 16)) continue;
+                uintptr_t t = *(const uintptr_t *)v;
+                DCClassInfo *ci = dc_class_for_type(t);
+                if (!ci) continue;
+                counts[ci.name] = @([counts[ci.name] unsignedLongLongValue] + 1);
+                if (!first[ci.name]) { first[ci.name] = key; [objAddrs addObject:key]; }
+            }
+        }
+        [self logEvent:[NSString stringWithFormat:@"全局活对象：%lu 类 / %lu 个",
+                        (unsigned long)counts.count, (unsigned long)seen.count]];
+        for (NSString *want in @[@"pr.Game", @"en.Hero", @"tool.GameData"]) {
+            if (first[want]) {
+                [self logEvent:[NSString stringWithFormat:@"找到 %@ 实例 @0x%lx（共 %@ 个）",
+                                want, (unsigned long)[first[want] unsignedLongLongValue], counts[want]]];
+            } else {
+                [self logEvent:[NSString stringWithFormat:@"全局里没找到 %@", want]];
+            }
+        }
+        // 2) pr.Game -> hero / data
+        DCClassInfo *gameCls = dc_g_classes[@"pr.Game"];
+        NSNumber *gameAddr = first[@"pr.Game"];
+        if (!gameCls || !gameAddr) {
+            [self logEvent:@"实时侦查：缺 pr.Game 实例，先到此（把日志发我）"];
+            return;
+        }
+        DCLayout *gl = dc_layout_rec(gameCls);
+        uintptr_t rt = *(const uintptr_t *)(gameCls.objBase + 72);
+        [self logEvent:[NSString stringWithFormat:@"pr.Game 布局 size=%ld（运行时 rt size=%d）hero@%@ data@%@",
+                        (long)gl.size, rt ? *(const int *)(rt + 16) : -1,
+                        gl.offsets[@"hero"], gl.offsets[@"data"]]];
+        uintptr_t g = [gameAddr unsignedLongLongValue];
+        if (!dc_readable(g, (size_t)gl.size)) { [self logEvent:@"Game 对象不可读"]; return; }
+        uintptr_t hero = *(const uintptr_t *)(g + [gl.offsets[@"hero"] unsignedLongValue]);
+        uintptr_t gdata = *(const uintptr_t *)(g + [gl.offsets[@"data"] unsignedLongValue]);
+        DCClassInfo *heroCls = hero ? dc_class_for_type(*(const uintptr_t *)hero) : nil;
+        DCClassInfo *dataCls = gdata ? dc_class_for_type(*(const uintptr_t *)gdata) : nil;
+        [self logEvent:[NSString stringWithFormat:@"Game.hero -> %@ @0x%lx", heroCls.name ?: @"?", (unsigned long)hero]];
+        [self logEvent:[NSString stringWithFormat:@"Game.data -> %@ @0x%lx", dataCls.name ?: @"?", (unsigned long)gdata]];
+        if (!heroCls || !dataCls) { [self logEvent:@"子对象类名不对，先到此"]; return; }
+        DCLayout *hl = dc_layout_rec(heroCls);
+        DCLayout *dl = dc_layout_rec(dataCls);
+        uintptr_t hrt = *(const uintptr_t *)(heroCls.objBase + 72);
+        [self logEvent:[NSString stringWithFormat:@"Hero 布局 size=%ld（rt size=%d，离线算 1656）",
+                        (long)hl.size, hrt ? *(const int *)(hrt + 16) : -1]];
+        if (!dc_readable(hero, (size_t)hl.size) || !dc_readable(gdata, (size_t)dl.size)) {
+            [self logEvent:@"Hero/GameData 不可读"]; return;
+        }
+        const uint8_t *hb = (const uint8_t *)hero;
+        const uint8_t *db = (const uint8_t *)gdata;
+        int life = *(const int *)(hb + [hl.offsets[@"life"] unsignedLongValue]);
+        int maxLife = *(const int *)(hb + [hl.offsets[@"maxLife"] unsignedLongValue]);
+        double pdm = *(const double *)(hb + [hl.offsets[@"powerDistMul"] unsignedLongValue]);
+        int tT = *(const int *)(hb + [hl.offsets[@"tacticTier"] unsignedLongValue]);
+        int bT = *(const int *)(hb + [hl.offsets[@"brutalityTier"] unsignedLongValue]);
+        int sT = *(const int *)(hb + [hl.offsets[@"survivalTier"] unsignedLongValue]);
+        int hCells = *(const int *)(hb + [hl.offsets[@"cells"] unsignedLongValue]);
+        int money = *(const int *)(db + [dl.offsets[@"money"] unsignedLongValue]);
+        int cells = *(const int *)(db + [dl.offsets[@"cells"] unsignedLongValue]);
+        int heal = *(const int *)(db + [dl.offsets[@"healings"] unsignedLongValue]);
+        [self logEvent:[NSString stringWithFormat:@"实时读数：生命 %d/%d · 倍率 %.2f · 卷轴 战%d 战术%d 生%d",
+                        life, maxLife, pdm, bT, tT, sT]];
+        [self logEvent:[NSString stringWithFormat:@"实时读数：金币 %d · 细胞 %d（Hero 侧 %d） · 血瓶 %d",
+                        money, cells, hCells, heal]];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.statusLabel.text = [NSString stringWithFormat:@"实时：生命 %d/%d · 金币 %d · 细胞 %d",
+                                     life, maxLife, money, cells];
+        });
+        [self logEvent:@"—— 实时侦查完成 ——"];
+    });
 }
 
 @end
