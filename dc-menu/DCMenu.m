@@ -7,7 +7,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-static NSString * const kDCConfigURL = @"https://api.github.com/repos/jiajiababa1/video-db/contents/dc-menu/menu.json";
+static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
 // Hot-switchable login-fix mode, driven by remote config key "fix_mode":
 // 0 = off (pure observation), 1 = addiction-verify switches forced off,
@@ -47,6 +47,9 @@ static NSInteger gFixMode = 0;
 + (instancetype)shared;
 - (void)setup;
 - (void)fetchConfig;
+- (void)logEvent:(NSString *)name;
+- (void)logEventOnce:(NSString *)key text:(NSString *)text;
+- (void)installProbes;
 @end
 
 @implementation DCMenu
@@ -332,6 +335,10 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     NSDateFormatter *fmt = [NSDateFormatter new];
     fmt.dateFormat = @"HH:mm:ss";
     self.statusLabel.text = [NSString stringWithFormat:@"已连上更新通道 · %@", [fmt stringFromDate:[NSDate date]]];
+    NSString *appliedBadge = cfg[@"badge"];
+    if ([appliedBadge isKindOfClass:[NSString class]] && appliedBadge.length) {
+        [self logEvent:[NSString stringWithFormat:@"远程配置已应用: %@", appliedBadge]];
+    }
 }
 
 - (void)fetchConfig {
@@ -340,7 +347,6 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
                                                        cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
                                                    timeoutInterval:15];
-    [req setValue:@"application/vnd.github.raw+json" forHTTPHeaderField:@"Accept"];
     [req setValue:@"DCMenu/1.0" forHTTPHeaderField:@"User-Agent"];
     __weak typeof(self) weakSelf = self;
     [[[NSURLSession sharedSession] dataTaskWithRequest:req
@@ -348,28 +354,20 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
         dispatch_async(dispatch_get_main_queue(), ^{
             DCMenu *self_ = weakSelf;
             if (!self_) return;
-            if (err || !data) {
-                self_.statusLabel.text = @"更新检查失败 · 显示本地版";
+            NSHTTPURLResponse *http = [resp isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)resp : nil;
+            if (err || !data || (http && http.statusCode != 200)) {
+                self_.statusLabel.text = http ? [NSString stringWithFormat:@"更新检查失败 (HTTP %ld) · 显示本地版", (long)http.statusCode]
+                                              : @"更新检查失败 · 显示本地版";
                 return;
             }
             id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-            if ([json isKindOfClass:[NSDictionary class]]) {
-                NSString *content = json[@"content"];
-                if ([content isKindOfClass:[NSString class]]) {
-                    // Standard API response (not raw): base64 payload
-                    NSData *decoded = [[NSData alloc] initWithBase64EncodedString:content
-                                                                            options:NSDataBase64DecodingIgnoreUnknownCharacters];
-                    id inner = decoded ? [NSJSONSerialization JSONObjectWithData:decoded options:0 error:nil] : nil;
-                    if ([inner isKindOfClass:[NSDictionary class]]) {
-                        [self_ applyConfig:inner];
-                        return;
-                    }
-                } else {
-                    [self_ applyConfig:json];
-                    return;
-                }
+            // Only a payload that really carries our badge counts as a config.
+            if ([json isKindOfClass:[NSDictionary class]] &&
+                [json[@"badge"] isKindOfClass:[NSString class]] && [json[@"badge"] length]) {
+                [self_ applyConfig:json];
+                return;
             }
-            self_.statusLabel.text = @"更新内容解析失败 · 显示本地版";
+            self_.statusLabel.text = @"更新内容无效 · 显示本地版";
         });
     }] resume];
 }
