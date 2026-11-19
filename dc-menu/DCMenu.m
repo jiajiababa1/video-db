@@ -209,16 +209,19 @@ static __weak id gService = nil;
 }
 
 - (void)logEvent:(NSString *)name {
-    if (!self.events) self.events = [NSMutableArray array];
-    static NSString *lastName = nil;
-    if (lastName && [lastName isEqualToString:name]) return; // no consecutive duplicates
-    lastName = [name copy];
-    NSDateFormatter *fmt = [NSDateFormatter new];
-    fmt.dateFormat = @"HH:mm:ss";
-    NSString *line = [NSString stringWithFormat:@"%@ %@", [fmt stringFromDate:[NSDate date]], name];
-    [self.events addObject:line];
-    while (self.events.count > 60) [self.events removeObjectAtIndex:0];
-    NSString *text = [@"登录诊断：\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    NSString *text = nil;
+    @synchronized (self) {
+        if (!self.events) self.events = [NSMutableArray array];
+        static NSString *lastName = nil;
+        if (lastName && [lastName isEqualToString:name]) return; // no consecutive duplicates
+        lastName = [name copy];
+        NSDateFormatter *fmt = [NSDateFormatter new];
+        fmt.dateFormat = @"HH:mm:ss";
+        NSString *line = [NSString stringWithFormat:@"%@ %@", [fmt stringFromDate:[NSDate date]], name];
+        [self.events addObject:line];
+        while (self.events.count > 60) [self.events removeObjectAtIndex:0];
+        text = [@"登录诊断：\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    }
     void (^render)(void) = ^{
         self.diagLabel.text = text;
         if (text.length) [self.diagLabel scrollRangeToVisible:NSMakeRange(text.length - 1, 1)];
@@ -231,9 +234,11 @@ static __weak id gService = nil;
 }
 
 - (void)logEventOnce:(NSString *)key text:(NSString *)text {
-    if (!self.onceKeys) self.onceKeys = [NSMutableSet set];
-    if ([self.onceKeys containsObject:key]) return;
-    [self.onceKeys addObject:key];
+    @synchronized (self) {
+        if (!self.onceKeys) self.onceKeys = [NSMutableSet set];
+        if ([self.onceKeys containsObject:key]) return;
+        [self.onceKeys addObject:key];
+    }
     [self logEvent:text];
 }
 
