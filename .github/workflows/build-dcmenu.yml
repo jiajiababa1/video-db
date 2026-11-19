@@ -1,0 +1,36 @@
+name: Build DCMenu
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'dc-menu/**'
+      - '.github/workflows/build-dcmenu.yml'
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile DCMenu.dylib
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDK: $SDK"
+          clang -target arm64-apple-ios13.0 \
+            -isysroot "$SDK" \
+            -fobjc-arc -O2 -dynamiclib \
+            -install_name @rpath/DCMenu.dylib \
+            -framework UIKit -framework Foundation \
+            -o DCMenu.dylib \
+            dc-menu/DCMenu.m
+          file DCMenu.dylib
+          otool -L DCMenu.dylib || true
+          codesign -f -s - DCMenu.dylib || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DCMenu-dylib
+          path: DCMenu.dylib
+          if-no-files-found: error
