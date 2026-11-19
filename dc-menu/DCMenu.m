@@ -367,6 +367,83 @@ static void rep_setAuthHandler(id s, SEL c, id handler) {
     if (orig_setAuthHandler) orig_setAuthHandler(s, c, [wrapped copy]);
 }
 
+#pragma mark - Bridge remainder + network probes (v1.9)
+// v1.8 result: Apple/GC probes 8/8 installed, zero Apple/GC events in the
+// whole run. The post-announcement wait is elsewhere: watch every remaining
+// bridge callback/call and all NSURLSession traffic (request + completion).
+static ImpV orig_cb_didExit;
+static void rep_cb_didExit(id s, SEL c) { [[DCMenu shared] logEvent:@"桥回调: didExit"]; if (orig_cb_didExit) orig_cb_didExit(s, c); }
+static ImpV orig_cb_didGameExit;
+static void rep_cb_didGameExit(id s, SEL c) { [[DCMenu shared] logEvent:@"桥回调: didGameExit"]; if (orig_cb_didGameExit) orig_cb_didGameExit(s, c); }
+static ImpV orig_cb_didLogout;
+static void rep_cb_didLogout(id s, SEL c) { [[DCMenu shared] logEvent:@"桥回调: didLogout"]; if (orig_cb_didLogout) orig_cb_didLogout(s, c); }
+static ImpV orig_cb_didCloseCloud;
+static void rep_cb_didCloseCloud(id s, SEL c) { [[DCMenu shared] logEvent:@"桥回调: 云存档界面关闭"]; if (orig_cb_didCloseCloud) orig_cb_didCloseCloud(s, c); }
+static ImpV orig_cb_didCloseAgree;
+static void rep_cb_didCloseAgree(id s, SEL c) { [[DCMenu shared] logEvent:@"桥回调: 协议界面关闭"]; if (orig_cb_didCloseAgree) orig_cb_didCloseAgree(s, c); }
+typedef void (*ImpV1)(id, SEL, id);
+static ImpV1 orig_cb_cloudFail;
+static void rep_cb_cloudFail(id s, SEL c, id e) { [[DCMenu shared] logEvent:@"桥回调: 云存档打开失败"]; if (orig_cb_cloudFail) orig_cb_cloudFail(s, c, e); }
+static ImpV1 orig_cb_geetest;
+static void rep_cb_geetest(id s, SEL c, id r) { [[DCMenu shared] logEvent:@"桥回调: 极验有结果"]; if (orig_cb_geetest) orig_cb_geetest(s, c, r); }
+static ImpV1 orig_cb_payOK;
+static void rep_cb_payOK(id s, SEL c, id p) { [[DCMenu shared] logEvent:@"桥回调: 支付成功"]; if (orig_cb_payOK) orig_cb_payOK(s, c, p); }
+static ImpV2 orig_cb_payFail;
+static void rep_cb_payFail(id s, SEL c, id p, id e) { [[DCMenu shared] logEvent:@"桥回调: 支付失败"]; if (orig_cb_payFail) orig_cb_payFail(s, c, p, e); }
+static ImpVB orig_cls_login;
+static void rep_cls_login(id s, SEL c, id blk) { [[DCMenu shared] logEvent:@"游戏发起登录调用"]; if (orig_cls_login) orig_cls_login(s, c, blk); }
+static ImpV orig_cls_createRole;
+static void rep_cls_createRole(id s, SEL c) { [[DCMenu shared] logEvent:@"游戏调用 createRole"]; if (orig_cls_createRole) orig_cls_createRole(s, c); }
+static ImpBFn orig_cls_isLoggedIn;
+static BOOL rep_cls_isLoggedIn(id s, SEL c) { [[DCMenu shared] logEventOnce:@"is-logged-in" text:@"游戏在查是否已登录"]; return orig_cls_isLoggedIn ? orig_cls_isLoggedIn(s, c) : NO; }
+typedef void (*ImpVCP)(id, SEL, const char *, id);
+static ImpVCP orig_cls_cloud;
+static void rep_cls_cloud(id s, SEL c, const char *p, id blk) { [[DCMenu shared] logEvent:@"游戏调用 openCloudManager"]; if (orig_cls_cloud) orig_cls_cloud(s, c, p, blk); }
+
+static NSString *DCUrlTag(NSURLRequest *req) {
+    NSURL *u = [req URL];
+    if (!u) return @"(无URL)";
+    NSString *hp = [u host] ? [NSString stringWithFormat:@"%@%@", [u host], [u path]] : [u absoluteString];
+    return [NSString stringWithFormat:@"%@ %@", [req HTTPMethod] ?: @"GET", hp];
+}
+typedef id (*ImpReqH)(id, SEL, id, id);
+static ImpReqH orig_dataTaskH;
+static id rep_dataTaskH(id s, SEL c, id req, id handler) {
+    NSString *tag = DCUrlTag((NSURLRequest *)req);
+    [[DCMenu shared] logEventOnce:[@"req:" stringByAppendingString:tag] text:[@"请求: " stringByAppendingString:tag]];
+    if (!handler) return orig_dataTaskH ? orig_dataTaskH(s, c, req, nil) : nil;
+    void (^origH)(id, id, id) = (void (^)(id, id, id))handler;
+    void (^wrapped)(id, id, id) = ^(id d, id resp, id err) {
+        NSString *st = err ? [NSString stringWithFormat:@"错误%ld", (long)[(NSError *)err code]]
+                           : [NSString stringWithFormat:@"%ld", (long)[(NSHTTPURLResponse *)resp statusCode]];
+        [[DCMenu shared] logEvent:[NSString stringWithFormat:@"响应: %@ → %@", tag, st]];
+        origH(d, resp, err);
+    };
+    return orig_dataTaskH ? orig_dataTaskH(s, c, req, [wrapped copy]) : nil;
+}
+typedef id (*ImpReq)(id, SEL, id);
+static ImpReq orig_dataTask;
+static id rep_dataTask(id s, SEL c, id req) {
+    NSString *tag = DCUrlTag((NSURLRequest *)req);
+    [[DCMenu shared] logEventOnce:[@"req:" stringByAppendingString:tag] text:[@"请求: " stringByAppendingString:tag]];
+    return orig_dataTask ? orig_dataTask(s, c, req) : nil;
+}
+typedef id (*ImpUpH)(id, SEL, id, id, id);
+static ImpUpH orig_uploadH;
+static id rep_uploadH(id s, SEL c, id req, id body, id handler) {
+    NSString *tag = DCUrlTag((NSURLRequest *)req);
+    [[DCMenu shared] logEventOnce:[@"req:" stringByAppendingString:tag] text:[@"请求: " stringByAppendingString:tag]];
+    if (!handler) return orig_uploadH ? orig_uploadH(s, c, req, body, nil) : nil;
+    void (^origH)(id, id, id) = (void (^)(id, id, id))handler;
+    void (^wrapped)(id, id, id) = ^(id d, id resp, id err) {
+        NSString *st = err ? [NSString stringWithFormat:@"错误%ld", (long)[(NSError *)err code]]
+                           : [NSString stringWithFormat:@"%ld", (long)[(NSHTTPURLResponse *)resp statusCode]];
+        [[DCMenu shared] logEvent:[NSString stringWithFormat:@"响应: %@ → %@", tag, st]];
+        origH(d, resp, err);
+    };
+    return orig_uploadH ? orig_uploadH(s, c, req, body, [wrapped copy]) : nil;
+}
+
 #pragma mark - Login-fix hooks (behavior switched live by gFixMode)
 
 typedef BOOL (*ImpB)(id, SEL);
@@ -417,6 +494,14 @@ static void rep_presentVC(id s, SEL c, UIViewController *vc, BOOL animated, id c
 static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     if (!cls) return 0;
     Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return 0;
+    *store = method_setImplementation(m, rep);
+    return 1;
+}
+
+static int DCProbeClass(Class cls, SEL sel, IMP rep, IMP *store) {
+    if (!cls) return 0;
+    Method m = class_getClassMethod(cls, sel);
     if (!m) return 0;
     *store = method_setImplementation(m, rep);
     return 1;
@@ -481,6 +566,25 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     g += DCProbe(NSClassFromString(@"GSGameCenterManager"), @selector(authenticateWithForce:completion:), (IMP)rep_gcAuthForce, (IMP *)&orig_gcAuthForce);
     g += DCProbe(NSClassFromString(@"GKLocalPlayer"), @selector(setAuthenticateHandler:), (IMP)rep_setAuthHandler, (IMP *)&orig_setAuthHandler);
     if (g > 0) [self logEvent:[NSString stringWithFormat:@"苹果/GC探针已装 %d/8", g]];
+    int b = 0;
+    b += DCProbe(impl, @selector(didExit), (IMP)rep_cb_didExit, (IMP *)&orig_cb_didExit);
+    b += DCProbe(impl, @selector(didGameExit), (IMP)rep_cb_didGameExit, (IMP *)&orig_cb_didGameExit);
+    b += DCProbe(impl, @selector(didLogout), (IMP)rep_cb_didLogout, (IMP *)&orig_cb_didLogout);
+    b += DCProbe(impl, @selector(didCLoseCloudStorageView), (IMP)rep_cb_didCloseCloud, (IMP *)&orig_cb_didCloseCloud);
+    b += DCProbe(impl, @selector(didCloseAgreementView), (IMP)rep_cb_didCloseAgree, (IMP *)&orig_cb_didCloseAgree);
+    b += DCProbe(impl, @selector(didOpenCloudStorageFailedWithError:), (IMP)rep_cb_cloudFail, (IMP *)&orig_cb_cloudFail);
+    b += DCProbe(impl, @selector(didGeetestResult:), (IMP)rep_cb_geetest, (IMP *)&orig_cb_geetest);
+    b += DCProbe(impl, @selector(didPaySuccessWithPayment:), (IMP)rep_cb_payOK, (IMP *)&orig_cb_payOK);
+    b += DCProbe(impl, @selector(didPayFailureWithPayment:error:), (IMP)rep_cb_payFail, (IMP *)&orig_cb_payFail);
+    b += DCProbeClass(impl, @selector(login:), (IMP)rep_cls_login, (IMP *)&orig_cls_login);
+    b += DCProbeClass(impl, @selector(createRole), (IMP)rep_cls_createRole, (IMP *)&orig_cls_createRole);
+    b += DCProbeClass(impl, @selector(isLoggedIn), (IMP)rep_cls_isLoggedIn, (IMP *)&orig_cls_isLoggedIn);
+    b += DCProbeClass(impl, @selector(openCloudManager:callback:), (IMP)rep_cls_cloud, (IMP *)&orig_cls_cloud);
+    Class sess = NSClassFromString(@"NSURLSession");
+    b += DCProbe(sess, @selector(dataTaskWithRequest:completionHandler:), (IMP)rep_dataTaskH, (IMP *)&orig_dataTaskH);
+    b += DCProbe(sess, @selector(dataTaskWithRequest:), (IMP)rep_dataTask, (IMP *)&orig_dataTask);
+    b += DCProbe(sess, @selector(uploadTaskWithRequest:fromData:completionHandler:), (IMP)rep_uploadH, (IMP *)&orig_uploadH);
+    if (b > 0) [self logEvent:[NSString stringWithFormat:@"桥+网络探针已装 %d/16", b]];
     if (n > 0) {
         self.probesInstalled = YES;
         [self logEvent:[NSString stringWithFormat:@"探针已装 %d/7", n]];
