@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.7";
+static NSString * const kDCMenuVersion = @"v2.7.1";
 
 #pragma mark - Passthrough window
 
@@ -28,7 +28,11 @@ static NSString * const kDCMenuVersion = @"v2.7";
 @end
 
 @implementation DCPassWindow
-- (BOOL)canBecomeKeyWindow { return NO; }
+// Must be YES: a window that can never become key also can never host a
+// first responder, so text fields in the panel could not take keyboard
+// input (v2.7 bug). Key status is handed back to the game window when
+// the panel closes (see togglePanel).
+- (BOOL)canBecomeKeyWindow { return YES; }
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hit = [super hitTest:point withEvent:event];
     if (hit == self || hit == self.rootViewController.view) return nil;
@@ -537,9 +541,16 @@ static BOOL dc_live_init(DCMenu *menu) {
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
     panel.layer.cornerRadius = 14;
     panel.hidden = YES;
-    [panel addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragPanel:)]];
     [root addSubview:panel];
     self.panel = panel;
+
+    // Drag handle: a transparent strip across the panel's top. The pan
+    // recognizer lives only here so it can never swallow touches meant
+    // for the text fields and buttons below.
+    UIView *strip = [[UIView alloc] initWithFrame:CGRectMake(0, 0, pw, 36)];
+    strip.backgroundColor = [UIColor clearColor];
+    [strip addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragPanel:)]];
+    [panel addSubview:strip];
 
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, pw - 200, 22)];
     title.textColor = [UIColor whiteColor];
@@ -703,7 +714,13 @@ static BOOL dc_live_init(DCMenu *menu) {
     self.panel.hidden = !self.panel.hidden;
     if (self.panel.hidden) {
         [self.panel endEditing:YES];
+        // Hand key-window status back to the game.
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w != self.window) { [w makeKeyWindow]; break; }
+        }
     } else {
+        // Become key so the panel's text fields can take keyboard input.
+        [self.window makeKeyWindow];
         [self renderLog];
         [self refreshAssistUI];
         [self refreshFileState];
@@ -898,12 +915,7 @@ static BOOL dc_live_init(DCMenu *menu) {
 }
 
 - (void)dragPanel:(UIPanGestureRecognizer *)g {
-    // Only drag when the gesture starts on the panel's top strip.
-    if (g.state == UIGestureRecognizerStateBegan) {
-        CGPoint p = [g locationInView:self.panel];
-        if (p.y > 36) { g.enabled = NO; g.enabled = YES; return; }
-    }
-    UIView *v = g.view;
+    UIView *v = self.panel;
     CGPoint t = [g translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [g setTranslation:CGPointZero inView:v.superview];
