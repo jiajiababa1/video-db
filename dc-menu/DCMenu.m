@@ -45,7 +45,7 @@ static __weak id gSDKImpl = nil;
 @property (nonatomic, strong) UILabel *badgeLabel;
 @property (nonatomic, strong) UILabel *noticeLabel;
 @property (nonatomic, strong) UILabel *statusLabel;
-@property (nonatomic, strong) UILabel *diagLabel;
+@property (nonatomic, strong) UITextView *diagLabel;
 @property (nonatomic, strong) NSDictionary *config;
 @property (nonatomic, strong) NSMutableArray<NSString *> *events;
 @property (nonatomic, strong) NSMutableSet<NSString *> *onceKeys;
@@ -120,7 +120,7 @@ static __weak id gSDKImpl = nil;
 
     // Panel
     CGFloat pw = MIN(320, bounds.size.width - 40);
-    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width - pw) / 2.0, bounds.size.height * 0.16, pw, 400)];
+    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width - pw) / 2.0, bounds.size.height * 0.16, pw, 430)];
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
     panel.layer.cornerRadius = 16;
     panel.hidden = YES;
@@ -157,10 +157,12 @@ static __weak id gSDKImpl = nil;
     [panel addSubview:status];
     self.statusLabel = status;
 
-    UILabel *diag = [[UILabel alloc] initWithFrame:CGRectMake(16, 204, pw - 32, 118)];
+    UITextView *diag = [[UITextView alloc] initWithFrame:CGRectMake(16, 204, pw - 32, 118)];
     diag.textColor = [UIColor systemCyanColor];
     diag.font = [UIFont systemFontOfSize:10];
-    diag.numberOfLines = 0;
+    diag.backgroundColor = [UIColor clearColor];
+    diag.editable = NO;
+    diag.scrollEnabled = YES;
     diag.text = @"登录诊断：等待事件…";
     [panel addSubview:diag];
     self.diagLabel = diag;
@@ -183,8 +185,23 @@ static __weak id gSDKImpl = nil;
     [close addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:close];
 
+    // Drag strip across the panel top: drag there to move the whole panel.
+    UIView *dragStrip = [[UIView alloc] initWithFrame:CGRectMake(0, 0, pw, 110)];
+    dragStrip.backgroundColor = [UIColor clearColor];
+    UIPanGestureRecognizer *panelPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPanelPan:)];
+    [dragStrip addGestureRecognizer:panelPan];
+    [panel addSubview:dragStrip];
+
     [self fetchConfig];
     [self installProbes];
+}
+
+- (void)onPanelPan:(UIPanGestureRecognizer *)g {
+    CGPoint t = [g translationInView:self.window];
+    CGPoint c = self.panel.center;
+    c.x += t.x; c.y += t.y;
+    self.panel.center = c;
+    [g setTranslation:CGPointZero inView:self.window];
 }
 
 - (void)logEvent:(NSString *)name {
@@ -196,13 +213,16 @@ static __weak id gSDKImpl = nil;
     fmt.dateFormat = @"HH:mm:ss";
     NSString *line = [NSString stringWithFormat:@"%@ %@", [fmt stringFromDate:[NSDate date]], name];
     [self.events addObject:line];
-    while (self.events.count > 40) [self.events removeObjectAtIndex:0];
-    NSArray *tail = self.events.count > 12 ? [self.events subarrayWithRange:NSMakeRange(self.events.count - 12, 12)] : self.events;
-    NSString *text = [@"登录诊断：\n" stringByAppendingString:[tail componentsJoinedByString:@"\n"]];
-    if ([NSThread isMainThread]) {
+    while (self.events.count > 60) [self.events removeObjectAtIndex:0];
+    NSString *text = [@"登录诊断：\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    void (^render)(void) = ^{
         self.diagLabel.text = text;
+        if (text.length) [self.diagLabel scrollRangeToVisible:NSMakeRange(text.length - 1, 1)];
+    };
+    if ([NSThread isMainThread]) {
+        render();
     } else {
-        dispatch_async(dispatch_get_main_queue(), ^{ self.diagLabel.text = text; });
+        dispatch_async(dispatch_get_main_queue(), render);
     }
 }
 
@@ -412,7 +432,11 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
 }
 
 - (void)fetchConfig {
-    NSURL *url = [NSURL URLWithString:kDCConfigURL];
+    // Cache-busting query: raw.githubusercontent caches up to 5 min otherwise,
+    // which delayed a fix_mode flip by a full test cycle.
+    NSString *urlStr = [NSString stringWithFormat:@"%@?t=%lld", kDCConfigURL,
+                        (long long)[[NSDate date] timeIntervalSince1970]];
+    NSURL *url = [NSURL URLWithString:urlStr];
     if (!url) return;
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url
                                                        cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
