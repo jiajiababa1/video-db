@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.2";
+static NSString * const kDCMenuVersion = @"v2.8.3";
 
 #pragma mark - Passthrough window
 
@@ -234,16 +234,34 @@ static uintptr_t dc_array_elem(uintptr_t arr, int idx) {
 }
 
 // Haxe Array<T> fields hold an hl.types.ArrayObj wrapper object, not a
-// raw varray: { t, length(i32) @+8, varray * @+16 }. Return the raw
-// varray (or obj itself when it already is one), verified by reading
-// the candidate's array header.
+// raw varray. The varray pointer sits somewhere in the wrapper's first
+// qwords; find it empirically: the first qword that itself reads as a
+// valid array header. (A fixed-offset guess failed in the field.)
 static uintptr_t dc_unwrap_array(uintptr_t obj) {
     if (!obj) return 0;
     if (dc_array_info(obj, NULL, NULL)) return obj;
-    uintptr_t p = 0;
-    if (dc_vread(obj + 16, &p, 8) && p && dc_array_info(p, NULL, NULL)) return p;
-    if (dc_vread(obj + 8, &p, 8) && p && dc_array_info(p, NULL, NULL)) return p;
+    uintptr_t q[6];
+    if (!dc_vread(obj, q, sizeof(q))) return 0;
+    for (int i = 1; i < 6; i++) {
+        if (q[i] && dc_array_info(q[i], NULL, NULL)) return q[i];
+    }
     return 0;
+}
+
+// Diagnostic: log an object's first 6 qwords and mark which of them
+// reads as an array header.
+static void dc_dump_qwords(DCMenu *menu, uintptr_t obj, NSString *label) {
+    uintptr_t q[6];
+    if (!obj || !dc_vread(obj, q, sizeof(q))) return;
+    [menu logEvent:[NSString stringWithFormat:@"%@ 原始：%lx %lx %lx %lx %lx %lx",
+                    label, (unsigned long)q[0], (unsigned long)q[1], (unsigned long)q[2],
+                    (unsigned long)q[3], (unsigned long)q[4], (unsigned long)q[5]]];
+    for (int i = 1; i < 6; i++) {
+        int sz = 0;
+        if (q[i] && dc_array_info(q[i], NULL, &sz)) {
+            [menu logEvent:[NSString stringWithFormat:@"%@ 第%d格是数组 size=%d", label, i, sz]];
+        }
+    }
 }
 
 
@@ -533,7 +551,15 @@ static void dc_walk_obj(DCMenu *menu, uintptr_t addr, DCClassInfo *ci, int depth
                                  [cci.name hasPrefix:@"libs."]);
             if (isArrObj) {
                 uintptr_t raw = dc_unwrap_array(child);
-                if (raw) dc_census_array(menu, raw, [NSString stringWithFormat:@"%@.%@", label, fn]);
+                if (raw) {
+                    dc_census_array(menu, raw, [NSString stringWithFormat:@"%@.%@", label, fn]);
+                } else {
+                    static NSInteger dumpBudget = 3;
+                    if (dumpBudget > 0) {
+                        dumpBudget--;
+                        dc_dump_qwords(menu, child, [NSString stringWithFormat:@"%@.%@", label, fn]);
+                    }
+                }
             } else if (cci && !noisy && depth < 1) {
                 dc_walk_obj(menu, child, cci, depth + 1,
                             [NSString stringWithFormat:@"%@.%@", label, fn]);
@@ -1704,6 +1730,7 @@ static BOOL dc_live_init(DCMenu *menu) {
                     uintptr_t rawArr = dc_unwrap_array(arr);
                     if (!rawArr || !dc_array_info(rawArr, &et, &asz)) {
                         [self logEvent:[NSString stringWithFormat:@"%@ 不是数组", arrName]];
+                        dc_dump_qwords(self, arr, arrName);
                         continue;
                     }
                     arr = rawArr;
