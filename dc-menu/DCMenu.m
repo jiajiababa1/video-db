@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8";
+static NSString * const kDCMenuVersion = @"v2.8.1";
 
 #pragma mark - Passthrough window
 
@@ -62,6 +62,8 @@ static NSString * const kDCMenuVersion = @"v2.8";
 @property (nonatomic, strong) UIView *assistPage;
 @property (nonatomic, strong) UIView *livePage;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UITextField *> *liveFields;
+@property (nonatomic, strong) UIButton *lockBtn;
+@property (nonatomic, strong) NSTimer *lockTimer;
 @property (nonatomic, assign) double aEnemyHealth;
 @property (nonatomic, assign) double aEnemyDamage;
 @property (nonatomic, assign) double aTrapDamage;
@@ -278,9 +280,11 @@ static NSString *dc_u16str(uintptr_t addr) {
 
 @interface DCLayout : NSObject
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *offsets;
+@property (nonatomic, strong) NSMutableArray<NSString *> *order;
 @property (nonatomic, assign) NSInteger size;
 @property (nonatomic, assign) NSInteger padSize;
 @property (nonatomic, assign) NSInteger largest;
+@property (nonatomic, assign) BOOL rtVerified;
 @end
 @implementation DCLayout
 @end
@@ -299,9 +303,19 @@ static NSString *dc_u16str(uintptr_t addr) {
 @end
 
 // Live-edit cache: filled by a successful recon, consumed by apply.
+// The Game object is the root: hero/data are re-resolved through it on
+// every use, so objects recreated by the game are followed.
 static uintptr_t dc_g_heroAddr = 0, dc_g_dataAddr = 0;
 static DCLayout *dc_g_heroLayout = nil, *dc_g_dataLayout = nil;
 static NSString *dc_g_heroClsName = nil, *dc_g_dataClsName = nil;
+static uintptr_t dc_g_gameAddr = 0;
+static DCLayout *dc_g_gameLayout = nil;
+static NSString *dc_g_gameClsName = nil;
+// Value lock: re-stamp the last applied values so game recalculations
+// (e.g. on weapon swap) cannot revert them.
+static BOOL dc_g_lockOn = NO;
+static NSDictionary<NSString *, NSNumber *> *dc_g_lockVals = nil;
+static NSInteger dc_g_lockFails = 0;
 
 static NSMutableDictionary<NSString *, DCClassInfo *> *dc_g_classes = nil;
 static NSMutableDictionary<NSNumber *, DCClassInfo *> *dc_g_byType = nil;
@@ -330,12 +344,14 @@ static DCLayout *dc_layout_rec(DCClassInfo *ci) {
     ci.layoutBusy = YES;
     DCLayout *lay = [[DCLayout alloc] init];
     lay.offsets = [NSMutableDictionary dictionary];
+    lay.order = [NSMutableArray array];
     NSInteger size = 8, largest = 8;
     if (ci.superType) {
         DCClassInfo *sup = dc_class_for_type(ci.superType);
         DCLayout *pl = sup ? dc_layout_rec(sup) : nil;
         if (pl) {
             [lay.offsets addEntriesFromDictionary:pl.offsets];
+            [lay.order addObjectsFromArray:pl.order];
             size = pl.size - pl.padSize;
             largest = pl.largest;
         }
@@ -344,9 +360,13 @@ static DCLayout *dc_layout_rec(DCClassInfo *ci) {
     for (NSInteger k = 0; k < ci.nfields; k++) {
         uintptr_t namePtr = recs[k * 3];
         uintptr_t t = recs[k * 3 + 1];
-        if (!t || t < dc_g_typesLo || t >= dc_g_typesHi) continue;
         NSString *fname = dc_u16str(namePtr);
-        if (!fname) continue;
+        // Every declared field occupies a slot in rt->fields_indexes,
+        // even ones we cannot size ourselves; keep a placeholder so the
+        // positional mapping below stays aligned.
+        [lay.order addObject:fname ?: [NSString stringWithFormat:@"#%lu",
+                                       (unsigned long)lay.order.count]];
+        if (!fname || !t || t < dc_g_typesLo || t >= dc_g_typesHi) continue;
         int kind = *(const int *)t;
         if (kind == 22) { // HPACKED: inline sub-struct
             uintptr_t tparam = *(const uintptr_t *)(t + 8);
@@ -373,6 +393,25 @@ static DCLayout *dc_layout_rec(DCClassInfo *ci) {
         if (pad) { padSize = largest - pad; size += padSize; }
     }
     lay.size = size; lay.padSize = padSize; lay.largest = largest;
+    // Authoritative override: the runtime's own fields_indexes table
+    // (hl_runtime_obj: nfields @+8, size @+16, fields_indexes @+40).
+    // Our computed layout drifted in the tail of big classes (Hero),
+    // which corrupted pointer fields on write; the rt table is exact.
+    uintptr_t rt = ci.objBase ? *(const uintptr_t *)(ci.objBase + 72) : 0;
+    if (rt) {
+        int total = *(const int *)(rt + 8);
+        uintptr_t fi = *(const uintptr_t *)(rt + 40);
+        int rtSize = *(const int *)(rt + 16);
+        if (fi && total > 0 && total <= 4096 && dc_readable2(fi, (size_t)total * 4)) {
+            NSInteger n = MIN((NSInteger)total, (NSInteger)lay.order.count);
+            for (NSInteger i = 0; i < n; i++) {
+                int off = ((const int *)fi)[i];
+                if (off >= 0 && off < 65536) lay.offsets[lay.order[i]] = @(off);
+            }
+            if (rtSize > 0) lay.size = rtSize;
+            lay.rtVerified = (total == (NSInteger)lay.order.count);
+        }
+    }
     ci.layout = lay;
     ci.layoutBusy = NO;
     return lay;
@@ -385,6 +424,7 @@ static int dc_g_exitCx = 0, dc_g_exitCy = 0;
 static double dc_g_exitXr = 0, dc_g_exitYr = 0;
 
 static BOOL dc_is_exit_class(DCClassInfo *ci) {
+    if ([ci.name localizedCaseInsensitiveContainsString:@"exit"]) return YES;
     DCClassInfo *c = ci;
     int guard = 0;
     while (c && guard++ < 16) {
@@ -400,11 +440,11 @@ static BOOL dc_is_exit_class(DCClassInfo *ci) {
 // coords cached for the teleport button.
 static NSInteger dc_g_walkLines = 0;
 static void dc_walk_obj(DCMenu *menu, uintptr_t addr, DCClassInfo *ci, int depth, NSString *label) {
-    if (!ci || dc_g_walkLines > 90) return;
+    if (!ci || dc_g_walkLines > 220) return;
     DCLayout *lay = dc_layout_rec(ci);
     const uintptr_t *recs = (const uintptr_t *)ci.fields;
     for (NSInteger k = 0; k < ci.nfields; k++) {
-        if (dc_g_walkLines > 90) return;
+        if (dc_g_walkLines > 220) return;
         NSString *fn = dc_u16str(recs[k * 3]);
         uintptr_t ft = recs[k * 3 + 1];
         if (!fn || !ft) continue;
@@ -419,7 +459,7 @@ static void dc_walk_obj(DCMenu *menu, uintptr_t addr, DCClassInfo *ci, int depth
         if (dc_array_info(child, &elemT, &arrSize)) {
             dc_g_walkLines++;
             [menu logEvent:[NSString stringWithFormat:@"%@.%@：数组 %d 个", label, fn, arrSize]];
-            int n = MIN(arrSize, 400);
+            int n = MIN(arrSize, 1500);
             NSMutableDictionary<NSString *, NSNumber *> *ec = [NSMutableDictionary dictionary];
             for (int i = 0; i < n; i++) {
                 uintptr_t e = dc_array_elem(child, i);
@@ -458,7 +498,15 @@ static void dc_walk_obj(DCMenu *menu, uintptr_t addr, DCClassInfo *ci, int depth
             DCClassInfo *cci = dc_vread(child, &ch, 8) ? dc_class_for_type(ch) : nil;
             dc_g_walkLines++;
             [menu logEvent:[NSString stringWithFormat:@"%@.%@ -> %@", label, fn, cci.name ?: @"?"]];
-            if (cci && depth < 1) {
+            BOOL isArrObj = cci && [cci.name isEqualToString:@"hl.types.ArrayObj"];
+            BOOL noisy = cci && ([cci.name isEqualToString:@"pr.Game"] ||
+                                 [cci.name isEqualToString:@"level.LevelMap"] ||
+                                 [cci.name isEqualToString:@"tool.Team"] ||
+                                 [cci.name isEqualToString:@"Fx"] ||
+                                 [cci.name hasPrefix:@"h2d."] ||
+                                 [cci.name hasPrefix:@"ui."] ||
+                                 [cci.name hasPrefix:@"libs."]);
+            if (cci && !noisy && (depth < 1 || isArrObj)) {
                 dc_walk_obj(menu, child, cci, depth + 1,
                             [NSString stringWithFormat:@"%@.%@", label, fn]);
             }
@@ -786,13 +834,12 @@ static BOOL dc_live_init(DCMenu *menu) {
     [self addLiveField:livePage x:16 y:52 label:@"战" labelW:18 fieldW:56 key:@"brut"];
     [self addLiveField:livePage x:102 y:52 label:@"战术" labelW:30 fieldW:56 key:@"tact"];
     [self addLiveField:livePage x:200 y:52 label:@"生" labelW:18 fieldW:56 key:@"surv"];
-    [self addLiveField:livePage x:286 y:52 label:@"细胞" labelW:30 fieldW:88 key:@"hcells"];
-    [self addLiveField:livePage x:16 y:84 label:@"金币" labelW:30 fieldW:100 key:@"money"];
-    [self addLiveField:livePage x:162 y:84 label:@"细胞" labelW:30 fieldW:100 key:@"cells"];
-    [self addLiveField:livePage x:308 y:84 label:@"血瓶" labelW:30 fieldW:64 key:@"heal"];
+    [self addLiveField:livePage x:16 y:84 label:@"金币" labelW:30 fieldW:92 key:@"money"];
+    [self addLiveField:livePage x:148 y:84 label:@"细胞" labelW:30 fieldW:92 key:@"cells"];
+    [self addLiveField:livePage x:280 y:84 label:@"血瓶" labelW:30 fieldW:56 key:@"heal"];
 
     UIButton *applyLive = [UIButton buttonWithType:UIButtonTypeSystem];
-    applyLive.frame = CGRectMake(pw - 16 - 140, 84, 140, 28);
+    applyLive.frame = CGRectMake(380, 84, 100, 28);
     applyLive.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.35];
     applyLive.layer.cornerRadius = 8;
     [applyLive setTitle:@"应用修改" forState:UIControlStateNormal];
@@ -800,6 +847,17 @@ static BOOL dc_live_init(DCMenu *menu) {
     applyLive.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [applyLive addTarget:self action:@selector(onApplyLive) forControlEvents:UIControlEventTouchUpInside];
     [livePage addSubview:applyLive];
+
+    UIButton *lockBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    lockBtn.frame = CGRectMake(488, 84, pw - 16 - 488, 28);
+    lockBtn.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+    lockBtn.layer.cornerRadius = 8;
+    [lockBtn setTitle:@"锁定：关" forState:UIControlStateNormal];
+    [lockBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    lockBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [lockBtn addTarget:self action:@selector(onToggleLock) forControlEvents:UIControlEventTouchUpInside];
+    [livePage addSubview:lockBtn];
+    self.lockBtn = lockBtn;
 
     UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 226, pw - 24, ph - 226 - 52)];
     log.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.08];
@@ -812,7 +870,7 @@ static BOOL dc_live_init(DCMenu *menu) {
 
     NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"实时侦查", @"onLiveRecon"], @[@"瞬移出口", @"onTeleport"], @[@"应用辅助", @"onApplyAssist"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
     CGFloat bw = (pw - 32 - 48) / 7;
-    for (NSInteger i = 0; i < 6; i++) {
+    for (NSInteger i = 0; i < (NSInteger)btns.count; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16 + i * (bw + 8), ph - 44, bw, 34);
         b.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
@@ -936,23 +994,108 @@ static BOOL dc_live_init(DCMenu *menu) {
                         @"money": @(money), @"cells": @(cells), @"heal": @(heal)}];
 }
 
-- (BOOL)liveCacheValid {
-    if (!dc_g_heroAddr || !dc_g_dataAddr || !dc_g_heroLayout || !dc_g_dataLayout) return NO;
-    uintptr_t h1 = 0, h2 = 0;
-    DCClassInfo *hc = dc_vread(dc_g_heroAddr, &h1, 8) ? dc_class_for_type(h1) : nil;
-    DCClassInfo *dc2 = dc_vread(dc_g_dataAddr, &h2, 8) ? dc_class_for_type(h2) : nil;
-    return hc && [hc.name isEqualToString:dc_g_heroClsName] &&
-           dc2 && [dc2.name isEqualToString:dc_g_dataClsName];
+// Resolve the CURRENT hero/data through the cached Game object, so a
+// hero/data object recreated by the game (weapon swap, new run) is
+// followed automatically. Refreshes the dc_g_hero*/dc_g_data* cache.
+- (BOOL)resolveLive {
+    if (!dc_g_gameAddr || !dc_g_gameLayout) return NO;
+    uintptr_t gh = 0;
+    DCClassInfo *gc = dc_vread(dc_g_gameAddr, &gh, 8) ? dc_class_for_type(gh) : nil;
+    if (!gc || ![gc.name isEqualToString:dc_g_gameClsName]) return NO;
+    NSNumber *hOff = dc_g_gameLayout.offsets[@"hero"];
+    NSNumber *dOff = dc_g_gameLayout.offsets[@"data"];
+    if (!hOff || !dOff) return NO;
+    uintptr_t hero = 0, gdata = 0, hh = 0, dh = 0;
+    if (!dc_vread(dc_g_gameAddr + [hOff unsignedLongValue], &hero, 8) || !hero) return NO;
+    if (!dc_vread(dc_g_gameAddr + [dOff unsignedLongValue], &gdata, 8) || !gdata) return NO;
+    DCClassInfo *hc = dc_vread(hero, &hh, 8) ? dc_class_for_type(hh) : nil;
+    DCClassInfo *dc2 = dc_vread(gdata, &dh, 8) ? dc_class_for_type(dh) : nil;
+    if (!hc || !dc2) return NO;
+    if (dc_g_heroClsName && ![hc.name isEqualToString:dc_g_heroClsName]) return NO;
+    if (dc_g_dataClsName && ![dc2.name isEqualToString:dc_g_dataClsName]) return NO;
+    dc_g_heroAddr = hero;
+    dc_g_dataAddr = gdata;
+    dc_g_heroLayout = dc_layout_rec(hc);
+    dc_g_dataLayout = dc_layout_rec(dc2);
+    dc_g_heroClsName = hc.name;
+    dc_g_dataClsName = dc2.name;
+    return dc_g_heroLayout && dc_g_dataLayout;
+}
+
+- (void)writeLiveVals:(NSDictionary<NSString *, NSNumber *> *)vals {
+    uint8_t *hb = (uint8_t *)dc_g_heroAddr;
+    uint8_t *db = (uint8_t *)dc_g_dataAddr;
+    DCLayout *hl = dc_g_heroLayout, *dl = dc_g_dataLayout;
+    if (vals[@"life"]) {
+        if (hl.offsets[@"life"]) *(int *)(hb + [hl.offsets[@"life"] unsignedLongValue]) = [vals[@"life"] intValue];
+        if (dl.offsets[@"life"]) *(int *)(db + [dl.offsets[@"life"] unsignedLongValue]) = [vals[@"life"] intValue];
+    }
+    if (vals[@"maxLife"]) {
+        if (hl.offsets[@"maxLife"]) *(int *)(hb + [hl.offsets[@"maxLife"] unsignedLongValue]) = [vals[@"maxLife"] intValue];
+        if (dl.offsets[@"maxLife"]) *(int *)(db + [dl.offsets[@"maxLife"] unsignedLongValue]) = [vals[@"maxLife"] intValue];
+    }
+    if (vals[@"pdm"] && hl.offsets[@"powerDistMul"])
+        *(double *)(hb + [hl.offsets[@"powerDistMul"] unsignedLongValue]) = [vals[@"pdm"] doubleValue];
+    if (vals[@"brut"] && hl.offsets[@"brutalityTier"])
+        *(int *)(hb + [hl.offsets[@"brutalityTier"] unsignedLongValue]) = [vals[@"brut"] intValue];
+    if (vals[@"tact"] && hl.offsets[@"tacticTier"])
+        *(int *)(hb + [hl.offsets[@"tacticTier"] unsignedLongValue]) = [vals[@"tact"] intValue];
+    if (vals[@"surv"] && hl.offsets[@"survivalTier"])
+        *(int *)(hb + [hl.offsets[@"survivalTier"] unsignedLongValue]) = [vals[@"surv"] intValue];
+    if (vals[@"money"] && dl.offsets[@"money"])
+        *(int *)(db + [dl.offsets[@"money"] unsignedLongValue]) = [vals[@"money"] intValue];
+    if (vals[@"cells"] && dl.offsets[@"cells"])
+        *(int *)(db + [dl.offsets[@"cells"] unsignedLongValue]) = [vals[@"cells"] intValue];
+    if (vals[@"heal"] && dl.offsets[@"healings"])
+        *(int *)(db + [dl.offsets[@"healings"] unsignedLongValue]) = [vals[@"heal"] intValue];
+}
+
+- (void)setLockOn:(BOOL)on silent:(BOOL)silent {
+    dc_g_lockOn = on;
+    dc_g_lockFails = 0;
+    [self.lockTimer invalidate];
+    self.lockTimer = nil;
+    if (on) {
+        self.lockTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
+                                                           target:self
+                                                         selector:@selector(lockTick)
+                                                         userInfo:nil
+                                                          repeats:YES];
+    }
+    [self.lockBtn setTitle:on ? @"锁定：开" : @"锁定：关" forState:UIControlStateNormal];
+    self.lockBtn.backgroundColor = on ? [[UIColor systemGreenColor] colorWithAlphaComponent:0.35]
+                                      : [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+    if (!silent) [self logEvent:on ? @"锁定开：这组数值会反复写回" : @"锁定关"];
+}
+
+- (void)onToggleLock {
+    if (!dc_g_lockOn && !dc_g_lockVals) {
+        [self logEvent:@"还没有可锁定的数值：先填数点一次「应用修改」"];
+        return;
+    }
+    [self setLockOn:!dc_g_lockOn silent:NO];
+}
+
+- (void)lockTick {
+    if (!dc_g_lockOn) return;
+    if (![self resolveLive]) {
+        if (++dc_g_lockFails >= 4) {
+            [self setLockOn:NO silent:YES];
+            [self logEvent:@"锁定已停：定位失效（重开一局后重新侦查+应用一次）"];
+        }
+        return;
+    }
+    dc_g_lockFails = 0;
+    [self writeLiveVals:dc_g_lockVals];
 }
 
 - (void)onTeleport {
     [self.panel endEditing:YES];
-    if (!dc_g_heroAddr) {
+    if (!dc_g_gameAddr) {
         [self logEvent:@"还没定位：先点「实时侦查」"];
         return;
     }
-    if (![self liveCacheValid]) {
-        dc_g_heroAddr = dc_g_dataAddr = 0;
+    if (![self resolveLive]) {
         [self logEvent:@"定位已失效，重新点一次「实时侦查」"];
         return;
     }
@@ -974,32 +1117,34 @@ static BOOL dc_live_init(DCMenu *menu) {
 
 - (void)onApplyLive {
     [self.panel endEditing:YES];
-    if (!dc_g_heroAddr || !dc_g_dataAddr || !dc_g_heroLayout || !dc_g_dataLayout) {
+    if (!dc_g_gameAddr) {
         [self logEvent:@"还没定位：先点「实时侦查」定位一次，再回来改"];
         return;
     }
-    if (![self liveCacheValid]) {
-        dc_g_heroAddr = dc_g_dataAddr = 0;
+    if (![self resolveLive]) {
         [self logEvent:@"定位已失效（换图/重开局了），重新点一次「实时侦查」"];
         return;
     }
-    uint8_t *hb = (uint8_t *)dc_g_heroAddr;
-    uint8_t *db = (uint8_t *)dc_g_dataAddr;
-    NSInteger n = 0;
-    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"life" key:@"life"];
-    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"maxLife" key:@"maxLife"];
-    n += [self liveWriteDouble:hb layout:dc_g_heroLayout field:@"powerDistMul" key:@"pdm"];
-    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"brutalityTier" key:@"brut"];
-    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"tacticTier" key:@"tact"];
-    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"survivalTier" key:@"surv"];
-    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"cells" key:@"hcells"];
-    n += [self liveWriteInt:db layout:dc_g_dataLayout field:@"money" key:@"money"];
-    n += [self liveWriteInt:db layout:dc_g_dataLayout field:@"cells" key:@"cells"];
-    n += [self liveWriteInt:db layout:dc_g_dataLayout field:@"healings" key:@"heal"];
-    [self liveWriteInt:db layout:dc_g_dataLayout field:@"life" key:@"life"];
-    [self liveWriteInt:db layout:dc_g_dataLayout field:@"maxLife" key:@"maxLife"];
-    [self logEvent:[NSString stringWithFormat:@"已当场写入 %ld 项，复读确认：", (long)n]];
+    NSMutableDictionary<NSString *, NSNumber *> *vals = [NSMutableDictionary dictionary];
+    for (NSString *k in @[@"life", @"maxLife", @"pdm", @"brut", @"tact", @"surv",
+                          @"money", @"cells", @"heal"]) {
+        NSString *txt = self.liveFields[k].text;
+        if (!txt.length) continue;
+        vals[k] = [k isEqualToString:@"pdm"] ? @(txt.doubleValue) : @(txt.integerValue);
+    }
+    if (!vals.count) {
+        [self logEvent:@"先填要改的数值再点应用"];
+        return;
+    }
+    [self writeLiveVals:vals];
+    [self logEvent:[NSString stringWithFormat:@"已当场写入 %lu 项，复读确认：",
+                    (unsigned long)vals.count]];
     [self liveReadbackLog];
+    dc_g_lockVals = [vals copy];
+    if (!dc_g_lockOn) {
+        [self setLockOn:YES silent:YES];
+        [self logEvent:@"锁定已自动开：换武器/换图也不会被变回去（不要了点「锁定：开」关掉）"];
+    }
 }
 
 - (void)addStepper:(UIView *)panel x:(CGFloat)x y:(CGFloat)y name:(NSString *)name key:(NSString *)key idx:(NSInteger)idx {
@@ -1450,8 +1595,9 @@ static BOOL dc_live_init(DCMenu *menu) {
         DCLayout *hl = dc_layout_rec(heroCls);
         DCLayout *dl = dc_layout_rec(dataCls);
         uintptr_t hrt = *(const uintptr_t *)(heroCls.objBase + 72);
-        [self logEvent:[NSString stringWithFormat:@"Hero 布局 size=%ld（rt size=%d，离线算 1656）",
-                        (long)hl.size, hrt ? *(const int *)(hrt + 16) : -1]];
+        [self logEvent:[NSString stringWithFormat:@"Hero 布局 size=%ld（rt size=%d）偏移校验：%@",
+                        (long)hl.size, hrt ? *(const int *)(hrt + 16) : -1,
+                        hl.rtVerified ? @"通过" : @"未通过（把日志发我）"]];
         size_t hsz = (size_t)hl.size, dsz = (size_t)dl.size;
         if (hsz == 0 || dsz == 0 || hsz > 16384 || dsz > 16384) {
             [self logEvent:@"布局 size 异常，先到此"]; return;
@@ -1481,9 +1627,10 @@ static BOOL dc_live_init(DCMenu *menu) {
         dc_g_heroAddr = hero; dc_g_dataAddr = gdata;
         dc_g_heroLayout = hl; dc_g_dataLayout = dl;
         dc_g_heroClsName = heroCls.name; dc_g_dataClsName = dataCls.name;
+        dc_g_gameAddr = g; dc_g_gameLayout = gl; dc_g_gameClsName = gameCls.name;
         dispatch_async(dispatch_get_main_queue(), ^{
             [self prefillLive:@{@"life": @(life), @"maxLife": @(maxLife), @"pdm": @(pdm),
-                                 @"brut": @(bT), @"tact": @(tT), @"surv": @(sT), @"hcells": @(hCells),
+                                 @"brut": @(bT), @"tact": @(tT), @"surv": @(sT),
                                  @"money": @(money), @"cells": @(cells), @"heal": @(heal)}];
         });
         free(hbuf); free(dbuf);
