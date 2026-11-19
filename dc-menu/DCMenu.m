@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.6.3";
+static NSString * const kDCMenuVersion = @"v2.7";
 
 #pragma mark - Passthrough window
 
@@ -55,6 +55,9 @@ static NSString * const kDCMenuVersion = @"v2.6.3";
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UILabel *> *stepValLabels;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UIButton *> *toggleBtns;
 @property (nonatomic, strong) UILabel *fileStateLabel;
+@property (nonatomic, strong) UIView *assistPage;
+@property (nonatomic, strong) UIView *livePage;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, UITextField *> *liveFields;
 @property (nonatomic, assign) double aEnemyHealth;
 @property (nonatomic, assign) double aEnemyDamage;
 @property (nonatomic, assign) double aTrapDamage;
@@ -79,6 +82,11 @@ static NSString * const kDCMenuVersion = @"v2.6.3";
 - (void)refreshFileState;
 - (void)addStepper:(UIView *)panel x:(CGFloat)x y:(CGFloat)y name:(NSString *)name key:(NSString *)key idx:(NSInteger)idx;
 - (void)notePakPath:(NSString *)path;
+- (void)onSwitchPage:(UIButton *)b;
+- (void)onApplyLive;
+- (void)addLiveField:(UIView *)page x:(CGFloat)x y:(CGFloat)y label:(NSString *)label labelW:(CGFloat)lw fieldW:(CGFloat)fw key:(NSString *)key;
+- (void)prefillLive:(NSDictionary<NSString *, NSNumber *> *)vals;
+- (void)liveReadbackLog;
 @end
 
 #pragma mark - Live recon (HashLink runtime, read-only probe)
@@ -186,6 +194,7 @@ static BOOL dc_vread(uintptr_t addr, void *out, size_t n) {
     return kr == KERN_SUCCESS && got == n;
 }
 
+
 static BOOL dc_in_spans(uintptr_t addr, size_t n) {
     for (NSDictionary *span in dc_g_dataSpans) {
         uintptr_t lo = (uintptr_t)[span[@"ptr"] pointerValue];
@@ -251,6 +260,11 @@ static NSString *dc_u16str(uintptr_t addr) {
 @end
 @implementation DCClassInfo
 @end
+
+// Live-edit cache: filled by a successful recon, consumed by apply.
+static uintptr_t dc_g_heroAddr = 0, dc_g_dataAddr = 0;
+static DCLayout *dc_g_heroLayout = nil, *dc_g_dataLayout = nil;
+static NSString *dc_g_heroClsName = nil, *dc_g_dataClsName = nil;
 
 static NSMutableDictionary<NSString *, DCClassInfo *> *dc_g_classes = nil;
 static NSMutableDictionary<NSNumber *, DCClassInfo *> *dc_g_byType = nil;
@@ -414,6 +428,7 @@ static BOOL dc_live_init(DCMenu *menu) {
         _events = [NSMutableArray array];
         _stepValLabels = [NSMutableDictionary dictionary];
         _toggleBtns = [NSMutableDictionary dictionary];
+        _liveFields = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -563,40 +578,97 @@ static BOOL dc_live_init(DCMenu *menu) {
     [panel addSubview:status];
     self.statusLabel = status;
 
+    // --- Two switchable pages in the zone y106..226: live edit (default)
+    // and the v2.5 assist section. ---
+    UIView *assistPage = [[UIView alloc] initWithFrame:CGRectMake(0, 106, pw, 120)];
+    assistPage.hidden = YES;
+    [panel addSubview:assistPage];
+    self.assistPage = assistPage;
+    UIView *livePage = [[UIView alloc] initWithFrame:CGRectMake(0, 106, pw, 120)];
+    [panel addSubview:livePage];
+    self.livePage = livePage;
+
     // --- Custom assist section (v2.5): steppers + toggles, values persist
     // in NSUserDefaults and are written into dc_options.json on apply. ---
-    UILabel *aTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 108, pw - 32, 14)];
+    UILabel *aTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 2, pw - 32 - 118, 14)];
     aTitle.textColor = [UIColor whiteColor];
     aTitle.font = [UIFont boldSystemFontOfSize:11];
     aTitle.text = @"辅助自定义（调好点「应用辅助」，重启游戏生效）";
-    [panel addSubview:aTitle];
+    [assistPage addSubview:aTitle];
 
-    UILabel *fstate = [[UILabel alloc] initWithFrame:CGRectMake(16, 123, pw - 32, 14)];
+    UIButton *toLive = [UIButton buttonWithType:UIButtonTypeSystem];
+    toLive.frame = CGRectMake(pw - 16 - 118, 0, 118, 18);
+    [toLive setTitle:@"实时修改 »" forState:UIControlStateNormal];
+    [toLive setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
+    toLive.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    toLive.tag = 301;
+    [toLive addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
+    [assistPage addSubview:toLive];
+
+    UILabel *fstate = [[UILabel alloc] initWithFrame:CGRectMake(16, 17, pw - 32, 14)];
     fstate.textColor = [UIColor systemCyanColor];
     fstate.font = [UIFont systemFontOfSize:10];
     fstate.text = @"文件当前：…";
-    [panel addSubview:fstate];
+    [assistPage addSubview:fstate];
     self.fileStateLabel = fstate;
 
-    [self addStepper:panel x:16 y:141 name:@"敌血" key:@"enemyHealth" idx:0];
-    [self addStepper:panel x:16 + (pw - 32) / 2 y:141 name:@"敌攻" key:@"enemyDamage" idx:1];
-    [self addStepper:panel x:16 y:167 name:@"陷阱" key:@"trapDamage" idx:2];
-    [self addStepper:panel x:16 + (pw - 32) / 2 y:167 name:@"续命" key:@"gameContinue" idx:3];
+    [self addStepper:assistPage x:16 y:35 name:@"敌血" key:@"enemyHealth" idx:0];
+    [self addStepper:assistPage x:16 + (pw - 32) / 2 y:35 name:@"敌攻" key:@"enemyDamage" idx:1];
+    [self addStepper:assistPage x:16 y:61 name:@"陷阱" key:@"trapDamage" idx:2];
+    [self addStepper:assistPage x:16 + (pw - 32) / 2 y:61 name:@"续命" key:@"gameContinue" idx:3];
 
     NSArray *togs = @[@[@"弹反", @"parry"], @[@"易陷阱", @"trap"], @[@"全图", @"map"],
                       @[@"回血", @"heal"], @[@"破门", @"doors"], @[@"减速", @"slow"]];
     CGFloat tw = (pw - 32 - 5 * 6) / 6;
     for (NSInteger i = 0; i < 6; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-        b.frame = CGRectMake(16 + i * (tw + 6), 195, tw, 24);
+        b.frame = CGRectMake(16 + i * (tw + 6), 89, tw, 24);
         b.layer.cornerRadius = 6;
         b.titleLabel.font = [UIFont systemFontOfSize:11];
         b.tag = 200 + i;
         [b addTarget:self action:@selector(onToggle:) forControlEvents:UIControlEventTouchUpInside];
-        [panel addSubview:b];
+        [assistPage addSubview:b];
         self.toggleBtns[togs[i][1]] = b;
         [b setTitle:togs[i][0] forState:UIControlStateNormal];
     }
+
+    // --- Live edit page (v2.7): type values, tap apply, written straight
+    // into the live Hero/GameData objects. ---
+    UILabel *lTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 2, pw - 32 - 118, 14)];
+    lTitle.textColor = [UIColor whiteColor];
+    lTitle.font = [UIFont boldSystemFontOfSize:11];
+    lTitle.text = @"实时修改（先点「实时侦查」定位，填数点应用，当场生效，可负数）";
+    [livePage addSubview:lTitle];
+
+    UIButton *toAssist = [UIButton buttonWithType:UIButtonTypeSystem];
+    toAssist.frame = CGRectMake(pw - 16 - 118, 0, 118, 18);
+    [toAssist setTitle:@"« 辅助设置" forState:UIControlStateNormal];
+    [toAssist setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
+    toAssist.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    toAssist.tag = 300;
+    [toAssist addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
+    [livePage addSubview:toAssist];
+
+    [self addLiveField:livePage x:16 y:20 label:@"生命" labelW:32 fieldW:88 key:@"life"];
+    [self addLiveField:livePage x:212 y:20 label:@"上限" labelW:32 fieldW:88 key:@"maxLife"];
+    [self addLiveField:livePage x:408 y:20 label:@"倍率" labelW:32 fieldW:88 key:@"pdm"];
+    [self addLiveField:livePage x:16 y:52 label:@"战" labelW:18 fieldW:56 key:@"brut"];
+    [self addLiveField:livePage x:102 y:52 label:@"战术" labelW:30 fieldW:56 key:@"tact"];
+    [self addLiveField:livePage x:200 y:52 label:@"生" labelW:18 fieldW:56 key:@"surv"];
+    [self addLiveField:livePage x:286 y:52 label:@"细胞" labelW:30 fieldW:88 key:@"hcells"];
+    [self addLiveField:livePage x:16 y:84 label:@"金币" labelW:30 fieldW:100 key:@"money"];
+    [self addLiveField:livePage x:162 y:84 label:@"细胞" labelW:30 fieldW:100 key:@"cells"];
+    [self addLiveField:livePage x:308 y:84 label:@"血瓶" labelW:30 fieldW:64 key:@"heal"];
+
+    UIButton *applyLive = [UIButton buttonWithType:UIButtonTypeSystem];
+    applyLive.frame = CGRectMake(pw - 16 - 140, 84, 140, 28);
+    applyLive.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.35];
+    applyLive.layer.cornerRadius = 8;
+    [applyLive setTitle:@"应用修改" forState:UIControlStateNormal];
+    [applyLive setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    applyLive.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [applyLive addTarget:self action:@selector(onApplyLive) forControlEvents:UIControlEventTouchUpInside];
+    [livePage addSubview:applyLive];
 
     UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 226, pw - 24, ph - 226 - 52)];
     log.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.08];
@@ -629,11 +701,136 @@ static BOOL dc_live_init(DCMenu *menu) {
 
 - (void)togglePanel {
     self.panel.hidden = !self.panel.hidden;
-    if (!self.panel.hidden) {
+    if (self.panel.hidden) {
+        [self.panel endEditing:YES];
+    } else {
         [self renderLog];
         [self refreshAssistUI];
         [self refreshFileState];
     }
+}
+
+- (void)onSwitchPage:(UIButton *)b {
+    BOOL toLive = (b.tag == 301);
+    self.livePage.hidden = !toLive;
+    self.assistPage.hidden = toLive;
+    [self.panel endEditing:YES];
+}
+
+- (void)addLiveField:(UIView *)page x:(CGFloat)x y:(CGFloat)y label:(NSString *)label labelW:(CGFloat)lw fieldW:(CGFloat)fw key:(NSString *)key {
+    UILabel *n = [[UILabel alloc] initWithFrame:CGRectMake(x, y + 2, lw, 24)];
+    n.textColor = [UIColor whiteColor];
+    n.font = [UIFont systemFontOfSize:12];
+    n.text = label;
+    [page addSubview:n];
+    UITextField *f = [[UITextField alloc] initWithFrame:CGRectMake(x + lw + 2, y, fw, 28)];
+    f.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+    f.layer.cornerRadius = 6;
+    f.textColor = [UIColor systemYellowColor];
+    f.font = [UIFont boldSystemFontOfSize:13];
+    f.textAlignment = NSTextAlignmentCenter;
+    f.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+    f.returnKeyType = UIReturnKeyDone;
+    [f addTarget:self action:@selector(liveFieldDone:) forControlEvents:UIControlEventEditingDidEndOnExit];
+    [page addSubview:f];
+    self.liveFields[key] = f;
+}
+
+- (void)liveFieldDone:(UITextField *)f { [f resignFirstResponder]; }
+
+- (void)prefillLive:(NSDictionary<NSString *, NSNumber *> *)vals {
+    for (NSString *k in vals) {
+        UITextField *f = self.liveFields[k];
+        if (!f) continue;
+        if ([k isEqualToString:@"pdm"]) {
+            f.text = [NSString stringWithFormat:@"%.2f", [vals[k] doubleValue]];
+        } else {
+            f.text = [NSString stringWithFormat:@"%ld", (long)[vals[k] integerValue]];
+        }
+    }
+}
+
+- (BOOL)liveWriteInt:(uint8_t *)base layout:(DCLayout *)layout field:(NSString *)field key:(NSString *)key {
+    NSString *txt = self.liveFields[key].text;
+    NSNumber *off = layout.offsets[field];
+    if (!txt.length || !off) return NO;
+    *(int *)(base + [off unsignedLongValue]) = (int)txt.integerValue;
+    return YES;
+}
+
+- (BOOL)liveWriteDouble:(uint8_t *)base layout:(DCLayout *)layout field:(NSString *)field key:(NSString *)key {
+    NSString *txt = self.liveFields[key].text;
+    NSNumber *off = layout.offsets[field];
+    if (!txt.length || !off) return NO;
+    *(double *)(base + [off unsignedLongValue]) = txt.doubleValue;
+    return YES;
+}
+
+- (void)liveReadbackLog {
+    DCLayout *hl = dc_g_heroLayout, *dl = dc_g_dataLayout;
+    size_t hsz = (size_t)hl.size, dsz = (size_t)dl.size;
+    if (!hsz || !dsz || hsz > 16384 || dsz > 16384) return;
+    uint8_t *hbuf = (uint8_t *)malloc(hsz);
+    uint8_t *dbuf = (uint8_t *)malloc(dsz);
+    if (!hbuf || !dbuf || !dc_vread(dc_g_heroAddr, hbuf, hsz) || !dc_vread(dc_g_dataAddr, dbuf, dsz)) {
+        free(hbuf); free(dbuf);
+        [self logEvent:@"复读失败"];
+        return;
+    }
+    int life = *(const int *)(hbuf + [hl.offsets[@"life"] unsignedLongValue]);
+    int maxLife = *(const int *)(hbuf + [hl.offsets[@"maxLife"] unsignedLongValue]);
+    double pdm = *(const double *)(hbuf + [hl.offsets[@"powerDistMul"] unsignedLongValue]);
+    int tT = *(const int *)(hbuf + [hl.offsets[@"tacticTier"] unsignedLongValue]);
+    int bT = *(const int *)(hbuf + [hl.offsets[@"brutalityTier"] unsignedLongValue]);
+    int sT = *(const int *)(hbuf + [hl.offsets[@"survivalTier"] unsignedLongValue]);
+    int hCells = *(const int *)(hbuf + [hl.offsets[@"cells"] unsignedLongValue]);
+    int money = *(const int *)(dbuf + [dl.offsets[@"money"] unsignedLongValue]);
+    int cells = *(const int *)(dbuf + [dl.offsets[@"cells"] unsignedLongValue]);
+    int heal = *(const int *)(dbuf + [dl.offsets[@"healings"] unsignedLongValue]);
+    free(hbuf); free(dbuf);
+    [self logEvent:[NSString stringWithFormat:@"现在：生命 %d/%d · 倍率 %.2f · 卷轴 战%d 战术%d 生%d",
+                    life, maxLife, pdm, bT, tT, sT]];
+    [self logEvent:[NSString stringWithFormat:@"现在：金币 %d · 细胞 %d（Hero 侧 %d） · 血瓶 %d",
+                    money, cells, hCells, heal]];
+    self.statusLabel.text = [NSString stringWithFormat:@"实时：生命 %d/%d · 金币 %d · 细胞 %d",
+                             life, maxLife, money, cells];
+    [self prefillLive:@{@"life": @(life), @"maxLife": @(maxLife), @"pdm": @(pdm),
+                        @"brut": @(bT), @"tact": @(tT), @"surv": @(sT), @"hcells": @(hCells),
+                        @"money": @(money), @"cells": @(cells), @"heal": @(heal)}];
+}
+
+- (void)onApplyLive {
+    [self.panel endEditing:YES];
+    if (!dc_g_heroAddr || !dc_g_dataAddr || !dc_g_heroLayout || !dc_g_dataLayout) {
+        [self logEvent:@"还没定位：先点「实时侦查」定位一次，再回来改"];
+        return;
+    }
+    uintptr_t h1 = 0, h2 = 0;
+    DCClassInfo *hc = dc_vread(dc_g_heroAddr, &h1, 8) ? dc_class_for_type(h1) : nil;
+    DCClassInfo *dc2 = dc_vread(dc_g_dataAddr, &h2, 8) ? dc_class_for_type(h2) : nil;
+    if (!hc || ![hc.name isEqualToString:dc_g_heroClsName] ||
+        !dc2 || ![dc2.name isEqualToString:dc_g_dataClsName]) {
+        dc_g_heroAddr = dc_g_dataAddr = 0;
+        [self logEvent:@"定位已失效（换图/重开局了），重新点一次「实时侦查」"];
+        return;
+    }
+    uint8_t *hb = (uint8_t *)dc_g_heroAddr;
+    uint8_t *db = (uint8_t *)dc_g_dataAddr;
+    NSInteger n = 0;
+    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"life" key:@"life"];
+    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"maxLife" key:@"maxLife"];
+    n += [self liveWriteDouble:hb layout:dc_g_heroLayout field:@"powerDistMul" key:@"pdm"];
+    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"brutalityTier" key:@"brut"];
+    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"tacticTier" key:@"tact"];
+    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"survivalTier" key:@"surv"];
+    n += [self liveWriteInt:hb layout:dc_g_heroLayout field:@"cells" key:@"hcells"];
+    n += [self liveWriteInt:db layout:dc_g_dataLayout field:@"money" key:@"money"];
+    n += [self liveWriteInt:db layout:dc_g_dataLayout field:@"cells" key:@"cells"];
+    n += [self liveWriteInt:db layout:dc_g_dataLayout field:@"healings" key:@"heal"];
+    [self liveWriteInt:db layout:dc_g_dataLayout field:@"life" key:@"life"];
+    [self liveWriteInt:db layout:dc_g_dataLayout field:@"maxLife" key:@"maxLife"];
+    [self logEvent:[NSString stringWithFormat:@"已当场写入 %ld 项，复读确认：", (long)n]];
+    [self liveReadbackLog];
 }
 
 - (void)addStepper:(UIView *)panel x:(CGFloat)x y:(CGFloat)y name:(NSString *)name key:(NSString *)key idx:(NSInteger)idx {
@@ -1117,6 +1314,14 @@ static BOOL dc_live_init(DCMenu *menu) {
                         life, maxLife, pdm, bT, tT, sT]];
         [self logEvent:[NSString stringWithFormat:@"实时读数：金币 %d · 细胞 %d（Hero 侧 %d） · 血瓶 %d",
                         money, cells, hCells, heal]];
+        dc_g_heroAddr = hero; dc_g_dataAddr = gdata;
+        dc_g_heroLayout = hl; dc_g_dataLayout = dl;
+        dc_g_heroClsName = heroCls.name; dc_g_dataClsName = dataCls.name;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self prefillLive:@{@"life": @(life), @"maxLife": @(maxLife), @"pdm": @(pdm),
+                                 @"brut": @(bT), @"tact": @(tT), @"surv": @(sT), @"hcells": @(hCells),
+                                 @"money": @(money), @"cells": @(cells), @"heal": @(heal)}];
+        });
         free(hbuf); free(dbuf);
         dispatch_async(dispatch_get_main_queue(), ^{
             self.statusLabel.text = [NSString stringWithFormat:@"实时：生命 %d/%d · 金币 %d · 细胞 %d",
