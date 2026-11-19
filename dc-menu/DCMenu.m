@@ -112,7 +112,7 @@ static BOOL dc_readable(uintptr_t addr, size_t n) {
     vm_size_t sz = 0;
     vm_region_basic_info_data_64_t info;
     mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT_64;
-    vm_object_name_t obj;
+    mach_port_t obj;
     kern_return_t kr = vm_region_64(mach_task_self(), &a, &sz, VM_REGION_BASIC_INFO_64,
                                     (vm_region_info_t)&info, &cnt, &obj);
     if (kr != KERN_SUCCESS) return NO;
