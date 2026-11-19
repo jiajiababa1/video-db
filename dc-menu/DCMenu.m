@@ -19,7 +19,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.6";
+static NSString * const kDCMenuVersion = @"v2.6.1";
 
 #pragma mark - Passthrough window
 
@@ -119,12 +119,40 @@ static BOOL dc_readable(uintptr_t addr, size_t n) {
     return addr >= a && addr + n <= a + sz && (info.protection & VM_PROT_READ);
 }
 
+static BOOL dc_in_spans(uintptr_t addr, size_t n) {
+    for (NSDictionary *span in dc_g_dataSpans) {
+        uintptr_t lo = (uintptr_t)[span[@"ptr"] pointerValue];
+        uintptr_t hi = lo + [span[@"len"] unsignedLongValue];
+        if (addr >= lo && addr + n <= hi) return YES;
+    }
+    return NO;
+}
+
+static NSString *dc_stage_path(void) {
+    return [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/dcmenu_stage.log"];
+}
+
+static void dc_stage(NSString *s) {
+    NSString *line = [s stringByAppendingString:@"\n"];
+    NSData *bytes = [line dataUsingEncoding:NSUTF8StringEncoding];
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:dc_stage_path()];
+    if (!fh) {
+        [bytes writeToFile:dc_stage_path() atomically:YES];
+        return;
+    }
+    [fh seekToEndOfFile];
+    [fh writeData:bytes];
+    [fh closeFile];
+}
+
 static NSString *dc_u16str(uintptr_t addr) {
     if (addr < dc_g_textLo || addr >= dc_g_textHi) return nil;
+    NSInteger maxN = (NSInteger)((dc_g_textHi - addr) / 2);
+    if (maxN > 100) maxN = 100;
     const uint16_t *p = (const uint16_t *)addr;
     uint16_t buf[101];
     NSInteger n = 0;
-    for (NSInteger i = 0; i < 100; i++) {
+    for (NSInteger i = 0; i < maxN; i++) {
         uint16_t c = p[i];
         if (c == 0) break;
         if (c < 0x21 || c > 0x7E) return nil; // printable, no spaces
@@ -167,7 +195,7 @@ static DCClassInfo *dc_class_for_type(uintptr_t type) {
     if (type < dc_g_typesLo || type >= dc_g_typesHi) return nil;
     if (*(const int *)type != 11) return nil;
     uintptr_t obj = *(const uintptr_t *)(type + 8);
-    if (!obj) return nil;
+    if (!obj || !dc_in_spans(obj, 80)) return nil;
     NSString *nm = dc_u16str(*(const uintptr_t *)(obj + 16));
     if (!nm) return nil;
     ci = dc_g_classes[nm];
@@ -198,7 +226,7 @@ static DCLayout *dc_layout_rec(DCClassInfo *ci) {
     for (NSInteger k = 0; k < ci.nfields; k++) {
         uintptr_t namePtr = recs[k * 3];
         uintptr_t t = recs[k * 3 + 1];
-        if (!t) continue;
+        if (!t || t < dc_g_typesLo || t >= dc_g_typesHi) continue;
         NSString *fname = dc_u16str(namePtr);
         if (!fname) continue;
         int kind = *(const int *)t;
@@ -270,6 +298,7 @@ static BOOL dc_live_init(DCMenu *menu) {
             uintptr_t fields = *(const uintptr_t *)(b + 32);
             uintptr_t proto = *(const uintptr_t *)(b + 40);
             if (!fields || proto != fields + (uintptr_t)nf * 24) continue;
+            if (!dc_in_spans(fields, (size_t)nf * 24)) continue;
             if (sup && (sup < dc_g_typesLo || sup >= dc_g_typesHi)) continue;
             NSString *nm = dc_u16str(namePtr);
             if (!nm || [nm containsString:@"/"] || [nm hasSuffix:@".hx"]) continue;
@@ -296,6 +325,7 @@ static BOOL dc_live_init(DCMenu *menu) {
             if (*(const int *)t == 11) { ci.typeAddr = t; dc_g_byType[@(t)] = ci; }
         }
     }
+    dc_stage([NSString stringWithFormat:@"阶段：类登记完成 %lu 个", (unsigned long)dc_g_classes.count]);
     [menu logEvent:[NSString stringWithFormat:@"实时侦查：类登记 %lu 个，slide 0x%lx",
                     (unsigned long)dc_g_classes.count, (unsigned long)dc_g_slide]];
     return YES;
@@ -401,6 +431,13 @@ static BOOL dc_live_init(DCMenu *menu) {
 
     NSBundle *mb = [NSBundle mainBundle];
     [self logEvent:[NSString stringWithFormat:@"菜单 %@ 已加载", kDCMenuVersion]];
+    NSString *prevStage = [NSString stringWithContentsOfFile:dc_stage_path()
+                                                    encoding:NSUTF8StringEncoding error:nil];
+    if (prevStage.length) {
+        [self logEvent:[NSString stringWithFormat:@"上次侦查阶段记录（死在哪看最后行）：\n%@",
+                        [prevStage stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceAndNewlineCharacterSet]]]];
+    }
     [self logEvent:[NSString stringWithFormat:@"目标：%@ %@",
                     mb.bundleIdentifier ?: @"?",
                     [mb objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?"]];
@@ -866,8 +903,11 @@ static BOOL dc_live_init(DCMenu *menu) {
 
 - (void)runLiveRecon {
     [self logEvent:@"—— 实时侦查开始（只读） ——"];
+    [[NSFileManager defaultManager] removeItemAtPath:dc_stage_path() error:nil];
+    dc_stage(@"阶段：侦查开始");
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         if (!dc_live_init(self)) return;
+        dc_stage(@"阶段：初始化完成，进入全局扫描");
         // 1) Globals scan: qwords in the game's data segments that point at
         //    live HL objects (first word = hl_type* in the types window).
         NSMutableDictionary<NSString *, NSNumber *> *counts = [NSMutableDictionary dictionary];
@@ -892,6 +932,7 @@ static BOOL dc_live_init(DCMenu *menu) {
                 if (!first[ci.name]) { first[ci.name] = key; [objAddrs addObject:key]; }
             }
         }
+        dc_stage([NSString stringWithFormat:@"阶段：全局扫描完成 %lu 类", (unsigned long)counts.count]);
         [self logEvent:[NSString stringWithFormat:@"全局活对象：%lu 类 / %lu 个",
                         (unsigned long)counts.count, (unsigned long)seen.count]];
         for (NSString *want in @[@"pr.Game", @"en.Hero", @"tool.GameData"]) {
@@ -951,6 +992,7 @@ static BOOL dc_live_init(DCMenu *menu) {
             self.statusLabel.text = [NSString stringWithFormat:@"实时：生命 %d/%d · 金币 %d · 细胞 %d",
                                      life, maxLife, money, cells];
         });
+        dc_stage(@"阶段：读数完成（没闪退）");
         [self logEvent:@"—— 实时侦查完成 ——"];
     });
 }
