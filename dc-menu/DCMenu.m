@@ -19,7 +19,10 @@ static BOOL DCAddictionOn(void) { return gFixMode == 1 || gFixMode == 3 || gFixM
 static BOOL DCRealnameOn(void) { return gFixMode == 2 || gFixMode == 3 || gFixMode >= 4; }
 static BOOL gAddictionFired = NO;
 static BOOL gSynthDone = NO;
+static BOOL gManagerFired = NO;
+static BOOL gManagerSynthDone = NO;
 static __weak id gSDKImpl = nil;
+static __weak id gService = nil;
 
 #pragma mark - Passthrough window
 
@@ -250,7 +253,7 @@ static ImpV2B orig_addiction_Center;
 static ImpV2B orig_addiction_Service;
 
 static void rep_didInitSDKSuccess(id s, SEL c) { [[DCMenu shared] logEvent:@"SDK 初始化成功"]; if (orig_didInitSDKSuccess) orig_didInitSDKSuccess(s, c); }
-static void rep_didLoginSuccessKey(id s, SEL c, id a, id b) { gSDKImpl = s; gAddictionFired = NO; gSynthDone = NO; [[DCMenu shared] logEvent:@"登录成功 (AccessKey)"]; if (orig_didLoginSuccessKey) orig_didLoginSuccessKey(s, c, a, b); }
+static void rep_didLoginSuccessKey(id s, SEL c, id a, id b) { gSDKImpl = s; gAddictionFired = NO; gSynthDone = NO; gManagerFired = NO; gManagerSynthDone = NO; [[DCMenu shared] logEvent:@"登录成功 (AccessKey)"]; if (orig_didLoginSuccessKey) orig_didLoginSuccessKey(s, c, a, b); }
 static void rep_didLoginSuccessResult(id s, SEL c, id a) { gSDKImpl = s; [[DCMenu shared] logEvent:@"登录成功 (Result)"]; if (orig_didLoginSuccessResult) orig_didLoginSuccessResult(s, c, a); }
 static void rep_didGetUserInfoOK(id s, SEL c, id a) {
     gSDKImpl = s;
@@ -276,10 +279,34 @@ static void rep_didGetUserInfoOK(id s, SEL c, id a) {
 }
 static void rep_didGetUserInfoFail(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"用户信息获取失败"]; if (orig_didGetUserInfoFail) orig_didGetUserInfoFail(s, c, a); }
 static void rep_didLoginFailure(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"登录失败回调"]; if (orig_didLoginFailure) orig_didLoginFailure(s, c, a); }
-static void rep_onGameAddiction(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@Manager"]; if (orig_onGameAddiction) orig_onGameAddiction(s, c, a, b, f); }
+static void rep_onGameAddiction(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; gManagerFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@Manager"]; if (orig_onGameAddiction) orig_onGameAddiction(s, c, a, b, f); }
 static void rep_addiction_GSSDK(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@GSSDK"]; if (orig_addiction_GSSDK) orig_addiction_GSSDK(s, c, a, b, f); }
 static void rep_addiction_Center(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@Center"]; if (orig_addiction_Center) orig_addiction_Center(s, c, a, b, f); }
-static void rep_addiction_Service(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@Service"]; if (orig_addiction_Service) orig_addiction_Service(s, c, a, b, f); }
+static void rep_addiction_Service(id s, SEL c, id a, id b, BOOL f) {
+    gAddictionFired = YES;
+    gService = s;
+    [[DCMenu shared] logEvent:@"防沉迷回调@Service"];
+    if (orig_addiction_Service) orig_addiction_Service(s, c, a, b, f);
+    // The observed chain stalls after Service: the Manager hop never happens.
+    // Under mode >= 4, push that last hop ourselves a moment later.
+    if (gFixMode >= 4 && !gManagerSynthDone) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (gManagerFired || gManagerSynthDone) return;
+            gManagerSynthDone = YES;
+            id svc = gService;
+            id mgr = nil;
+            if (svc && [svc respondsToSelector:@selector(gameAddictionManager)]) {
+                mgr = ((id (*)(id, SEL))objc_msgSend)(svc, @selector(gameAddictionManager));
+            }
+            if (mgr && orig_onGameAddiction) {
+                [[DCMenu shared] logEvent:@"已补发防沉迷回调@Manager"];
+                orig_onGameAddiction(mgr, @selector(onGameAddiction:data:appRestrictFirst:), nil, nil, NO);
+            } else {
+                [[DCMenu shared] logEvent:@"补发@Manager失败: 拿不到管理器"];
+            }
+        });
+    }
+}
 
 #pragma mark - Observation probes (addiction request / heartbeat)
 
@@ -289,6 +316,11 @@ static id rep_api_params(id s, SEL c) { [[DCMenu shared] logEventOnce:@"api-para
 static id rep_api_url(id s, SEL c) { [[DCMenu shared] logEventOnce:@"api-url" text:@"防沉迷校验地址被读取"]; return orig_api_url ? orig_api_url(s, c) : nil; }
 static ImpV orig_hb_start;
 static void rep_hb_start(id s, SEL c) { [[DCMenu shared] logEventOnce:@"hb-start" text:@"防沉迷心跳已启动"]; if (orig_hb_start) orig_hb_start(s, c); }
+static ImpObj orig_aniVC;
+static id rep_aniVC(id s, SEL c) { [[DCMenu shared] logEventOnce:@"ani-vc" text:@"SDK防沉迷页被读取"]; return orig_aniVC ? orig_aniVC(s, c) : nil; }
+typedef BOOL (*ImpBFn)(id, SEL);
+static ImpBFn orig_isConnecting;
+static BOOL rep_isConnecting(id s, SEL c) { [[DCMenu shared] logEventOnce:@"is-conn" text:@"游戏在查SDK连接状态"]; return orig_isConnecting ? orig_isConnecting(s, c) : NO; }
 typedef void (*ImpV1Q)(id, SEL, id, long long);
 static ImpV1Q orig_hb_local;
 static void rep_hb_local(id s, SEL c, id a, long long q) { [[DCMenu shared] logEventOnce:@"hb-local" text:@"防沉迷心跳已上报"]; if (orig_hb_local) orig_hb_local(s, c, a, q); }
@@ -368,6 +400,12 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     Class apiCls = NSClassFromString(@"GSCGameAddictionApi");
     DCProbe(apiCls, @selector(params), (IMP)rep_api_params, (IMP *)&orig_api_params);
     DCProbe(apiCls, @selector(requestUrl), (IMP)rep_api_url, (IMP *)&orig_api_url);
+    DCProbe(NSClassFromString(@"GSCDataManager"), @selector(aniAddictionVC), (IMP)rep_aniVC, (IMP *)&orig_aniVC);
+    Class implCls = NSClassFromString(@"BilibiliSDKImpl");
+    if (implCls) {
+        Method cm = class_getClassMethod(implCls, @selector(isConnecting));
+        if (cm) orig_isConnecting = (ImpBFn)method_setImplementation(cm, (IMP)rep_isConnecting);
+    }
     Class hbCls = NSClassFromString(@"GSAniaddiction");
     if (hbCls) {
         Method hm = class_getClassMethod(hbCls, @selector(startHeartbeat));
