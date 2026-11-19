@@ -9,6 +9,10 @@
 
 static NSString * const kDCConfigURL = @"https://api.github.com/repos/jiajiababa1/video-db/contents/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
+// Hot-switchable login-fix mode, driven by remote config key "fix_mode":
+// 0 = off (pure observation), 1 = addiction-verify switches forced off,
+// 2 = real-name state forced verified, 3 = both.
+static NSInteger gFixMode = 0;
 
 #pragma mark - Passthrough window
 
@@ -37,6 +41,7 @@ static NSString * const kDCBundledBadge = @"版本 A";
 @property (nonatomic, strong) UILabel *diagLabel;
 @property (nonatomic, strong) NSDictionary *config;
 @property (nonatomic, strong) NSMutableArray<NSString *> *events;
+@property (nonatomic, strong) NSMutableSet<NSString *> *onceKeys;
 @property (nonatomic, assign) BOOL probesInstalled;
 @property (nonatomic, assign) BOOL setupDone;
 + (instancetype)shared;
@@ -187,6 +192,13 @@ static NSString * const kDCBundledBadge = @"版本 A";
     }
 }
 
+- (void)logEventOnce:(NSString *)key text:(NSString *)text {
+    if (!self.onceKeys) self.onceKeys = [NSMutableSet set];
+    if ([self.onceKeys containsObject:key]) return;
+    [self.onceKeys addObject:key];
+    [self logEvent:text];
+}
+
 typedef void (*ImpV)(id, SEL);
 typedef void (*ImpV1)(id, SEL, id);
 typedef void (*ImpV2)(id, SEL, id, id);
@@ -206,6 +218,43 @@ static void rep_didGetUserInfoOK(id s, SEL c, id a) { [[DCMenu shared] logEvent:
 static void rep_didGetUserInfoFail(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"用户信息获取失败"]; if (orig_didGetUserInfoFail) orig_didGetUserInfoFail(s, c, a); }
 static void rep_didLoginFailure(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"登录失败回调"]; if (orig_didLoginFailure) orig_didLoginFailure(s, c, a); }
 static void rep_onGameAddiction(id s, SEL c, id a, id b, BOOL f) { [[DCMenu shared] logEvent:@"防沉迷回调到达"]; if (orig_onGameAddiction) orig_onGameAddiction(s, c, a, b, f); }
+
+#pragma mark - Login-fix hooks (behavior switched live by gFixMode)
+
+typedef BOOL (*ImpB)(id, SEL);
+
+#define DC_ADDICTION_HOOK(name) \
+  static ImpB orig_##name; \
+  static BOOL rep_##name(id s, SEL c) { \
+    BOOL v = orig_##name ? orig_##name(s, c) : YES; \
+    if ((gFixMode == 1 || gFixMode == 3) && v) { \
+      [[DCMenu shared] logEventOnce:@"fix-addiction" text:@"已拦截 · 防沉迷校验开关"]; \
+      return NO; \
+    } \
+    return v; \
+  }
+
+#define DC_REALNAME_HOOK(name) \
+  static ImpB orig_##name; \
+  static BOOL rep_##name(id s, SEL c) { \
+    BOOL v = orig_##name ? orig_##name(s, c) : NO; \
+    if ((gFixMode == 2 || gFixMode == 3) && !v) { \
+      [[DCMenu shared] logEventOnce:@"fix-realname" text:@"已拦截 · 实名状态"]; \
+      return YES; \
+    } \
+    return v; \
+  }
+
+DC_ADDICTION_HOOK(add_GSBaseApi)
+DC_ADDICTION_HOOK(add_GSCHttpRequestDo)
+DC_ADDICTION_HOOK(add_GSCHttpRequest)
+DC_ADDICTION_HOOK(add_GSCHttpLinesRequest)
+DC_ADDICTION_HOOK(add_req_GSCHttpLinesRequest)
+DC_ADDICTION_HOOK(add_BGSRequest)
+DC_ADDICTION_HOOK(add_BGSChangeLineRequest)
+DC_ADDICTION_HOOK(add_HeartbeatApi)
+DC_REALNAME_HOOK(rn_GSSDK)
+DC_REALNAME_HOOK(rn_GSSDKLogin)
 
 typedef void (*ImpPresent)(id, SEL, UIViewController *, BOOL, id);
 static ImpPresent orig_presentVC;
@@ -236,6 +285,18 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     n += DCProbe(addiction, @selector(onGameAddiction:data:appRestrictFirst:), (IMP)rep_onGameAddiction, (IMP *)&orig_onGameAddiction);
     int p = DCProbe([UIViewController class], @selector(presentViewController:animated:completion:), (IMP)rep_presentVC, (IMP *)&orig_presentVC);
     if (p > 0) [self logEvent:@"界面探针已装"];
+    int f = 0;
+    f += DCProbe(NSClassFromString(@"GSBaseApi"), @selector(openAddictionVerification), (IMP)rep_add_GSBaseApi, (IMP *)&orig_add_GSBaseApi);
+    f += DCProbe(NSClassFromString(@"GSCHttpRequestDo"), @selector(openAddictionVerification), (IMP)rep_add_GSCHttpRequestDo, (IMP *)&orig_add_GSCHttpRequestDo);
+    f += DCProbe(NSClassFromString(@"GSCHttpRequest"), @selector(openAddictionVerification), (IMP)rep_add_GSCHttpRequest, (IMP *)&orig_add_GSCHttpRequest);
+    f += DCProbe(NSClassFromString(@"GSCHttpLinesRequest"), @selector(openAddictionVerification), (IMP)rep_add_GSCHttpLinesRequest, (IMP *)&orig_add_GSCHttpLinesRequest);
+    f += DCProbe(NSClassFromString(@"GSCHttpLinesRequest"), @selector(reqAddictionVerification), (IMP)rep_add_req_GSCHttpLinesRequest, (IMP *)&orig_add_req_GSCHttpLinesRequest);
+    f += DCProbe(NSClassFromString(@"BGSRequest"), @selector(openAddictionVerify), (IMP)rep_add_BGSRequest, (IMP *)&orig_add_BGSRequest);
+    f += DCProbe(NSClassFromString(@"BGSChangeLineRequest"), @selector(openAddictionVerify), (IMP)rep_add_BGSChangeLineRequest, (IMP *)&orig_add_BGSChangeLineRequest);
+    f += DCProbe(NSClassFromString(@"HeartbeatApi"), @selector(openAddictionVerification), (IMP)rep_add_HeartbeatApi, (IMP *)&orig_add_HeartbeatApi);
+    f += DCProbe(NSClassFromString(@"GSSDK"), @selector(isRealnameAuth), (IMP)rep_rn_GSSDK, (IMP *)&orig_rn_GSSDK);
+    f += DCProbe(NSClassFromString(@"GSSDKLogin"), @selector(isRealnameAuth), (IMP)rep_rn_GSSDKLogin, (IMP *)&orig_rn_GSSDKLogin);
+    if (f > 0) [self logEvent:[NSString stringWithFormat:@"修复钩子已装 %d/10", f]];
     if (n > 0) {
         self.probesInstalled = YES;
         [self logEvent:[NSString stringWithFormat:@"探针已装 %d/7", n]];
@@ -263,6 +324,11 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     if ([badge isKindOfClass:[NSString class]] && badge.length) self.badgeLabel.text = badge;
     NSString *notice = cfg[@"notice"];
     if ([notice isKindOfClass:[NSString class]] && notice.length) self.noticeLabel.text = notice;
+    NSNumber *fm = cfg[@"fix_mode"];
+    if ([fm isKindOfClass:[NSNumber class]] && fm.integerValue != gFixMode) {
+        gFixMode = fm.integerValue;
+        [self logEvent:[NSString stringWithFormat:@"修复模式已切到 %ld", (long)gFixMode]];
+    }
     NSDateFormatter *fmt = [NSDateFormatter new];
     fmt.dateFormat = @"HH:mm:ss";
     self.statusLabel.text = [NSString stringWithFormat:@"已连上更新通道 · %@", [fmt stringFromDate:[NSDate date]]];
