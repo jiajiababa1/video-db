@@ -7,10 +7,16 @@
 // Remote config: https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <fcntl.h>
+#import <stdio.h>
+#import <dlfcn.h>
+#import <string.h>
+#import <stdarg.h>
+#import <sys/types.h>
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.3";
+static NSString * const kDCMenuVersion = @"v2.4";
 
 #pragma mark - Passthrough window
 
@@ -49,6 +55,7 @@ static NSString * const kDCMenuVersion = @"v2.3";
 - (void)runRecon;
 - (void)applyAssistBoost;
 - (void)restoreAssist;
+- (void)notePakPath:(NSString *)path;
 @end
 
 @implementation DCMenu
@@ -256,6 +263,17 @@ static NSString * const kDCMenuVersion = @"v2.3";
     [g setTranslation:CGPointZero inView:v.superview];
 }
 
+- (void)notePakPath:(NSString *)path {
+    if (!path) return;
+    static NSMutableSet<NSString *> *seen = nil;
+    BOOL isNew = NO;
+    @synchronized (self) {
+        if (!seen) seen = [NSMutableSet set];
+        if (![seen containsObject:path]) { [seen addObject:path]; isNew = YES; }
+    }
+    if (isNew) [self logEvent:[NSString stringWithFormat:@"PAK 打开：%@", path]];
+}
+
 - (void)onCheckUpdate { [self fetchConfig]; }
 
 - (void)onRecon { [self runRecon]; }
@@ -417,6 +435,63 @@ static NSString * const kDCMenuVersion = @"v2.3";
 }
 
 @end
+
+#pragma mark - PAK open probe (data-layer recon, log-only)
+
+static int (*dc_orig_open)(const char *, int, ...) = NULL;
+static int (*dc_orig_openat)(int, const char *, int, ...) = NULL;
+static FILE *(*dc_orig_fopen)(const char *, const char *) = NULL;
+
+static void dc_resolve_orig(void) {
+    if (!dc_orig_open) dc_orig_open = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open");
+    if (!dc_orig_openat) dc_orig_openat = (int (*)(int, const char *, int, ...))dlsym(RTLD_NEXT, "openat");
+    if (!dc_orig_fopen) dc_orig_fopen = (FILE *(*)(const char *, const char *))dlsym(RTLD_NEXT, "fopen");
+}
+
+static void dc_note_path(const char *path) {
+    if (path && strstr(path, ".pak")) {
+        [[DCMenu shared] notePakPath:[NSString stringWithUTF8String:path]];
+    }
+}
+
+static int dc_my_open(const char *path, int oflag, ...) {
+    mode_t mode = 0;
+    if (oflag & O_CREAT) {
+        va_list ap; va_start(ap, oflag);
+        mode = va_arg(ap, mode_t);
+        va_end(ap);
+    }
+    dc_resolve_orig();
+    dc_note_path(path);
+    return dc_orig_open(path, oflag, mode);
+}
+
+static int dc_my_openat(int dirfd, const char *path, int oflag, ...) {
+    mode_t mode = 0;
+    if (oflag & O_CREAT) {
+        va_list ap; va_start(ap, oflag);
+        mode = va_arg(ap, mode_t);
+        va_end(ap);
+    }
+    dc_resolve_orig();
+    dc_note_path(path);
+    return dc_orig_openat(dirfd, path, oflag, mode);
+}
+
+static FILE *dc_my_fopen(const char *path, const char *mode) {
+    dc_resolve_orig();
+    dc_note_path(path);
+    return dc_orig_fopen(path, mode);
+}
+
+#define DC_INTERPOSE(replacement, replacee) \
+    __attribute__((used)) static const struct { const void *repl; const void *orig; } \
+    dc_interpose_##replacee __attribute__((section("__DATA,__interpose"))) = \
+    { (const void *)replacement, (const void *)replacee }
+
+DC_INTERPOSE(dc_my_open, open);
+DC_INTERPOSE(dc_my_openat, openat);
+DC_INTERPOSE(dc_my_fopen, fopen);
 
 #pragma mark - Entry
 
