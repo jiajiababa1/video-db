@@ -10,7 +10,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.1";
+static NSString * const kDCMenuVersion = @"v2.2";
 
 #pragma mark - Passthrough window
 
@@ -130,7 +130,8 @@ static NSString * const kDCMenuVersion = @"v2.1";
 
     // Floating ball (draggable)
     UIButton *ball = [UIButton buttonWithType:UIButtonTypeCustom];
-    ball.frame = CGRectMake([UIScreen mainScreen].bounds.size.width - 70, 180, 56, 56);
+    CGRect scr = [UIScreen mainScreen].bounds;
+    ball.frame = CGRectMake(scr.size.width - 66, scr.size.height * 0.4, 56, 56);
     ball.backgroundColor = [[UIColor systemRedColor] colorWithAlphaComponent:0.9];
     ball.layer.cornerRadius = 28;
     [ball setTitle:@"菜单" forState:UIControlStateNormal];
@@ -152,8 +153,12 @@ static NSString * const kDCMenuVersion = @"v2.1";
 }
 
 - (void)buildPanel:(UIView *)root {
-    CGFloat pw = 340, ph = 470;
+    // Fit inside the actual screen (the game runs landscape: ~932x430pt).
+    // The old fixed 340x470 panel overflowed the 430pt height and pushed
+    // the bottom buttons off-screen.
     CGRect sb = [UIScreen mainScreen].bounds;
+    CGFloat pw = MIN(620.0, sb.size.width - 24);
+    CGFloat ph = MIN(392.0, sb.size.height - 16);
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake((sb.size.width - pw) / 2, (sb.size.height - ph) / 2, pw, ph)];
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.88];
     panel.layer.cornerRadius = 14;
@@ -162,43 +167,44 @@ static NSString * const kDCMenuVersion = @"v2.1";
     [root addSubview:panel];
     self.panel = panel;
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, pw - 32, 24)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, pw - 200, 22)];
     title.textColor = [UIColor whiteColor];
-    title.font = [UIFont boldSystemFontOfSize:16];
+    title.font = [UIFont boldSystemFontOfSize:15];
     title.text = @"重生细胞 · 悬浮菜单";
     [panel addSubview:title];
     self.titleLabel = title;
 
-    UILabel *badge = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, pw - 32, 40)];
+    UILabel *badge = [[UILabel alloc] initWithFrame:CGRectMake(pw - 176, 4, 160, 30)];
     badge.textColor = [UIColor systemYellowColor];
-    badge.font = [UIFont boldSystemFontOfSize:28];
+    badge.font = [UIFont boldSystemFontOfSize:22];
+    badge.textAlignment = NSTextAlignmentRight;
     badge.text = kDCBundledBadge;
     [panel addSubview:badge];
     self.badgeLabel = badge;
 
-    UILabel *notice = [[UILabel alloc] initWithFrame:CGRectMake(16, 80, pw - 32, 44)];
+    UILabel *notice = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, pw - 32, 28)];
     notice.textColor = [UIColor lightGrayColor];
-    notice.font = [UIFont systemFontOfSize:12];
-    notice.numberOfLines = 0;
+    notice.font = [UIFont systemFontOfSize:11];
+    notice.numberOfLines = 2;
     notice.text = @"正在连接热更新通道…";
     [panel addSubview:notice];
     self.noticeLabel = notice;
 
-    UILabel *features = [[UILabel alloc] initWithFrame:CGRectMake(16, 126, pw - 32, 40)];
+    UILabel *features = [[UILabel alloc] initWithFrame:CGRectMake(16, 64, pw - 32, 26)];
     features.textColor = [UIColor systemGreenColor];
-    features.font = [UIFont systemFontOfSize:12];
-    features.numberOfLines = 0;
+    features.font = [UIFont systemFontOfSize:11];
+    features.numberOfLines = 2;
     [panel addSubview:features];
     self.featuresLabel = features;
 
-    UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(16, 168, pw - 32, 18)];
+    UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(16, 90, pw - 32, 16)];
     status.textColor = [UIColor systemCyanColor];
     status.font = [UIFont systemFontOfSize:11];
     status.text = @"通道：未连接";
     [panel addSubview:status];
     self.statusLabel = status;
 
-    UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 190, pw - 24, 224)];
+    UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 110, pw - 24, ph - 110 - 52)];
     log.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.08];
     log.textColor = [UIColor whiteColor];
     log.font = [UIFont systemFontOfSize:10];
@@ -208,9 +214,10 @@ static NSString * const kDCMenuVersion = @"v2.1";
     self.logView = log;
 
     NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"关闭", @"togglePanel"]];
+    CGFloat bw = (pw - 32 - 16) / 3;
     for (NSInteger i = 0; i < 3; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-        b.frame = CGRectMake(16 + i * ((pw - 32 - 16) / 3 + 8), ph - 48, (pw - 32 - 16) / 3, 36);
+        b.frame = CGRectMake(16 + i * (bw + 8), ph - 44, bw, 34);
         b.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
         b.layer.cornerRadius = 8;
         [b setTitle:btns[i][0] forState:UIControlStateNormal];
@@ -239,7 +246,7 @@ static NSString * const kDCMenuVersion = @"v2.1";
     // Only drag when the gesture starts on the panel's top strip.
     if (g.state == UIGestureRecognizerStateBegan) {
         CGPoint p = [g locationInView:self.panel];
-        if (p.y > 34) { g.enabled = NO; g.enabled = YES; return; }
+        if (p.y > 36) { g.enabled = NO; g.enabled = YES; return; }
     }
     UIView *v = g.view;
     CGPoint t = [g translationInView:v.superview];
