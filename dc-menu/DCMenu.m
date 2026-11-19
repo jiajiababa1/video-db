@@ -16,7 +16,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.4";
+static NSString * const kDCMenuVersion = @"v2.5";
 
 #pragma mark - Passthrough window
 
@@ -48,6 +48,19 @@ static NSString * const kDCMenuVersion = @"v2.4";
 @property (nonatomic, strong) NSMutableArray<NSString *> *events;
 @property (nonatomic, assign) BOOL setupDone;
 @property (nonatomic, assign) NSInteger retries;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, UILabel *> *stepValLabels;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, UIButton *> *toggleBtns;
+@property (nonatomic, strong) UILabel *fileStateLabel;
+@property (nonatomic, assign) double aEnemyHealth;
+@property (nonatomic, assign) double aEnemyDamage;
+@property (nonatomic, assign) double aTrapDamage;
+@property (nonatomic, assign) NSInteger aContinue;
+@property (nonatomic, assign) BOOL aParry;
+@property (nonatomic, assign) BOOL aTrap;
+@property (nonatomic, assign) BOOL aMap;
+@property (nonatomic, assign) BOOL aHeal;
+@property (nonatomic, assign) BOOL aDoors;
+@property (nonatomic, assign) BOOL aSlow;
 + (instancetype)shared;
 - (void)setup;
 - (void)fetchConfig;
@@ -55,6 +68,11 @@ static NSString * const kDCMenuVersion = @"v2.4";
 - (void)runRecon;
 - (void)applyAssistBoost;
 - (void)restoreAssist;
+- (void)loadAssistPrefs;
+- (void)saveAssistPrefs;
+- (void)refreshAssistUI;
+- (void)refreshFileState;
+- (void)addStepper:(UIView *)panel x:(CGFloat)x y:(CGFloat)y name:(NSString *)name key:(NSString *)key idx:(NSInteger)idx;
 - (void)notePakPath:(NSString *)path;
 @end
 
@@ -71,6 +89,8 @@ static NSString * const kDCMenuVersion = @"v2.4";
     self = [super init];
     if (self) {
         _events = [NSMutableArray array];
+        _stepValLabels = [NSMutableDictionary dictionary];
+        _toggleBtns = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -213,7 +233,42 @@ static NSString * const kDCMenuVersion = @"v2.4";
     [panel addSubview:status];
     self.statusLabel = status;
 
-    UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 110, pw - 24, ph - 110 - 52)];
+    // --- Custom assist section (v2.5): steppers + toggles, values persist
+    // in NSUserDefaults and are written into dc_options.json on apply. ---
+    UILabel *aTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 108, pw - 32, 14)];
+    aTitle.textColor = [UIColor whiteColor];
+    aTitle.font = [UIFont boldSystemFontOfSize:11];
+    aTitle.text = @"辅助自定义（调好点「应用辅助」，重启游戏生效）";
+    [panel addSubview:aTitle];
+
+    UILabel *fstate = [[UILabel alloc] initWithFrame:CGRectMake(16, 123, pw - 32, 14)];
+    fstate.textColor = [UIColor systemCyanColor];
+    fstate.font = [UIFont systemFontOfSize:10];
+    fstate.text = @"文件当前：…";
+    [panel addSubview:fstate];
+    self.fileStateLabel = fstate;
+
+    [self addStepper:panel x:16 y:141 name:@"敌血" key:@"enemyHealth" idx:0];
+    [self addStepper:panel x:16 + (pw - 32) / 2 y:141 name:@"敌攻" key:@"enemyDamage" idx:1];
+    [self addStepper:panel x:16 y:167 name:@"陷阱" key:@"trapDamage" idx:2];
+    [self addStepper:panel x:16 + (pw - 32) / 2 y:167 name:@"续命" key:@"gameContinue" idx:3];
+
+    NSArray *togs = @[@[@"弹反", @"parry"], @[@"易陷阱", @"trap"], @[@"全图", @"map"],
+                      @[@"回血", @"heal"], @[@"破门", @"doors"], @[@"减速", @"slow"]];
+    CGFloat tw = (pw - 32 - 5 * 6) / 6;
+    for (NSInteger i = 0; i < 6; i++) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+        b.frame = CGRectMake(16 + i * (tw + 6), 195, tw, 24);
+        b.layer.cornerRadius = 6;
+        b.titleLabel.font = [UIFont systemFontOfSize:11];
+        b.tag = 200 + i;
+        [b addTarget:self action:@selector(onToggle:) forControlEvents:UIControlEventTouchUpInside];
+        [panel addSubview:b];
+        self.toggleBtns[togs[i][1]] = b;
+        [b setTitle:togs[i][0] forState:UIControlStateNormal];
+    }
+
+    UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 226, pw - 24, ph - 226 - 52)];
     log.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.08];
     log.textColor = [UIColor whiteColor];
     log.font = [UIFont systemFontOfSize:10];
@@ -222,9 +277,9 @@ static NSString * const kDCMenuVersion = @"v2.4";
     [panel addSubview:log];
     self.logView = log;
 
-    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
-    CGFloat bw = (pw - 32 - 24) / 4;
-    for (NSInteger i = 0; i < 4; i++) {
+    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"应用辅助", @"onApplyAssist"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
+    CGFloat bw = (pw - 32 - 32) / 5;
+    for (NSInteger i = 0; i < 5; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16 + i * (bw + 8), ph - 44, bw, 34);
         b.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
@@ -241,7 +296,68 @@ static NSString * const kDCMenuVersion = @"v2.4";
 
 - (void)togglePanel {
     self.panel.hidden = !self.panel.hidden;
-    if (!self.panel.hidden) [self renderLog];
+    if (!self.panel.hidden) {
+        [self renderLog];
+        [self refreshAssistUI];
+        [self refreshFileState];
+    }
+}
+
+- (void)addStepper:(UIView *)panel x:(CGFloat)x y:(CGFloat)y name:(NSString *)name key:(NSString *)key idx:(NSInteger)idx {
+    UILabel *n = [[UILabel alloc] initWithFrame:CGRectMake(x, y, 34, 24)];
+    n.textColor = [UIColor whiteColor];
+    n.font = [UIFont systemFontOfSize:12];
+    n.text = name;
+    [panel addSubview:n];
+    UIButton *minus = [UIButton buttonWithType:UIButtonTypeSystem];
+    minus.frame = CGRectMake(x + 36, y, 30, 24);
+    minus.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+    minus.layer.cornerRadius = 6;
+    [minus setTitle:@"−" forState:UIControlStateNormal];
+    [minus setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    minus.tag = 100 + idx * 2;
+    [minus addTarget:self action:@selector(onStepper:) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:minus];
+    UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(x + 68, y, 46, 24)];
+    v.textColor = [UIColor systemYellowColor];
+    v.font = [UIFont boldSystemFontOfSize:13];
+    v.textAlignment = NSTextAlignmentCenter;
+    [panel addSubview:v];
+    self.stepValLabels[key] = v;
+    UIButton *plus = [UIButton buttonWithType:UIButtonTypeSystem];
+    plus.frame = CGRectMake(x + 116, y, 30, 24);
+    plus.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+    plus.layer.cornerRadius = 6;
+    [plus setTitle:@"+" forState:UIControlStateNormal];
+    [plus setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    plus.tag = 100 + idx * 2 + 1;
+    [plus addTarget:self action:@selector(onStepper:) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:plus];
+}
+
+- (void)onStepper:(UIButton *)b {
+    NSInteger d = b.tag - 100;
+    NSInteger idx = d / 2;
+    double dir = (d % 2) ? 1 : -1;
+    switch (idx) {
+        case 0: self.aEnemyHealth = round(MIN(2.0, MAX(0.1, self.aEnemyHealth + dir * 0.1)) * 10) / 10; break;
+        case 1: self.aEnemyDamage = round(MIN(2.0, MAX(0.0, self.aEnemyDamage + dir * 0.1)) * 10) / 10; break;
+        case 2: self.aTrapDamage = round(MIN(2.0, MAX(0.0, self.aTrapDamage + dir * 0.5)) * 10) / 10; break;
+        case 3: self.aContinue = MIN(99, MAX(0, self.aContinue + (NSInteger)dir)); break;
+    }
+    [self refreshAssistUI];
+}
+
+- (void)onToggle:(UIButton *)b {
+    switch (b.tag - 200) {
+        case 0: self.aParry = !self.aParry; break;
+        case 1: self.aTrap = !self.aTrap; break;
+        case 2: self.aMap = !self.aMap; break;
+        case 3: self.aHeal = !self.aHeal; break;
+        case 4: self.aDoors = !self.aDoors; break;
+        case 5: self.aSlow = !self.aSlow; break;
+    }
+    [self refreshAssistUI];
 }
 
 - (void)dragBall:(UIPanGestureRecognizer *)g {
@@ -280,24 +396,101 @@ static NSString * const kDCMenuVersion = @"v2.4";
 
 - (void)onRestoreAssist { [self restoreAssist]; }
 
+- (void)onApplyAssist {
+    [self saveAssistPrefs];
+    [self applyAssistBoost];
+    [self refreshFileState];
+}
+
 #pragma mark Assist mode boost (feature: options file patch)
 
 - (NSString *)dcOptionsPath {
     return [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/save/dc_options.json"];
 }
 
+- (void)loadAssistPrefs {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    if ([d objectForKey:@"dc_a_enemyHealth"] == nil) {
+        self.aEnemyHealth = 0.1; self.aEnemyDamage = 0.1;
+        self.aTrapDamage = 0; self.aContinue = 99;
+        self.aParry = YES; self.aTrap = YES; self.aMap = YES;
+        self.aHeal = YES; self.aDoors = YES; self.aSlow = YES;
+        return;
+    }
+    self.aEnemyHealth = [d doubleForKey:@"dc_a_enemyHealth"];
+    self.aEnemyDamage = [d doubleForKey:@"dc_a_enemyDamage"];
+    self.aTrapDamage = [d doubleForKey:@"dc_a_trapDamage"];
+    self.aContinue = [d integerForKey:@"dc_a_continue"];
+    self.aParry = [d boolForKey:@"dc_a_parry"];
+    self.aTrap = [d boolForKey:@"dc_a_trap"];
+    self.aMap = [d boolForKey:@"dc_a_map"];
+    self.aHeal = [d boolForKey:@"dc_a_heal"];
+    self.aDoors = [d boolForKey:@"dc_a_doors"];
+    self.aSlow = [d boolForKey:@"dc_a_slow"];
+}
+
+- (void)saveAssistPrefs {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setDouble:self.aEnemyHealth forKey:@"dc_a_enemyHealth"];
+    [d setDouble:self.aEnemyDamage forKey:@"dc_a_enemyDamage"];
+    [d setDouble:self.aTrapDamage forKey:@"dc_a_trapDamage"];
+    [d setInteger:self.aContinue forKey:@"dc_a_continue"];
+    [d setBool:self.aParry forKey:@"dc_a_parry"];
+    [d setBool:self.aTrap forKey:@"dc_a_trap"];
+    [d setBool:self.aMap forKey:@"dc_a_map"];
+    [d setBool:self.aHeal forKey:@"dc_a_heal"];
+    [d setBool:self.aDoors forKey:@"dc_a_doors"];
+    [d setBool:self.aSlow forKey:@"dc_a_slow"];
+    [d synchronize];
+}
+
 - (NSDictionary *)assistBlock {
-    return @{@"enabled": @YES, @"continueEnabled": @YES, @"gameContinue": @99,
-             @"easyParry": @YES, @"easyTrap": @YES, @"revealMap": @YES,
-             @"trapDamage": @0, @"enemyHealth": @0.1, @"enemyDamage": @0.1,
-             @"lockMimicSpawn": @NO, @"autoHeal": @YES, @"modeAuto": @NO,
-             @"autoBreakDoors": @YES, @"slowerMobs": @YES};
+    return @{@"enabled": @YES, @"continueEnabled": @YES, @"gameContinue": @(self.aContinue),
+             @"easyParry": @(self.aParry), @"easyTrap": @(self.aTrap), @"revealMap": @(self.aMap),
+             @"trapDamage": @(self.aTrapDamage), @"enemyHealth": @(self.aEnemyHealth),
+             @"enemyDamage": @(self.aEnemyDamage),
+             @"lockMimicSpawn": @NO, @"autoHeal": @(self.aHeal), @"modeAuto": @NO,
+             @"autoBreakDoors": @(self.aDoors), @"slowerMobs": @(self.aSlow)};
+}
+
+- (void)refreshAssistUI {
+    self.stepValLabels[@"enemyHealth"].text = [NSString stringWithFormat:@"%.1f", self.aEnemyHealth];
+    self.stepValLabels[@"enemyDamage"].text = [NSString stringWithFormat:@"%.1f", self.aEnemyDamage];
+    self.stepValLabels[@"trapDamage"].text = [NSString stringWithFormat:@"%.1f", self.aTrapDamage];
+    self.stepValLabels[@"gameContinue"].text = [NSString stringWithFormat:@"%ld", (long)self.aContinue];
+    NSDictionary *states = @{@"parry": @(self.aParry), @"trap": @(self.aTrap), @"map": @(self.aMap),
+                             @"heal": @(self.aHeal), @"doors": @(self.aDoors), @"slow": @(self.aSlow)};
+    NSDictionary *names = @{@"parry": @"弹反", @"trap": @"易陷阱", @"map": @"全图",
+                            @"heal": @"回血", @"doors": @"破门", @"slow": @"减速"};
+    for (NSString *k in self.toggleBtns) {
+        UIButton *b = self.toggleBtns[k];
+        BOOL on = [states[k] boolValue];
+        [b setTitle:[NSString stringWithFormat:@"%@ %@", names[k], on ? @"开" : @"关"] forState:UIControlStateNormal];
+        [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        b.backgroundColor = on ? [[UIColor systemGreenColor] colorWithAlphaComponent:0.45]
+                               : [[UIColor whiteColor] colorWithAlphaComponent:0.12];
+    }
+}
+
+- (void)refreshFileState {
+    if (!self.fileStateLabel) return;
+    NSData *data = [NSData dataWithContentsOfFile:[self dcOptionsPath]];
+    NSDictionary *root = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    NSDictionary *am = [root[@"assistMode"] isKindOfClass:[NSDictionary class]] ? root[@"assistMode"] : nil;
+    if (am) {
+        self.fileStateLabel.text = [NSString stringWithFormat:@"文件当前：敌血 %@ · 敌攻 %@ · 陷阱 %@ · 续命 %@ · %@",
+            am[@"enemyHealth"] ?: @"?", am[@"enemyDamage"] ?: @"?", am[@"trapDamage"] ?: @"?",
+            am[@"gameContinue"] ?: @"?", [am[@"enabled"] boolValue] ? @"辅助开" : @"辅助关"];
+    } else {
+        self.fileStateLabel.text = @"文件当前：读不到辅助块";
+    }
 }
 
 // Runs in the constructor, before the game reads its options file:
 // patch assistMode + savedAssistMode in place, keep every other key.
 // First run saves a .bak so the panel can restore the original.
 - (void)applyAssistBoost {
+    [self loadAssistPrefs];
     NSString *path = [self dcOptionsPath];
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:path]) {
@@ -319,7 +512,11 @@ static NSString * const kDCMenuVersion = @"v2.4";
     m[@"savedAssistMode"] = [self assistBlock];
     NSData *out = [NSJSONSerialization dataWithJSONObject:m options:0 error:nil];
     if (out && [out writeToFile:path atomically:YES]) {
-        [self logEvent:@"辅助模式已拉满（敌血/敌攻 0.1、陷阱 0、续命 99、自动回血、全图揭示）"];
+        NSDictionary *back = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:path] options:0 error:nil];
+        NSDictionary *am = [back[@"assistMode"] isKindOfClass:[NSDictionary class]] ? back[@"assistMode"] : nil;
+        [self logEvent:[NSString stringWithFormat:@"辅助已应用并回读确认：敌血 %@ · 敌攻 %@ · 陷阱 %@ · 续命 %@（重启游戏生效）",
+                        am[@"enemyHealth"] ?: @"?", am[@"enemyDamage"] ?: @"?",
+                        am[@"trapDamage"] ?: @"?", am[@"gameContinue"] ?: @"?"]];
     } else {
         [self logEvent:@"辅助拉满：写入失败"];
     }
