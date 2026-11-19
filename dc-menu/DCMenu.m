@@ -364,7 +364,7 @@ static void rep_setAuthHandler(id s, SEL c, id handler) {
         else [[DCMenu shared] logEvent:@"GC认证回调: 已认证通过"];
         origBlock(vc, err);
     };
-    if (orig_setAuthHandler) orig_setAuthHandler(s, c, Block_copy(wrapped));
+    if (orig_setAuthHandler) orig_setAuthHandler(s, c, [wrapped copy]);
 }
 
 #pragma mark - Login-fix hooks (behavior switched live by gFixMode)
