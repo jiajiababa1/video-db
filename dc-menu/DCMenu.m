@@ -11,8 +11,15 @@ static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiaji
 static NSString * const kDCBundledBadge = @"版本 A";
 // Hot-switchable login-fix mode, driven by remote config key "fix_mode":
 // 0 = off (pure observation), 1 = addiction-verify switches forced off,
-// 2 = real-name state forced verified, 3 = both.
+// 2 = real-name state forced verified, 3 = both,
+// 4 = both + synthesize the addiction callback at the GSSDK facade when it
+//     does not arrive within 5s of user-info (the observed stall).
 static NSInteger gFixMode = 0;
+static BOOL DCAddictionOn(void) { return gFixMode == 1 || gFixMode == 3 || gFixMode >= 4; }
+static BOOL DCRealnameOn(void) { return gFixMode == 2 || gFixMode == 3 || gFixMode >= 4; }
+static BOOL gAddictionFired = NO;
+static BOOL gSynthDone = NO;
+static __weak id gSDKImpl = nil;
 
 #pragma mark - Passthrough window
 
@@ -150,16 +157,16 @@ static NSInteger gFixMode = 0;
     [panel addSubview:status];
     self.statusLabel = status;
 
-    UILabel *diag = [[UILabel alloc] initWithFrame:CGRectMake(16, 208, pw - 32, 96)];
+    UILabel *diag = [[UILabel alloc] initWithFrame:CGRectMake(16, 204, pw - 32, 118)];
     diag.textColor = [UIColor systemCyanColor];
-    diag.font = [UIFont systemFontOfSize:11];
+    diag.font = [UIFont systemFontOfSize:10];
     diag.numberOfLines = 0;
     diag.text = @"登录诊断：等待事件…";
     [panel addSubview:diag];
     self.diagLabel = diag;
 
     UIButton *refresh = [UIButton buttonWithType:UIButtonTypeSystem];
-    refresh.frame = CGRectMake(16, 316, (pw - 48) / 2.0, 44);
+    refresh.frame = CGRectMake(16, 330, (pw - 48) / 2.0, 44);
     refresh.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
     refresh.layer.cornerRadius = 10;
     [refresh setTitle:@"检查更新" forState:UIControlStateNormal];
@@ -168,7 +175,7 @@ static NSInteger gFixMode = 0;
     [panel addSubview:refresh];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(32 + (pw - 48) / 2.0, 316, (pw - 48) / 2.0, 44);
+    close.frame = CGRectMake(32 + (pw - 48) / 2.0, 330, (pw - 48) / 2.0, 44);
     close.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
     close.layer.cornerRadius = 10;
     [close setTitle:@"关闭" forState:UIControlStateNormal];
@@ -182,12 +189,16 @@ static NSInteger gFixMode = 0;
 
 - (void)logEvent:(NSString *)name {
     if (!self.events) self.events = [NSMutableArray array];
+    static NSString *lastName = nil;
+    if (lastName && [lastName isEqualToString:name]) return; // no consecutive duplicates
+    lastName = [name copy];
     NSDateFormatter *fmt = [NSDateFormatter new];
     fmt.dateFormat = @"HH:mm:ss";
     NSString *line = [NSString stringWithFormat:@"%@ %@", [fmt stringFromDate:[NSDate date]], name];
     [self.events addObject:line];
-    while (self.events.count > 6) [self.events removeObjectAtIndex:0];
-    NSString *text = [@"登录诊断：\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    while (self.events.count > 40) [self.events removeObjectAtIndex:0];
+    NSArray *tail = self.events.count > 12 ? [self.events subarrayWithRange:NSMakeRange(self.events.count - 12, 12)] : self.events;
+    NSString *text = [@"登录诊断：\n" stringByAppendingString:[tail componentsJoinedByString:@"\n"]];
     if ([NSThread isMainThread]) {
         self.diagLabel.text = text;
     } else {
@@ -206,6 +217,7 @@ typedef void (*ImpV)(id, SEL);
 typedef void (*ImpV1)(id, SEL, id);
 typedef void (*ImpV2)(id, SEL, id, id);
 typedef void (*ImpV2B)(id, SEL, id, id, BOOL);
+typedef id (*ImpObj)(id, SEL);
 static ImpV   orig_didInitSDKSuccess;
 static ImpV2  orig_didLoginSuccessKey;
 static ImpV1  orig_didLoginSuccessResult;
@@ -213,14 +225,53 @@ static ImpV1  orig_didGetUserInfoOK;
 static ImpV1  orig_didGetUserInfoFail;
 static ImpV1  orig_didLoginFailure;
 static ImpV2B orig_onGameAddiction;
+static ImpV2B orig_addiction_GSSDK;
+static ImpV2B orig_addiction_Center;
+static ImpV2B orig_addiction_Service;
 
 static void rep_didInitSDKSuccess(id s, SEL c) { [[DCMenu shared] logEvent:@"SDK 初始化成功"]; if (orig_didInitSDKSuccess) orig_didInitSDKSuccess(s, c); }
-static void rep_didLoginSuccessKey(id s, SEL c, id a, id b) { [[DCMenu shared] logEvent:@"登录成功 (AccessKey)"]; if (orig_didLoginSuccessKey) orig_didLoginSuccessKey(s, c, a, b); }
-static void rep_didLoginSuccessResult(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"登录成功 (Result)"]; if (orig_didLoginSuccessResult) orig_didLoginSuccessResult(s, c, a); }
-static void rep_didGetUserInfoOK(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"用户信息已拿到"]; if (orig_didGetUserInfoOK) orig_didGetUserInfoOK(s, c, a); }
+static void rep_didLoginSuccessKey(id s, SEL c, id a, id b) { gSDKImpl = s; gAddictionFired = NO; gSynthDone = NO; [[DCMenu shared] logEvent:@"登录成功 (AccessKey)"]; if (orig_didLoginSuccessKey) orig_didLoginSuccessKey(s, c, a, b); }
+static void rep_didLoginSuccessResult(id s, SEL c, id a) { gSDKImpl = s; [[DCMenu shared] logEvent:@"登录成功 (Result)"]; if (orig_didLoginSuccessResult) orig_didLoginSuccessResult(s, c, a); }
+static void rep_didGetUserInfoOK(id s, SEL c, id a) {
+    gSDKImpl = s;
+    [[DCMenu shared] logEvent:@"用户信息已拿到"];
+    if (orig_didGetUserInfoOK) orig_didGetUserInfoOK(s, c, a);
+    if (gFixMode >= 4 && !gSynthDone) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (gAddictionFired || gSynthDone) return;
+            gSynthDone = YES;
+            Class sdkCls = NSClassFromString(@"GSSDK");
+            id sdk = nil;
+            if (sdkCls && [sdkCls respondsToSelector:@selector(sharedGSInterface)]) {
+                sdk = ((id (*)(id, SEL))objc_msgSend)(sdkCls, @selector(sharedGSInterface));
+            }
+            if (sdk && orig_addiction_GSSDK) {
+                [[DCMenu shared] logEvent:@"已补发防沉迷回调 (5秒未到)"];
+                orig_addiction_GSSDK(sdk, @selector(onGameAddiction:data:appRestrictFirst:), nil, nil, NO);
+            } else {
+                [[DCMenu shared] logEvent:@"补发失败: 拿不到 GSSDK 实例"];
+            }
+        });
+    }
+}
 static void rep_didGetUserInfoFail(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"用户信息获取失败"]; if (orig_didGetUserInfoFail) orig_didGetUserInfoFail(s, c, a); }
 static void rep_didLoginFailure(id s, SEL c, id a) { [[DCMenu shared] logEvent:@"登录失败回调"]; if (orig_didLoginFailure) orig_didLoginFailure(s, c, a); }
-static void rep_onGameAddiction(id s, SEL c, id a, id b, BOOL f) { [[DCMenu shared] logEvent:@"防沉迷回调到达"]; if (orig_onGameAddiction) orig_onGameAddiction(s, c, a, b, f); }
+static void rep_onGameAddiction(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@Manager"]; if (orig_onGameAddiction) orig_onGameAddiction(s, c, a, b, f); }
+static void rep_addiction_GSSDK(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@GSSDK"]; if (orig_addiction_GSSDK) orig_addiction_GSSDK(s, c, a, b, f); }
+static void rep_addiction_Center(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@Center"]; if (orig_addiction_Center) orig_addiction_Center(s, c, a, b, f); }
+static void rep_addiction_Service(id s, SEL c, id a, id b, BOOL f) { gAddictionFired = YES; [[DCMenu shared] logEvent:@"防沉迷回调@Service"]; if (orig_addiction_Service) orig_addiction_Service(s, c, a, b, f); }
+
+#pragma mark - Observation probes (addiction request / heartbeat)
+
+static ImpObj orig_api_params;
+static ImpObj orig_api_url;
+static id rep_api_params(id s, SEL c) { [[DCMenu shared] logEventOnce:@"api-params" text:@"防沉迷校验请求已组装"]; return orig_api_params ? orig_api_params(s, c) : nil; }
+static id rep_api_url(id s, SEL c) { [[DCMenu shared] logEventOnce:@"api-url" text:@"防沉迷校验地址被读取"]; return orig_api_url ? orig_api_url(s, c) : nil; }
+static ImpV orig_hb_start;
+static void rep_hb_start(id s, SEL c) { [[DCMenu shared] logEventOnce:@"hb-start" text:@"防沉迷心跳已启动"]; if (orig_hb_start) orig_hb_start(s, c); }
+typedef void (*ImpV1Q)(id, SEL, id, long long);
+static ImpV1Q orig_hb_local;
+static void rep_hb_local(id s, SEL c, id a, long long q) { [[DCMenu shared] logEventOnce:@"hb-local" text:@"防沉迷心跳已上报"]; if (orig_hb_local) orig_hb_local(s, c, a, q); }
 
 #pragma mark - Login-fix hooks (behavior switched live by gFixMode)
 
@@ -230,7 +281,7 @@ typedef BOOL (*ImpB)(id, SEL);
   static ImpB orig_##name; \
   static BOOL rep_##name(id s, SEL c) { \
     BOOL v = orig_##name ? orig_##name(s, c) : YES; \
-    if ((gFixMode == 1 || gFixMode == 3) && v) { \
+    if (DCAddictionOn() && v) { \
       [[DCMenu shared] logEventOnce:@"fix-addiction" text:@"已拦截 · 防沉迷校验开关"]; \
       return NO; \
     } \
@@ -240,8 +291,9 @@ typedef BOOL (*ImpB)(id, SEL);
 #define DC_REALNAME_HOOK(name) \
   static ImpB orig_##name; \
   static BOOL rep_##name(id s, SEL c) { \
+    [[DCMenu shared] logEventOnce:@"rn-read" text:@"实名状态被读取"]; \
     BOOL v = orig_##name ? orig_##name(s, c) : NO; \
-    if ((gFixMode == 2 || gFixMode == 3) && !v) { \
+    if (DCRealnameOn() && !v) { \
       [[DCMenu shared] logEventOnce:@"fix-realname" text:@"已拦截 · 实名状态"]; \
       return YES; \
     } \
@@ -258,6 +310,8 @@ DC_ADDICTION_HOOK(add_BGSChangeLineRequest)
 DC_ADDICTION_HOOK(add_HeartbeatApi)
 DC_REALNAME_HOOK(rn_GSSDK)
 DC_REALNAME_HOOK(rn_GSSDKLogin)
+DC_REALNAME_HOOK(rn_GSCUserModel)
+DC_REALNAME_HOOK(rn_GSCApiConfig)
 
 typedef void (*ImpPresent)(id, SEL, UIViewController *, BOOL, id);
 static ImpPresent orig_presentVC;
@@ -286,6 +340,21 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     n += DCProbe(impl, @selector(didGetUserInfoFailureWithError:), (IMP)rep_didGetUserInfoFail, (IMP *)&orig_didGetUserInfoFail);
     n += DCProbe(impl, @selector(didLoginFailureWithError:), (IMP)rep_didLoginFailure, (IMP *)&orig_didLoginFailure);
     n += DCProbe(addiction, @selector(onGameAddiction:data:appRestrictFirst:), (IMP)rep_onGameAddiction, (IMP *)&orig_onGameAddiction);
+    int a = 0;
+    a += DCProbe(NSClassFromString(@"GSSDK"), @selector(onGameAddiction:data:appRestrictFirst:), (IMP)rep_addiction_GSSDK, (IMP *)&orig_addiction_GSSDK);
+    a += DCProbe(NSClassFromString(@"GSSDKCenter"), @selector(onGameAddiction:data:appRestrictFirst:), (IMP)rep_addiction_Center, (IMP *)&orig_addiction_Center);
+    a += DCProbe(NSClassFromString(@"GSCGeneralService"), @selector(onGameAddiction:data:appRestrictFirst:), (IMP)rep_addiction_Service, (IMP *)&orig_addiction_Service);
+    if (a > 0) [self logEvent:[NSString stringWithFormat:@"防沉迷链探针 %d/3", a]];
+    Class apiCls = NSClassFromString(@"GSCGameAddictionApi");
+    DCProbe(apiCls, @selector(params), (IMP)rep_api_params, (IMP *)&orig_api_params);
+    DCProbe(apiCls, @selector(requestUrl), (IMP)rep_api_url, (IMP *)&orig_api_url);
+    Class hbCls = NSClassFromString(@"GSAniaddiction");
+    if (hbCls) {
+        Method hm = class_getClassMethod(hbCls, @selector(startHeartbeat));
+        if (hm) orig_hb_start = (ImpV)method_setImplementation(hm, (IMP)rep_hb_start);
+        Method lm = class_getClassMethod(hbCls, @selector(localHeartbeatWithInfo:productId:));
+        if (lm) orig_hb_local = (ImpV1Q)method_setImplementation(lm, (IMP)rep_hb_local);
+    }
     int p = DCProbe([UIViewController class], @selector(presentViewController:animated:completion:), (IMP)rep_presentVC, (IMP *)&orig_presentVC);
     if (p > 0) [self logEvent:@"界面探针已装"];
     int f = 0;
@@ -299,7 +368,9 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     f += DCProbe(NSClassFromString(@"HeartbeatApi"), @selector(openAddictionVerification), (IMP)rep_add_HeartbeatApi, (IMP *)&orig_add_HeartbeatApi);
     f += DCProbe(NSClassFromString(@"GSSDK"), @selector(isRealnameAuth), (IMP)rep_rn_GSSDK, (IMP *)&orig_rn_GSSDK);
     f += DCProbe(NSClassFromString(@"GSSDKLogin"), @selector(isRealnameAuth), (IMP)rep_rn_GSSDKLogin, (IMP *)&orig_rn_GSSDKLogin);
-    if (f > 0) [self logEvent:[NSString stringWithFormat:@"修复钩子已装 %d/10", f]];
+    f += DCProbe(NSClassFromString(@"GSCUserModel"), @selector(userRealnameState), (IMP)rep_rn_GSCUserModel, (IMP *)&orig_rn_GSCUserModel);
+    f += DCProbe(NSClassFromString(@"GSCApiConfig"), @selector(loginRealNameStatus), (IMP)rep_rn_GSCApiConfig, (IMP *)&orig_rn_GSCApiConfig);
+    if (f > 0) [self logEvent:[NSString stringWithFormat:@"修复钩子已装 %d/12", f]];
     if (n > 0) {
         self.probesInstalled = YES;
         [self logEvent:[NSString stringWithFormat:@"探针已装 %d/7", n]];
@@ -334,11 +405,10 @@ static int DCProbe(Class cls, SEL sel, IMP rep, IMP *store) {
     }
     NSDateFormatter *fmt = [NSDateFormatter new];
     fmt.dateFormat = @"HH:mm:ss";
-    self.statusLabel.text = [NSString stringWithFormat:@"已连上更新通道 · %@", [fmt stringFromDate:[NSDate date]]];
     NSString *appliedBadge = cfg[@"badge"];
-    if ([appliedBadge isKindOfClass:[NSString class]] && appliedBadge.length) {
-        [self logEvent:[NSString stringWithFormat:@"远程配置已应用: %@", appliedBadge]];
-    }
+    self.statusLabel.text = [appliedBadge isKindOfClass:[NSString class]] && appliedBadge.length
+        ? [NSString stringWithFormat:@"已连上更新通道 · %@ · %@", [fmt stringFromDate:[NSDate date]], appliedBadge]
+        : [NSString stringWithFormat:@"已连上更新通道 · %@", [fmt stringFromDate:[NSDate date]]];
 }
 
 - (void)fetchConfig {
