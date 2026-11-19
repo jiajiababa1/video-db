@@ -16,7 +16,7 @@
 #import <mach-o/dyld.h>
 #import <mach-o/getsect.h>
 #import <mach/mach.h>
-#import <mach/mach_vm.h>
+#import <mach/vm_map.h>
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
@@ -178,11 +178,11 @@ static BOOL dc_seen_add(uintptr_t v) {
 // be unmapped in between. mach_vm_read_overwrite goes through the kernel
 // and simply fails instead of faulting the process.
 static BOOL dc_vread(uintptr_t addr, void *out, size_t n) {
-    mach_vm_size_t got = 0;
-    kern_return_t kr = mach_vm_read_overwrite(mach_task_self(),
-                                              (mach_vm_address_t)addr,
-                                              (mach_vm_size_t)n,
-                                              (mach_vm_address_t)out, &got);
+    vm_size_t got = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(),
+                                         (vm_address_t)addr,
+                                         (vm_size_t)n,
+                                         (vm_address_t)out, &got);
     return kr == KERN_SUCCESS && got == n;
 }
 
