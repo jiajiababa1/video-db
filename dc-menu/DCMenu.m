@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.6";
+static NSString * const kDCMenuVersion = @"v2.8.7";
 
 #pragma mark - Passthrough window
 
@@ -330,6 +330,25 @@ static NSString *dc_u16str(uintptr_t addr) {
                                   encoding:NSUTF16LittleEndianStringEncoding];
 }
 
+// Same printable-ASCII UTF-16 rule as dc_u16str, but the bytes are copied
+// out with vm_read first, so it is safe on any address (used for types
+// that live outside the main binary's text range).
+static NSString *dc_u16str_vread(uintptr_t addr) {
+    if (!addr) return nil;
+    uint16_t buf[101];
+    if (!dc_vread(addr, buf, 200)) return nil;
+    NSInteger n = 0;
+    for (NSInteger i = 0; i < 100; i++) {
+        uint16_t c = buf[i];
+        if (c == 0) break;
+        if (c < 0x21 || c > 0x7E) return nil;
+        n++;
+    }
+    if (n == 0) return nil;
+    return [[NSString alloc] initWithBytes:buf length:(NSUInteger)(n * 2)
+                                  encoding:NSUTF16LittleEndianStringEncoding];
+}
+
 @interface DCLayout : NSObject
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *offsets;
 @property (nonatomic, strong) NSMutableArray<NSString *> *order;
@@ -376,17 +395,51 @@ static DCClassInfo *dc_class_for_type(uintptr_t type) {
     if (!type) return nil;
     DCClassInfo *ci = dc_g_byType[@(type)];
     if (ci) return ci;
-    if (type < dc_g_typesLo || type >= dc_g_typesHi) return nil;
-    if (*(const int *)type != 11) return nil;
-    uintptr_t obj = *(const uintptr_t *)(type + 8);
-    if (!obj || !dc_in_spans(obj, 80)) return nil;
-    NSString *nm = dc_u16str(*(const uintptr_t *)(obj + 16));
-    if (!nm) return nil;
-    ci = dc_g_classes[nm];
-    if (ci) {
-        if (!ci.typeAddr) ci.typeAddr = type;
-        dc_g_byType[@(type)] = ci;
+    if (type >= dc_g_typesLo && type < dc_g_typesHi) {
+        if (*(const int *)type != 11) return nil;
+        uintptr_t obj = *(const uintptr_t *)(type + 8);
+        if (!obj || !dc_in_spans(obj, 80)) return nil;
+        NSString *nm = dc_u16str(*(const uintptr_t *)(obj + 16));
+        if (!nm) return nil;
+        ci = dc_g_classes[nm];
+        if (ci) {
+            if (!ci.typeAddr) ci.typeAddr = type;
+            dc_g_byType[@(type)] = ci;
+        }
+        return ci;
     }
+    // Fallback: types outside the static window (runtime-created or in
+    // another region — e.g. the second weapon slot's class). Validate
+    // with the registry scan's structural fingerprint, then register.
+    int kind = 0;
+    if (!dc_vread(type, &kind, 4) || kind != 11) return nil;
+    uintptr_t obj = 0;
+    if (!dc_vread(type + 8, &obj, 8) || !obj || !dc_in_spans(obj, 80)) return nil;
+    int32_t nf = 0, np = 0;
+    dc_vread(obj, &nf, 4);
+    dc_vread(obj + 4, &np, 4);
+    if (nf < 1 || nf > 1500 || np < 0 || np > 2000) return nil;
+    uintptr_t namePtr = 0, sup = 0, fields = 0, proto = 0;
+    dc_vread(obj + 16, &namePtr, 8);
+    dc_vread(obj + 24, &sup, 8);
+    dc_vread(obj + 32, &fields, 8);
+    dc_vread(obj + 40, &proto, 8);
+    if (!fields || proto != fields + (uintptr_t)nf * 24) return nil;
+    if (!dc_in_spans(fields, (size_t)nf * 24)) return nil;
+    NSString *nm = dc_u16str_vread(namePtr);
+    if (!nm || [nm containsString:@"/"] || [nm hasSuffix:@".hx"]) return nil;
+    uintptr_t fn = 0;
+    dc_vread(fields, &fn, 8);
+    if (!dc_u16str_vread(fn)) return nil;
+    ci = dc_g_classes[nm];
+    if (!ci) {
+        ci = [[DCClassInfo alloc] init];
+        ci.name = nm; ci.objBase = obj; ci.fields = fields;
+        ci.nfields = nf; ci.superType = sup;
+        dc_g_classes[nm] = ci;
+    }
+    if (!ci.typeAddr) ci.typeAddr = type;
+    dc_g_byType[@(type)] = ci;
     return ci;
 }
 
@@ -492,7 +545,10 @@ static BOOL dc_is_exit_class(DCClassInfo *ci) {
 // Dump one object's own fields: ints, doubles, strings, enum indexes,
 // pointer targets (class name / array size). Used for weapon items and
 // inventory items so their editable numbers become visible.
+static int dc_g_dumpDepth = 0;
+
 static void dc_dump_fields(DCMenu *menu, uintptr_t obj, DCClassInfo *ci, NSString *prefix, int maxFields) {
+    dc_g_dumpDepth++;
     DCLayout *il = dc_layout_rec(ci);
     DCClassInfo *cur = ci;
     NSInteger budget = maxFields;
@@ -541,12 +597,36 @@ static void dc_dump_fields(DCMenu *menu, uintptr_t obj, DCClassInfo *ci, NSStrin
             uintptr_t p = 0;
             int32_t idx = -1;
             if (dc_vread(obj + o, &p, 8) && p) dc_vread(p + 8, &idx, 4);
-            [menu logEvent:[NSString stringWithFormat:@"%@%@ = 枚举#%d", prefix, fn2, idx]];
+            NSString *cname = nil;
+            NSInteger nparams = 0;
+            uintptr_t tenum = 0, consArr = 0;
+            if (dc_vread(ft2 + 8, &tenum, 8) && tenum &&
+                dc_vread(tenum + 16, &consArr, 8) && consArr && idx >= 0) {
+                uintptr_t cons = consArr + (uintptr_t)idx * 40;
+                uintptr_t nmPtr = 0;
+                int32_t np32 = 0;
+                if (dc_vread(cons, &nmPtr, 8) && nmPtr) cname = dc_u16str(nmPtr);
+                if (dc_vread(cons + 8, &np32, 4)) nparams = np32;
+            }
+            [menu logEvent:[NSString stringWithFormat:@"%@%@ = 枚举#%d %@",
+                            prefix, fn2, idx, cname ?: @"?"]];
+            if (p && nparams >= 1 && dc_g_dumpDepth < 2) {
+                uintptr_t arg0 = 0;
+                if (dc_vread(p + 16, &arg0, 8) && arg0) {
+                    uintptr_t ah2 = 0;
+                    DCClassInfo *aCls2 = dc_vread(arg0, &ah2, 8) ? dc_class_for_type(ah2) : nil;
+                    [menu logEvent:[NSString stringWithFormat:@"%@%@.arg -> %@ @0x%lx",
+                                    prefix, fn2, aCls2.name ?: @"?", (unsigned long)arg0]];
+                    if (aCls2) dc_dump_fields(menu, arg0, aCls2,
+                        [NSString stringWithFormat:@"%@%@.arg.", prefix, fn2], 20);
+                }
+            }
         }
     }
     cur = cur.superType ? dc_class_for_type(cur.superType) : nil;
     depth++;
     }
+    dc_g_dumpDepth--;
 }
 
 // Bounded structural walk: log an object's pointer/array fields and, for
@@ -1841,6 +1921,7 @@ static BOOL dc_live_init(DCMenu *menu) {
                             if (w) dc_dump_qwords(self, w, @"武器元素");
                             continue;
                         }
+                        dc_dump_fields(self, w, wCls, @"      武器.", 40);
                         DCLayout *wpl = dc_layout_rec(wCls);
                         NSNumber *itOff = wpl.offsets[@"item"];
                         uintptr_t item = 0, ih = 0;
@@ -1850,6 +1931,32 @@ static BOOL dc_live_init(DCMenu *menu) {
                                         iCls.name ?: @"?", (unsigned long)item]];
                         if (!iCls) continue;
                         dc_dump_fields(self, item, iCls, @"      item.", 48);
+                        DCLayout *il2 = dc_layout_rec(iCls);
+                        NSNumber *afOff = il2.offsets[@"affixes"];
+                        uintptr_t afArr = 0, aet = 0;
+                        int afSz = 0;
+                        if (afOff && dc_vread(item + [afOff unsignedLongValue], &afArr, 8) && afArr) {
+                            uintptr_t rawAf = dc_unwrap_array(afArr);
+                            if (rawAf && dc_array_info(rawAf, &aet, &afSz)) {
+                                [self logEvent:[NSString stringWithFormat:@"      词缀共 %d 条", afSz]];
+                                for (int ai = 0; ai < MIN(afSz, 14); ai++) {
+                                    uintptr_t ae = dc_array_elem(rawAf, ai);
+                                    uintptr_t ah = 0;
+                                    DCClassInfo *aCls = (ae && dc_vread(ae, &ah, 8)) ? dc_class_for_type(ah) : nil;
+                                    if (aCls) {
+                                        [self logEvent:[NSString stringWithFormat:@"      词缀[%d] %@ @0x%lx",
+                                                        ai, aCls.name, (unsigned long)ae]];
+                                        dc_dump_fields(self, ae, aCls, @"        .", 20);
+                                    } else if (ae) {
+                                        int32_t eidx = -1;
+                                        if (dc_vread(ae + 8, &eidx, 4))
+                                            [self logEvent:[NSString stringWithFormat:@"      词缀[%d] 枚举#%d @0x%lx",
+                                                            ai, eidx, (unsigned long)ae]];
+                                        dc_dump_qwords(self, ae, @"        词缀原始");
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
