@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.7";
+static NSString * const kDCMenuVersion = @"v2.8.8";
 
 #pragma mark - Passthrough window
 
@@ -617,8 +617,14 @@ static void dc_dump_fields(DCMenu *menu, uintptr_t obj, DCClassInfo *ci, NSStrin
                     DCClassInfo *aCls2 = dc_vread(arg0, &ah2, 8) ? dc_class_for_type(ah2) : nil;
                     [menu logEvent:[NSString stringWithFormat:@"%@%@.arg -> %@ @0x%lx",
                                     prefix, fn2, aCls2.name ?: @"?", (unsigned long)arg0]];
-                    if (aCls2) dc_dump_fields(menu, arg0, aCls2,
-                        [NSString stringWithFormat:@"%@%@.arg.", prefix, fn2], 20);
+                    if (aCls2 && [aCls2.name isEqualToString:@"String"]) {
+                        NSString *sv = dc_hlstring(arg0);
+                        [menu logEvent:[NSString stringWithFormat:@"%@%@.arg = \"%@\"",
+                                        prefix, fn2, sv ?: @"?"]];
+                    } else if (aCls2) {
+                        dc_dump_fields(menu, arg0, aCls2,
+                            [NSString stringWithFormat:@"%@%@.arg.", prefix, fn2], 20);
+                    }
                 }
             }
         }
@@ -627,6 +633,34 @@ static void dc_dump_fields(DCMenu *menu, uintptr_t obj, DCClassInfo *ci, NSStrin
     depth++;
     }
     dc_g_dumpDepth--;
+}
+
+// Expand an InventItem's affixes array: each element is one buff.
+static void dc_dump_affixes(DCMenu *menu, uintptr_t item, DCClassInfo *iCls, NSString *prefix) {
+    DCLayout *il = dc_layout_rec(iCls);
+    NSNumber *afOff = il.offsets[@"affixes"];
+    uintptr_t afArr = 0, aet = 0;
+    int afSz = 0;
+    if (!afOff || !dc_vread(item + [afOff unsignedLongValue], &afArr, 8) || !afArr) return;
+    uintptr_t rawAf = dc_unwrap_array(afArr);
+    if (!rawAf || !dc_array_info(rawAf, &aet, &afSz)) return;
+    [menu logEvent:[NSString stringWithFormat:@"%@词缀共 %d 条", prefix, afSz]];
+    for (int ai = 0; ai < MIN(afSz, 14); ai++) {
+        uintptr_t ae = dc_array_elem(rawAf, ai);
+        uintptr_t ah = 0;
+        DCClassInfo *aCls = (ae && dc_vread(ae, &ah, 8)) ? dc_class_for_type(ah) : nil;
+        if (aCls) {
+            [menu logEvent:[NSString stringWithFormat:@"%@词缀[%d] %@ @0x%lx",
+                            prefix, ai, aCls.name, (unsigned long)ae]];
+            dc_dump_fields(menu, ae, aCls, [prefix stringByAppendingString:@"  ."], 20);
+        } else if (ae) {
+            int32_t eidx = -1;
+            if (dc_vread(ae + 8, &eidx, 4))
+                [menu logEvent:[NSString stringWithFormat:@"%@词缀[%d] 枚举#%d @0x%lx",
+                                prefix, ai, eidx, (unsigned long)ae]];
+            dc_dump_qwords(menu, ae, [prefix stringByAppendingString:@"  词缀原始"]);
+        }
+    }
 }
 
 // Bounded structural walk: log an object's pointer/array fields and, for
@@ -1931,32 +1965,7 @@ static BOOL dc_live_init(DCMenu *menu) {
                                         iCls.name ?: @"?", (unsigned long)item]];
                         if (!iCls) continue;
                         dc_dump_fields(self, item, iCls, @"      item.", 48);
-                        DCLayout *il2 = dc_layout_rec(iCls);
-                        NSNumber *afOff = il2.offsets[@"affixes"];
-                        uintptr_t afArr = 0, aet = 0;
-                        int afSz = 0;
-                        if (afOff && dc_vread(item + [afOff unsignedLongValue], &afArr, 8) && afArr) {
-                            uintptr_t rawAf = dc_unwrap_array(afArr);
-                            if (rawAf && dc_array_info(rawAf, &aet, &afSz)) {
-                                [self logEvent:[NSString stringWithFormat:@"      词缀共 %d 条", afSz]];
-                                for (int ai = 0; ai < MIN(afSz, 14); ai++) {
-                                    uintptr_t ae = dc_array_elem(rawAf, ai);
-                                    uintptr_t ah = 0;
-                                    DCClassInfo *aCls = (ae && dc_vread(ae, &ah, 8)) ? dc_class_for_type(ah) : nil;
-                                    if (aCls) {
-                                        [self logEvent:[NSString stringWithFormat:@"      词缀[%d] %@ @0x%lx",
-                                                        ai, aCls.name, (unsigned long)ae]];
-                                        dc_dump_fields(self, ae, aCls, @"        .", 20);
-                                    } else if (ae) {
-                                        int32_t eidx = -1;
-                                        if (dc_vread(ae + 8, &eidx, 4))
-                                            [self logEvent:[NSString stringWithFormat:@"      词缀[%d] 枚举#%d @0x%lx",
-                                                            ai, eidx, (unsigned long)ae]];
-                                        dc_dump_qwords(self, ae, @"        词缀原始");
-                                    }
-                                }
-                            }
-                        }
+                        dc_dump_affixes(self, item, iCls, @"      ");
                     }
                 }
             }
@@ -1988,6 +1997,7 @@ static BOOL dc_live_init(DCMenu *menu) {
                             [self logEvent:[NSString stringWithFormat:@"背包物品[%d] @0x%lx 字段：",
                                             i, (unsigned long)e]];
                             dc_dump_fields(self, e, eCls, @"  ", 56);
+                            dc_dump_affixes(self, e, eCls, @"  ");
                         }
                     }
                 }
