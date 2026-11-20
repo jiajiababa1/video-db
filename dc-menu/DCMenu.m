@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.8";
+static NSString * const kDCMenuVersion = @"v2.8.9";
 
 #pragma mark - Passthrough window
 
@@ -61,6 +61,9 @@ static NSString * const kDCMenuVersion = @"v2.8.8";
 @property (nonatomic, strong) UILabel *fileStateLabel;
 @property (nonatomic, strong) UIView *assistPage;
 @property (nonatomic, strong) UIView *livePage;
+@property (nonatomic, strong) UIView *weaponPage;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, UITextField *> *weapFields;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, UILabel *> *weapNameLabels;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UITextField *> *liveFields;
 @property (nonatomic, strong) UIButton *lockBtn;
 @property (nonatomic, strong) NSTimer *lockTimer;
@@ -90,6 +93,7 @@ static NSString * const kDCMenuVersion = @"v2.8.8";
 - (void)notePakPath:(NSString *)path;
 - (void)onSwitchPage:(UIButton *)b;
 - (void)onApplyLive;
+- (void)onApplyWeapons;
 - (void)addLiveField:(UIView *)page x:(CGFloat)x y:(CGFloat)y label:(NSString *)label labelW:(CGFloat)lw fieldW:(CGFloat)fw key:(NSString *)key;
 - (void)prefillLive:(NSDictionary<NSString *, NSNumber *> *)vals;
 - (void)liveReadbackLog;
@@ -391,20 +395,25 @@ static NSInteger dc_g_lockFails = 0;
 static NSMutableDictionary<NSString *, DCClassInfo *> *dc_g_classes = nil;
 static NSMutableDictionary<NSNumber *, DCClassInfo *> *dc_g_byType = nil;
 
+// Last dc_class_for_type failure reason (for diagnostics).
+static NSString *dc_g_typeFail = nil;
+
 static DCClassInfo *dc_class_for_type(uintptr_t type) {
     if (!type) return nil;
     DCClassInfo *ci = dc_g_byType[@(type)];
     if (ci) return ci;
     if (type >= dc_g_typesLo && type < dc_g_typesHi) {
-        if (*(const int *)type != 11) return nil;
+        if (*(const int *)type != 11) { dc_g_typeFail = @"窗口内但kind不是对象类"; return nil; }
         uintptr_t obj = *(const uintptr_t *)(type + 8);
-        if (!obj || !dc_in_spans(obj, 80)) return nil;
+        if (!obj || !dc_in_spans(obj, 80)) { dc_g_typeFail = @"窗口内但obj无效"; return nil; }
         NSString *nm = dc_u16str(*(const uintptr_t *)(obj + 16));
-        if (!nm) return nil;
+        if (!nm) { dc_g_typeFail = @"窗口内但类名读不到"; return nil; }
         ci = dc_g_classes[nm];
         if (ci) {
             if (!ci.typeAddr) ci.typeAddr = type;
             dc_g_byType[@(type)] = ci;
+        } else {
+            dc_g_typeFail = @"窗口内但类未登记";
         }
         return ci;
     }
@@ -412,25 +421,25 @@ static DCClassInfo *dc_class_for_type(uintptr_t type) {
     // another region — e.g. the second weapon slot's class). Validate
     // with the registry scan's structural fingerprint, then register.
     int kind = 0;
-    if (!dc_vread(type, &kind, 4) || kind != 11) return nil;
+    if (!dc_vread(type, &kind, 4) || kind != 11) { dc_g_typeFail = @"kind不是对象类"; return nil; }
     uintptr_t obj = 0;
-    if (!dc_vread(type + 8, &obj, 8) || !obj || !dc_in_spans(obj, 80)) return nil;
+    if (!dc_vread(type + 8, &obj, 8) || !obj || !dc_in_spans(obj, 80)) { dc_g_typeFail = @"obj不在数据段"; return nil; }
     int32_t nf = 0, np = 0;
     dc_vread(obj, &nf, 4);
     dc_vread(obj + 4, &np, 4);
-    if (nf < 1 || nf > 1500 || np < 0 || np > 2000) return nil;
+    if (nf < 1 || nf > 1500 || np < 0 || np > 2000) { dc_g_typeFail = @"字段数异常"; return nil; }
     uintptr_t namePtr = 0, sup = 0, fields = 0, proto = 0;
     dc_vread(obj + 16, &namePtr, 8);
     dc_vread(obj + 24, &sup, 8);
     dc_vread(obj + 32, &fields, 8);
     dc_vread(obj + 40, &proto, 8);
-    if (!fields || proto != fields + (uintptr_t)nf * 24) return nil;
-    if (!dc_in_spans(fields, (size_t)nf * 24)) return nil;
+    if (!fields || proto != fields + (uintptr_t)nf * 24) { dc_g_typeFail = @"proto指纹不符"; return nil; }
+    if (!dc_in_spans(fields, (size_t)nf * 24)) { dc_g_typeFail = @"字段表不在数据段"; return nil; }
     NSString *nm = dc_u16str_vread(namePtr);
-    if (!nm || [nm containsString:@"/"] || [nm hasSuffix:@".hx"]) return nil;
+    if (!nm || [nm containsString:@"/"] || [nm hasSuffix:@".hx"]) { dc_g_typeFail = @"类名读不到"; return nil; }
     uintptr_t fn = 0;
     dc_vread(fields, &fn, 8);
-    if (!dc_u16str_vread(fn)) return nil;
+    if (!dc_u16str_vread(fn)) { dc_g_typeFail = @"首字段名读不到"; return nil; }
     ci = dc_g_classes[nm];
     if (!ci) {
         ci = [[DCClassInfo alloc] init];
@@ -529,6 +538,10 @@ static DCLayout *dc_layout_rec(DCClassInfo *ci) {
 static BOOL dc_g_hasExit = NO;
 static NSMutableArray<NSDictionary *> *dc_g_exits = nil;
 static NSInteger dc_g_exitIdx = 0;
+
+// Weapon page cache: equipped main weapons' InventItem objects.
+static uintptr_t dc_g_weapItem[2] = {0, 0};
+static DCLayout *dc_g_weapItemLayout = nil;
 
 static BOOL dc_is_exit_class(DCClassInfo *ci) {
     if ([ci.name localizedCaseInsensitiveContainsString:@"exit"]) return YES;
@@ -649,7 +662,10 @@ static void dc_dump_affixes(DCMenu *menu, uintptr_t item, DCClassInfo *iCls, NSS
         uintptr_t ae = dc_array_elem(rawAf, ai);
         uintptr_t ah = 0;
         DCClassInfo *aCls = (ae && dc_vread(ae, &ah, 8)) ? dc_class_for_type(ah) : nil;
-        if (aCls) {
+        if (aCls && [aCls.name isEqualToString:@"String"]) {
+            [menu logEvent:[NSString stringWithFormat:@"%@词缀[%d] \"%@\"",
+                            prefix, ai, dc_hlstring(ae) ?: @"?"]];
+        } else if (aCls) {
             [menu logEvent:[NSString stringWithFormat:@"%@词缀[%d] %@ @0x%lx",
                             prefix, ai, aCls.name, (unsigned long)ae]];
             dc_dump_fields(menu, ae, aCls, [prefix stringByAppendingString:@"  ."], 20);
@@ -859,6 +875,8 @@ static BOOL dc_live_init(DCMenu *menu) {
         _stepValLabels = [NSMutableDictionary dictionary];
         _toggleBtns = [NSMutableDictionary dictionary];
         _liveFields = [NSMutableDictionary dictionary];
+        _weapFields = [NSMutableDictionary dictionary];
+        _weapNameLabels = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -1024,23 +1042,36 @@ static BOOL dc_live_init(DCMenu *menu) {
     UIView *livePage = [[UIView alloc] initWithFrame:CGRectMake(0, 106, pw, 120)];
     [panel addSubview:livePage];
     self.livePage = livePage;
+    UIView *weaponPage = [[UIView alloc] initWithFrame:CGRectMake(0, 106, pw, 120)];
+    weaponPage.hidden = YES;
+    [panel addSubview:weaponPage];
+    self.weaponPage = weaponPage;
 
     // --- Custom assist section (v2.5): steppers + toggles, values persist
     // in NSUserDefaults and are written into dc_options.json on apply. ---
-    UILabel *aTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 2, pw - 32 - 118, 14)];
+    UILabel *aTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 2, pw - 32 - 180, 14)];
     aTitle.textColor = [UIColor whiteColor];
     aTitle.font = [UIFont boldSystemFontOfSize:11];
     aTitle.text = @"辅助自定义（调好点「应用辅助」，重启游戏生效）";
     [assistPage addSubview:aTitle];
 
     UIButton *toLive = [UIButton buttonWithType:UIButtonTypeSystem];
-    toLive.frame = CGRectMake(pw - 16 - 118, 0, 118, 18);
-    [toLive setTitle:@"实时修改 »" forState:UIControlStateNormal];
+    toLive.frame = CGRectMake(pw - 16 - 84, 0, 84, 18);
+    [toLive setTitle:@"实时 »" forState:UIControlStateNormal];
     [toLive setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
     toLive.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     toLive.tag = 301;
     [toLive addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
     [assistPage addSubview:toLive];
+
+    UIButton *toWeaponA = [UIButton buttonWithType:UIButtonTypeSystem];
+    toWeaponA.frame = CGRectMake(pw - 16 - 84 - 88, 0, 84, 18);
+    [toWeaponA setTitle:@"武器 »" forState:UIControlStateNormal];
+    [toWeaponA setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
+    toWeaponA.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    toWeaponA.tag = 302;
+    [toWeaponA addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
+    [assistPage addSubview:toWeaponA];
 
     UILabel *fstate = [[UILabel alloc] initWithFrame:CGRectMake(16, 17, pw - 32, 14)];
     fstate.textColor = [UIColor systemCyanColor];
@@ -1071,20 +1102,29 @@ static BOOL dc_live_init(DCMenu *menu) {
 
     // --- Live edit page (v2.7): type values, tap apply, written straight
     // into the live Hero/GameData objects. ---
-    UILabel *lTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 2, pw - 32 - 118, 14)];
+    UILabel *lTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 2, pw - 32 - 180, 14)];
     lTitle.textColor = [UIColor whiteColor];
     lTitle.font = [UIFont boldSystemFontOfSize:11];
     lTitle.text = @"实时修改（先点「实时侦查」定位，填数点应用，当场生效，可负数）";
     [livePage addSubview:lTitle];
 
     UIButton *toAssist = [UIButton buttonWithType:UIButtonTypeSystem];
-    toAssist.frame = CGRectMake(pw - 16 - 118, 0, 118, 18);
-    [toAssist setTitle:@"« 辅助设置" forState:UIControlStateNormal];
+    toAssist.frame = CGRectMake(pw - 16 - 84, 0, 84, 18);
+    [toAssist setTitle:@"« 辅助" forState:UIControlStateNormal];
     [toAssist setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
     toAssist.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     toAssist.tag = 300;
     [toAssist addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
     [livePage addSubview:toAssist];
+
+    UIButton *toWeaponL = [UIButton buttonWithType:UIButtonTypeSystem];
+    toWeaponL.frame = CGRectMake(pw - 16 - 84 - 88, 0, 84, 18);
+    [toWeaponL setTitle:@"武器 »" forState:UIControlStateNormal];
+    [toWeaponL setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
+    toWeaponL.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    toWeaponL.tag = 302;
+    [toWeaponL addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
+    [livePage addSubview:toWeaponL];
 
     [self addLiveField:livePage x:16 y:20 label:@"生命" labelW:32 fieldW:88 key:@"life"];
     [self addLiveField:livePage x:212 y:20 label:@"上限" labelW:32 fieldW:88 key:@"maxLife"];
@@ -1116,6 +1156,74 @@ static BOOL dc_live_init(DCMenu *menu) {
     [lockBtn addTarget:self action:@selector(onToggleLock) forControlEvents:UIControlEventTouchUpInside];
     [livePage addSubview:lockBtn];
     self.lockBtn = lockBtn;
+
+    // --- Weapon page (v2.8.9): equipped weapons' names + item levels. ---
+    UILabel *wTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 2, pw - 32 - 180, 14)];
+    wTitle.textColor = [UIColor whiteColor];
+    wTitle.font = [UIFont boldSystemFontOfSize:11];
+    wTitle.text = @"武器（侦查后自动显示，改等级点应用，当场生效）";
+    [weaponPage addSubview:wTitle];
+
+    UIButton *toLiveW = [UIButton buttonWithType:UIButtonTypeSystem];
+    toLiveW.frame = CGRectMake(pw - 16 - 84, 0, 84, 18);
+    [toLiveW setTitle:@"实时 »" forState:UIControlStateNormal];
+    [toLiveW setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
+    toLiveW.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    toLiveW.tag = 301;
+    [toLiveW addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
+    [weaponPage addSubview:toLiveW];
+
+    UIButton *toAssistW = [UIButton buttonWithType:UIButtonTypeSystem];
+    toAssistW.frame = CGRectMake(pw - 16 - 84 - 88, 0, 84, 18);
+    [toAssistW setTitle:@"« 辅助" forState:UIControlStateNormal];
+    [toAssistW setTitleColor:[UIColor systemGreenColor] forState:UIControlStateNormal];
+    toAssistW.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    toAssistW.tag = 300;
+    [toAssistW addTarget:self action:@selector(onSwitchPage:) forControlEvents:UIControlEventTouchUpInside];
+    [weaponPage addSubview:toAssistW];
+
+    for (int i = 0; i < 2; i++) {
+        CGFloat y = 20 + i * 32;
+        NSString *key = [NSString stringWithFormat:@"w%d", i];
+        UILabel *nm = [[UILabel alloc] initWithFrame:CGRectMake(16, y + 2, 300, 24)];
+        nm.textColor = [UIColor whiteColor];
+        nm.font = [UIFont systemFontOfSize:12];
+        nm.text = [NSString stringWithFormat:@"武器%d：—（先点实时侦查）", i + 1];
+        [weaponPage addSubview:nm];
+        self.weapNameLabels[key] = nm;
+        UILabel *lv = [[UILabel alloc] initWithFrame:CGRectMake(330, y + 2, 32, 24)];
+        lv.textColor = [UIColor whiteColor];
+        lv.font = [UIFont systemFontOfSize:12];
+        lv.text = @"等级";
+        [weaponPage addSubview:lv];
+        UITextField *f = [[UITextField alloc] initWithFrame:CGRectMake(364, y, 80, 28)];
+        f.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.15];
+        f.layer.cornerRadius = 6;
+        f.textColor = [UIColor systemYellowColor];
+        f.font = [UIFont boldSystemFontOfSize:13];
+        f.textAlignment = NSTextAlignmentCenter;
+        f.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        f.returnKeyType = UIReturnKeyDone;
+        [f addTarget:self action:@selector(liveFieldDone:) forControlEvents:UIControlEventEditingDidEndOnExit];
+        [weaponPage addSubview:f];
+        self.weapFields[key] = f;
+    }
+
+    UIButton *applyWeap = [UIButton buttonWithType:UIButtonTypeSystem];
+    applyWeap.frame = CGRectMake(16, 88, 140, 28);
+    applyWeap.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.35];
+    applyWeap.layer.cornerRadius = 8;
+    [applyWeap setTitle:@"应用武器" forState:UIControlStateNormal];
+    [applyWeap setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    applyWeap.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [applyWeap addTarget:self action:@selector(onApplyWeapons) forControlEvents:UIControlEventTouchUpInside];
+    [weaponPage addSubview:applyWeap];
+
+    UILabel *wHint = [[UILabel alloc] initWithFrame:CGRectMake(170, 92, pw - 170 - 16, 20)];
+    wHint.textColor = [UIColor lightGrayColor];
+    wHint.font = [UIFont systemFontOfSize:10];
+    wHint.text = @"换武器后重新侦查刷新；等级越高伤害越高";
+    [weaponPage addSubview:wHint];
 
     UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 226, pw - 24, ph - 226 - 52)];
     log.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.08];
@@ -1164,9 +1272,9 @@ static BOOL dc_live_init(DCMenu *menu) {
 }
 
 - (void)onSwitchPage:(UIButton *)b {
-    BOOL toLive = (b.tag == 301);
-    self.livePage.hidden = !toLive;
-    self.assistPage.hidden = toLive;
+    self.livePage.hidden = (b.tag != 301);
+    self.assistPage.hidden = (b.tag != 300);
+    self.weaponPage.hidden = (b.tag != 302);
     [self.panel endEditing:YES];
 }
 
@@ -1324,6 +1432,34 @@ static BOOL dc_live_init(DCMenu *menu) {
     self.lockBtn.backgroundColor = on ? [[UIColor systemGreenColor] colorWithAlphaComponent:0.35]
                                       : [[UIColor whiteColor] colorWithAlphaComponent:0.15];
     if (!silent) [self logEvent:on ? @"锁定开：这组数值会反复写回" : @"锁定关"];
+}
+
+- (void)onApplyWeapons {
+    [self.panel endEditing:YES];
+    if (!dc_g_weapItemLayout || (!dc_g_weapItem[0] && !dc_g_weapItem[1])) {
+        [self logEvent:@"还没定位到武器：先点「实时侦查」（要装备着武器）"];
+        return;
+    }
+    NSNumber *lvOff = dc_g_weapItemLayout.offsets[@"_itemLevel"];
+    if (!lvOff) { [self logEvent:@"没找到等级字段偏移"]; return; }
+    for (int i = 0; i < 2; i++) {
+        uintptr_t item = dc_g_weapItem[i];
+        if (!item) continue;
+        NSString *key = [NSString stringWithFormat:@"w%d", i];
+        NSString *txt = self.weapFields[key].text;
+        if (!txt.length) continue;
+        uintptr_t ih = 0;
+        DCClassInfo *iCls = dc_vread(item, &ih, 8) ? dc_class_for_type(ih) : nil;
+        if (!iCls || ![iCls.name isEqualToString:@"tool.InventItem"]) {
+            [self logEvent:[NSString stringWithFormat:@"武器%d 已失效（换武器了？），重新侦查", i + 1]];
+            continue;
+        }
+        int val = (int)txt.integerValue;
+        *(int *)((uint8_t *)item + [lvOff unsignedLongValue]) = val;
+        int32_t back = 0;
+        dc_vread(item + [lvOff unsignedLongValue], &back, 4);
+        [self logEvent:[NSString stringWithFormat:@"武器%d 等级已改为 %d（回读 %d）", i + 1, val, back]];
+    }
 }
 
 - (void)onToggleLock {
@@ -1906,6 +2042,9 @@ static BOOL dc_live_init(DCMenu *menu) {
         dc_g_hasExit = NO;
         dc_g_exits = [NSMutableArray array];
         dc_g_exitIdx = 0;
+        dc_g_weapItem[0] = 0;
+        dc_g_weapItem[1] = 0;
+        dc_g_weapItemLayout = nil;
         NSNumber *clOff = gl.offsets[@"curLevel"];
         uintptr_t level = 0, levelHead = 0;
         if (clOff && dc_vread(g + [clOff unsignedLongValue], &level, 8) && level &&
@@ -1948,11 +2087,16 @@ static BOOL dc_live_init(DCMenu *menu) {
                     for (int i = 0; i < MIN(asz, 6); i++) {
                         uintptr_t w = dc_array_elem(arr, i);
                         uintptr_t wh = 0;
+                        dc_g_typeFail = nil;
                         DCClassInfo *wCls = (w && dc_vread(w, &wh, 8)) ? dc_class_for_type(wh) : nil;
                         [self logEvent:[NSString stringWithFormat:@"  [%d] %@ @0x%lx",
                                         i, wCls.name ?: @"?", (unsigned long)w]];
                         if (!wCls) {
-                            if (w) dc_dump_qwords(self, w, @"武器元素");
+                            if (w) {
+                                dc_dump_qwords(self, w, @"武器元素");
+                                if (dc_g_typeFail)
+                                    [self logEvent:[NSString stringWithFormat:@"  类解析失败：%@", dc_g_typeFail]];
+                            }
                             continue;
                         }
                         dc_dump_fields(self, w, wCls, @"      武器.", 40);
@@ -1965,6 +2109,22 @@ static BOOL dc_live_init(DCMenu *menu) {
                                         iCls.name ?: @"?", (unsigned long)item]];
                         if (!iCls) continue;
                         dc_dump_fields(self, item, iCls, @"      item.", 48);
+                        if ([arrName isEqualToString:@"mainWeapons"] && i < 2) {
+                            dc_g_weapItem[i] = item;
+                            dc_g_weapItemLayout = dc_layout_rec(iCls);
+                            NSString *nm = nil;
+                            NSNumber *kOff = dc_g_weapItemLayout.offsets[@"kind"];
+                            uintptr_t kObj = 0, kArg = 0;
+                            if (kOff && dc_vread(item + [kOff unsignedLongValue], &kObj, 8) && kObj &&
+                                dc_vread(kObj + 16, &kArg, 8) && kArg) nm = dc_hlstring(kArg);
+                            int32_t lv = 0;
+                            NSNumber *lvOff = dc_g_weapItemLayout.offsets[@"_itemLevel"];
+                            if (lvOff) dc_vread(item + [lvOff unsignedLongValue], &lv, 4);
+                            NSString *key = [NSString stringWithFormat:@"w%d", i];
+                            self.weapNameLabels[key].text =
+                                [NSString stringWithFormat:@"武器%d：%@", i + 1, nm ?: @"?"];
+                            self.weapFields[key].text = [NSString stringWithFormat:@"%d", lv];
+                        }
                         dc_dump_affixes(self, item, iCls, @"      ");
                     }
                 }
@@ -2004,6 +2164,16 @@ static BOOL dc_live_init(DCMenu *menu) {
             }
         }
         dc_stage(@"阶段：读数完成（没闪退）");
+        if (dc_g_exits.count) {
+            [self logEvent:[NSString stringWithFormat:@"出口候选共 %lu 个（点「瞬移出口」轮换）：",
+                            (unsigned long)dc_g_exits.count]];
+            for (NSUInteger ei = 0; ei < dc_g_exits.count; ei++) {
+                NSDictionary *ex = dc_g_exits[ei];
+                [self logEvent:[NSString stringWithFormat:@"  #%lu %@ 格(%d,%d) 去向 %@",
+                                (unsigned long)ei + 1, ex[@"cls"],
+                                [ex[@"cx"] intValue], [ex[@"cy"] intValue], ex[@"dest"]]];
+            }
+        }
         [self logEvent:@"—— 实时侦查完成 ——"];
     });
 }
