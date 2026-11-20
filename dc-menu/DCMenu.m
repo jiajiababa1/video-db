@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.5";
+static NSString * const kDCMenuVersion = @"v2.8.6";
 
 #pragma mark - Passthrough window
 
@@ -470,10 +470,12 @@ static DCLayout *dc_layout_rec(DCClassInfo *ci) {
 }
 
 // Find the game image, set up ranges, build the static class registry.
-// Teleport cache: first live Exit entity's cell coords, from deep recon.
+// Teleport cache: ALL live Exit-class entities (a level has both an
+// entrance door and an exit door of the same class), from deep recon.
+// The teleport button cycles through the candidates.
 static BOOL dc_g_hasExit = NO;
-static int dc_g_exitCx = 0, dc_g_exitCy = 0;
-static double dc_g_exitXr = 0, dc_g_exitYr = 0;
+static NSMutableArray<NSDictionary *> *dc_g_exits = nil;
+static NSInteger dc_g_exitIdx = 0;
 
 static BOOL dc_is_exit_class(DCClassInfo *ci) {
     if ([ci.name localizedCaseInsensitiveContainsString:@"exit"]) return YES;
@@ -492,11 +494,16 @@ static BOOL dc_is_exit_class(DCClassInfo *ci) {
 // inventory items so their editable numbers become visible.
 static void dc_dump_fields(DCMenu *menu, uintptr_t obj, DCClassInfo *ci, NSString *prefix, int maxFields) {
     DCLayout *il = dc_layout_rec(ci);
-    const uintptr_t *irecs = (const uintptr_t *)ci.fields;
-    for (NSInteger k = 0; k < ci.nfields && k < maxFields; k++) {
+    DCClassInfo *cur = ci;
+    NSInteger budget = maxFields;
+    int depth = 0;
+    while (cur && budget > 0 && depth < 4) {
+    const uintptr_t *irecs = (const uintptr_t *)cur.fields;
+    for (NSInteger k = 0; k < cur.nfields && budget > 0; k++) {
         NSString *fn2 = dc_u16str(irecs[k * 3]);
         uintptr_t ft2 = irecs[k * 3 + 1];
         if (!fn2 || !ft2) continue;
+        budget--;
         int kind2 = *(const int *)ft2;
         NSNumber *off2 = il.offsets[fn2];
         if (!off2) continue;
@@ -537,6 +544,9 @@ static void dc_dump_fields(DCMenu *menu, uintptr_t obj, DCClassInfo *ci, NSStrin
             [menu logEvent:[NSString stringWithFormat:@"%@%@ = 枚举#%d", prefix, fn2, idx]];
         }
     }
+    cur = cur.superType ? dc_class_for_type(cur.superType) : nil;
+    depth++;
+    }
 }
 
 // Bounded structural walk: log an object's pointer/array fields and, for
@@ -563,7 +573,7 @@ static void dc_census_array(DCMenu *menu, uintptr_t arr, NSString *label) {
         if (!eci) continue;
         if (i < 8) resolved++;
         ec[eci.name] = @([ec[eci.name] unsignedLongLongValue] + 1);
-        if (!dc_g_hasExit && dc_is_exit_class(eci)) {
+        if (dc_is_exit_class(eci) && dc_g_exits.count < 6) {
             DCLayout *xl = dc_layout_rec(eci);
             int32_t cxv = 0, cyv = 0;
             double xrv = 0, yrv = 0;
@@ -571,17 +581,19 @@ static void dc_census_array(DCMenu *menu, uintptr_t arr, NSString *label) {
             if (xl.offsets[@"cy"]) dc_vread(e + [xl.offsets[@"cy"] unsignedLongValue], &cyv, 4);
             if (xl.offsets[@"xr"]) dc_vread(e + [xl.offsets[@"xr"] unsignedLongValue], &xrv, 8);
             if (xl.offsets[@"yr"]) dc_vread(e + [xl.offsets[@"yr"] unsignedLongValue], &yrv, 8);
-            dc_g_exitCx = cxv; dc_g_exitCy = cyv;
-            dc_g_exitXr = xrv; dc_g_exitYr = yrv;
-            dc_g_hasExit = YES;
             NSString *dn = nil;
             if (xl.offsets[@"destName"]) {
                 uintptr_t sp = 0;
                 if (dc_vread(e + [xl.offsets[@"destName"] unsignedLongValue], &sp, 8) && sp)
                     dn = dc_hlstring(sp);
             }
-            [menu logEvent:[NSString stringWithFormat:@"★找到出口 %@ 格(%d,%d) 去向 %@",
-                            eci.name, cxv, cyv, dn ?: @"?"]];
+            if (!dc_g_exits) dc_g_exits = [NSMutableArray array];
+            [dc_g_exits addObject:@{@"cx": @(cxv), @"cy": @(cyv), @"xr": @(xrv), @"yr": @(yrv),
+                                    @"cls": eci.name ?: @"?", @"dest": dn ?: @"?"}];
+            dc_g_hasExit = YES;
+            [menu logEvent:[NSString stringWithFormat:@"★出口候选#%lu %@ 格(%d,%d) 去向 %@",
+                            (unsigned long)dc_g_exits.count, eci.name, cxv, cyv, dn ?: @"?"]];
+            dc_dump_fields(menu, e, eci, @"  出口.", 30);
         }
     }
     for (NSString *cn in ec) {
@@ -1231,20 +1243,24 @@ static BOOL dc_live_init(DCMenu *menu) {
         [self logEvent:@"定位已失效，重新点一次「实时侦查」"];
         return;
     }
-    if (!dc_g_hasExit) {
-        [self logEvent:@"还没找到出口：先点一次「实时侦查」，日志里要有「★找到出口」才行"];
+    if (!dc_g_exits.count) {
+        [self logEvent:@"还没找到出口：先点一次「实时侦查」，日志里要有「★出口候选」才行"];
         return;
     }
+    NSInteger used = dc_g_exitIdx % (NSInteger)dc_g_exits.count;
+    NSDictionary *ex = dc_g_exits[used];
+    dc_g_exitIdx++;
     DCLayout *hl = dc_g_heroLayout;
     uint8_t *hb = (uint8_t *)dc_g_heroAddr;
-    if (hl.offsets[@"cx"]) *(int *)(hb + [hl.offsets[@"cx"] unsignedLongValue]) = dc_g_exitCx;
-    if (hl.offsets[@"cy"]) *(int *)(hb + [hl.offsets[@"cy"] unsignedLongValue]) = dc_g_exitCy;
-    if (hl.offsets[@"xr"]) *(double *)(hb + [hl.offsets[@"xr"] unsignedLongValue]) = dc_g_exitXr;
-    if (hl.offsets[@"yr"]) *(double *)(hb + [hl.offsets[@"yr"] unsignedLongValue]) = dc_g_exitYr;
+    if (hl.offsets[@"cx"]) *(int *)(hb + [hl.offsets[@"cx"] unsignedLongValue]) = [ex[@"cx"] intValue];
+    if (hl.offsets[@"cy"]) *(int *)(hb + [hl.offsets[@"cy"] unsignedLongValue]) = [ex[@"cy"] intValue];
+    if (hl.offsets[@"xr"]) *(double *)(hb + [hl.offsets[@"xr"] unsignedLongValue]) = [ex[@"xr"] doubleValue];
+    if (hl.offsets[@"yr"]) *(double *)(hb + [hl.offsets[@"yr"] unsignedLongValue]) = [ex[@"yr"] doubleValue];
     if (hl.offsets[@"dx"]) *(double *)(hb + [hl.offsets[@"dx"] unsignedLongValue]) = 0;
     if (hl.offsets[@"dy"]) *(double *)(hb + [hl.offsets[@"dy"] unsignedLongValue]) = 0;
-    [self logEvent:[NSString stringWithFormat:@"已瞬移到出口格 (%d,%d)，关掉面板看位置",
-                    dc_g_exitCx, dc_g_exitCy]];
+    [self logEvent:[NSString stringWithFormat:@"已瞬移到出口候选#%ld/%lu %@ 格(%d,%d)；不对再点一次换下一个",
+                    (long)used + 1, (unsigned long)dc_g_exits.count, ex[@"cls"],
+                    [ex[@"cx"] intValue], [ex[@"cy"] intValue]]];
 }
 
 - (void)onApplyLive {
@@ -1774,6 +1790,8 @@ static BOOL dc_live_init(DCMenu *menu) {
         //    the weapons manager / inventory (for the add-weapon feature).
         [self logEvent:@"—— 深度侦查：关卡与武器 ——"];
         dc_g_hasExit = NO;
+        dc_g_exits = [NSMutableArray array];
+        dc_g_exitIdx = 0;
         NSNumber *clOff = gl.offsets[@"curLevel"];
         uintptr_t level = 0, levelHead = 0;
         if (clOff && dc_vread(g + [clOff unsignedLongValue], &level, 8) && level &&
