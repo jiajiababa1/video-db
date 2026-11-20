@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.9.0";
+static NSString * const kDCMenuVersion = @"v2.9.1";
 
 #pragma mark - Passthrough window
 
@@ -724,6 +724,13 @@ static void dc_census_array(DCMenu *menu, uintptr_t arr, NSString *label) {
             [menu logEvent:[NSString stringWithFormat:@"★出口候选#%lu %@ 格(%d,%d) 去向 %@",
                             (unsigned long)dc_g_exits.count, eci.name, cxv, cyv, dn ?: @"?"]];
             dc_dump_fields(menu, e, eci, @"  出口.", 30);
+        }
+        if ([eci.name isEqualToString:@"en.inter.MobTrainingSpawner"] ||
+            [eci.name isEqualToString:@"en.inter.MobTrainingSelector"] ||
+            [eci.name isEqualToString:@"en.inter.MobTrainingPreset"]) {
+            [menu logEvent:[NSString stringWithFormat:@"  刷怪器 %@ @0x%lx 字段：",
+                            eci.name, (unsigned long)e]];
+            dc_dump_fields(menu, e, eci, @"  刷怪器.", 44);
         }
     }
     for (NSString *cn in ec) {
@@ -2231,6 +2238,29 @@ static BOOL dc_live_init(DCMenu *menu) {
             }
         }
         dc_stage(@"阶段：读数完成（没闪退）");
+        DCClassInfo *spCls = dc_g_classes[@"en.inter.MobTrainingSpawner"];
+        if (spCls && spCls.objBase) {
+            uintptr_t rt = 0;
+            dc_vread(spCls.objBase + 72, &rt, 8);
+            int32_t nb = 0;
+            uintptr_t binds = 0;
+            if (rt) {
+                dc_vread(rt + 24, &nb, 4);
+                dc_vread(rt + 48, &binds, 8);
+            }
+            uintptr_t funPtr = 0;
+            for (int bi = 0; bi < nb && binds; bi++) {
+                uintptr_t b = binds + (uintptr_t)bi * 24;
+                uintptr_t ptr = 0;
+                int32_t fid = 0;
+                dc_vread(b, &ptr, 8);
+                dc_vread(b + 16, &fid, 4);
+                if (fid == 23253) funPtr = ptr;
+            }
+            [self logEvent:[NSString stringWithFormat:@"spawnMob 绑定：函数 0x%lx（类绑定共 %d 条）",
+                            (unsigned long)funPtr, nb]];
+            if (funPtr) dc_dump_qwords(self, funPtr, @"spawnMob头");
+        }
         if (dc_g_exits.count) {
             [self logEvent:[NSString stringWithFormat:@"出口候选共 %lu 个（点「瞬移出口」轮换）：",
                             (unsigned long)dc_g_exits.count]];
