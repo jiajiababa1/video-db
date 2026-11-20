@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.9";
+static NSString * const kDCMenuVersion = @"v2.9.0";
 
 #pragma mark - Passthrough window
 
@@ -1234,8 +1234,8 @@ static BOOL dc_live_init(DCMenu *menu) {
     [panel addSubview:log];
     self.logView = log;
 
-    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"实时侦查", @"onLiveRecon"], @[@"瞬移出口", @"onTeleport"], @[@"应用辅助", @"onApplyAssist"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
-    CGFloat bw = (pw - 32 - 48) / 7;
+    NSArray *btns = @[@[@"检查更新", @"onCheckUpdate"], @[@"存档侦查", @"onRecon"], @[@"实时侦查", @"onLiveRecon"], @[@"瞬移出口", @"onTeleport"], @[@"怪转友军", @"onConvertMobs"], @[@"应用辅助", @"onApplyAssist"], @[@"恢复辅助", @"onRestoreAssist"], @[@"关闭", @"togglePanel"]];
+    CGFloat bw = (pw - 32 - 56) / 8;
     for (NSInteger i = 0; i < (NSInteger)btns.count; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(16 + i * (bw + 8), ph - 44, bw, 34);
@@ -1460,6 +1460,73 @@ static BOOL dc_live_init(DCMenu *menu) {
         dc_vread(item + [lvOff unsignedLongValue], &back, 4);
         [self logEvent:[NSString stringWithFormat:@"武器%d 等级已改为 %d（回读 %d）", i + 1, val, back]];
     }
+}
+
+- (void)onConvertMobs {
+    [self.panel endEditing:YES];
+    if (!dc_g_gameAddr || ![self resolveLive]) {
+        [self logEvent:@"还没定位：先点一次「实时侦查」"];
+        return;
+    }
+    NSNumber *tOff = dc_g_heroLayout.offsets[@"_team"];
+    if (!tOff) { [self logEvent:@"主角布局里没找到 _team 字段"]; return; }
+    uintptr_t heroTeam = 0;
+    dc_vread(dc_g_heroAddr + [tOff unsignedLongValue], &heroTeam, 8);
+    if (!heroTeam) { [self logEvent:@"主角阵营读不到"]; return; }
+    NSNumber *clOff = dc_g_gameLayout.offsets[@"curLevel"];
+    uintptr_t level = 0, levelHead = 0;
+    if (!clOff || !dc_vread(dc_g_gameAddr + [clOff unsignedLongValue], &level, 8) || !level ||
+        !dc_vread(level, &levelHead, 8)) { [self logEvent:@"关卡读不到"]; return; }
+    DCClassInfo *levelCls = dc_class_for_type(levelHead);
+    if (!levelCls) { [self logEvent:@"关卡类解析失败"]; return; }
+    DCLayout *ll = dc_layout_rec(levelCls);
+    NSNumber *eOff = ll.offsets[@"entities"];
+    uintptr_t eArr = 0, eet = 0;
+    int eSz = 0;
+    if (!eOff || !dc_vread(level + [eOff unsignedLongValue], &eArr, 8) || !eArr) {
+        [self logEvent:@"关卡 entities 读不到"];
+        return;
+    }
+    uintptr_t raw = dc_unwrap_array(eArr);
+    if (!raw || !dc_array_info(raw, &eet, &eSz)) { [self logEvent:@"entities 拆不开"]; return; }
+    NSMutableArray<NSDictionary *> *mobs = [NSMutableArray array];
+    for (int i = 0; i < eSz; i++) {
+        uintptr_t e = dc_array_elem(raw, i);
+        uintptr_t eh = 0;
+        DCClassInfo *eCls = (e && dc_vread(e, &eh, 8)) ? dc_class_for_type(eh) : nil;
+        if (!eCls) continue;
+        BOOL isMob = [eCls.name hasPrefix:@"en.mob."] || [eCls.name containsString:@".boss."];
+        if (!isMob) continue;
+        [mobs addObject:@{@"addr": @(e), @"cls": eCls.name,
+                           @"boss": @([eCls.name containsString:@".boss."])}];
+    }
+    if (!mobs.count) { [self logEvent:@"这关 entities 里没找到怪（可能还没刷出来，走动一下再点）"]; return; }
+    NSInteger bossCount = 0, lastBoss = -1;
+    for (NSInteger i = 0; i < (NSInteger)mobs.count; i++)
+        if ([mobs[i][@"boss"] boolValue]) { bossCount++; lastBoss = i; }
+    NSInteger keepIdx = (bossCount >= 2) ? lastBoss : -1;
+    NSInteger converted = 0, already = 0;
+    for (NSInteger i = 0; i < (NSInteger)mobs.count; i++) {
+        if (i == keepIdx) {
+            [self logEvent:[NSString stringWithFormat:@"留下当对手：%@", mobs[i][@"cls"]]];
+            continue;
+        }
+        uintptr_t e = [mobs[i][@"addr"] unsignedLongValue];
+        uintptr_t eh = 0;
+        DCClassInfo *eCls = dc_vread(e, &eh, 8) ? dc_class_for_type(eh) : nil;
+        if (!eCls) continue;
+        DCLayout *el = dc_layout_rec(eCls);
+        NSNumber *mtOff = el.offsets[@"_team"];
+        if (!mtOff) continue;
+        uintptr_t cur = 0;
+        dc_vread(e + [mtOff unsignedLongValue], &cur, 8);
+        if (cur == heroTeam) { already++; continue; }
+        *(uintptr_t *)((uint8_t *)e + [mtOff unsignedLongValue]) = heroTeam;
+        converted++;
+        [self logEvent:[NSString stringWithFormat:@"已转友军：%@", mobs[i][@"cls"]]];
+    }
+    [self logEvent:[NSString stringWithFormat:@"完成：转了 %ld 只，原本同队 %ld 只，共 %lu 只怪",
+                    (long)converted, (long)already, (unsigned long)mobs.count]];
 }
 
 - (void)onToggleLock {
