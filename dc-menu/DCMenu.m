@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.4";
+static NSString * const kDCMenuVersion = @"v2.8.5";
 
 #pragma mark - Passthrough window
 
@@ -485,6 +485,58 @@ static BOOL dc_is_exit_class(DCClassInfo *ci) {
         c = dc_class_for_type(c.superType);
     }
     return NO;
+}
+
+// Dump one object's own fields: ints, doubles, strings, enum indexes,
+// pointer targets (class name / array size). Used for weapon items and
+// inventory items so their editable numbers become visible.
+static void dc_dump_fields(DCMenu *menu, uintptr_t obj, DCClassInfo *ci, NSString *prefix, int maxFields) {
+    DCLayout *il = dc_layout_rec(ci);
+    const uintptr_t *irecs = (const uintptr_t *)ci.fields;
+    for (NSInteger k = 0; k < ci.nfields && k < maxFields; k++) {
+        NSString *fn2 = dc_u16str(irecs[k * 3]);
+        uintptr_t ft2 = irecs[k * 3 + 1];
+        if (!fn2 || !ft2) continue;
+        int kind2 = *(const int *)ft2;
+        NSNumber *off2 = il.offsets[fn2];
+        if (!off2) continue;
+        uintptr_t o = [off2 unsignedLongValue];
+        if (kind2 == 3) {
+            int32_t v = 0;
+            dc_vread(obj + o, &v, 4);
+            [menu logEvent:[NSString stringWithFormat:@"%@%@ = %d", prefix, fn2, v]];
+        } else if (kind2 == 6) {
+            double v = 0;
+            dc_vread(obj + o, &v, 8);
+            [menu logEvent:[NSString stringWithFormat:@"%@%@ = %.3f", prefix, fn2, v]];
+        } else if (kind2 == 7) {
+            uint8_t v = 0;
+            dc_vread(obj + o, &v, 1);
+            [menu logEvent:[NSString stringWithFormat:@"%@%@ = %d", prefix, fn2, v]];
+        } else if (kind2 == 11 || kind2 == 12) {
+            uintptr_t p = 0, ph = 0;
+            if (!dc_vread(obj + o, &p, 8) || !p) continue;
+            DCClassInfo *pCls = dc_vread(p, &ph, 8) ? dc_class_for_type(ph) : nil;
+            NSString *sv = nil;
+            if (pCls && [pCls.name isEqualToString:@"String"]) sv = dc_hlstring(p);
+            NSString *extra = @"";
+            if (sv) {
+                extra = [@" = " stringByAppendingString:sv];
+            } else {
+                uintptr_t raw = dc_unwrap_array(p);
+                int asz = 0;
+                if (raw && dc_array_info(raw, NULL, &asz))
+                    extra = [NSString stringWithFormat:@"（数组 %d）", asz];
+            }
+            [menu logEvent:[NSString stringWithFormat:@"%@%@ -> %@%@",
+                            prefix, fn2, pCls.name ?: @"?", extra]];
+        } else if (kind2 == 18) {
+            uintptr_t p = 0;
+            int32_t idx = -1;
+            if (dc_vread(obj + o, &p, 8) && p) dc_vread(p + 8, &idx, 4);
+            [menu logEvent:[NSString stringWithFormat:@"%@%@ = 枚举#%d", prefix, fn2, idx]];
+        }
+    }
 }
 
 // Bounded structural walk: log an object's pointer/array fields and, for
@@ -1767,7 +1819,10 @@ static BOOL dc_live_init(DCMenu *menu) {
                         DCClassInfo *wCls = (w && dc_vread(w, &wh, 8)) ? dc_class_for_type(wh) : nil;
                         [self logEvent:[NSString stringWithFormat:@"  [%d] %@ @0x%lx",
                                         i, wCls.name ?: @"?", (unsigned long)w]];
-                        if (!wCls) continue;
+                        if (!wCls) {
+                            if (w) dc_dump_qwords(self, w, @"武器元素");
+                            continue;
+                        }
                         DCLayout *wpl = dc_layout_rec(wCls);
                         NSNumber *itOff = wpl.offsets[@"item"];
                         uintptr_t item = 0, ih = 0;
@@ -1776,36 +1831,7 @@ static BOOL dc_live_init(DCMenu *menu) {
                         [self logEvent:[NSString stringWithFormat:@"      item -> %@ @0x%lx",
                                         iCls.name ?: @"?", (unsigned long)item]];
                         if (!iCls) continue;
-                        DCLayout *il = dc_layout_rec(iCls);
-                        const uintptr_t *irecs = (const uintptr_t *)iCls.fields;
-                        for (NSInteger k = 0; k < iCls.nfields && k < 40; k++) {
-                            NSString *fn2 = dc_u16str(irecs[k * 3]);
-                            uintptr_t ft2 = irecs[k * 3 + 1];
-                            if (!fn2 || !ft2) continue;
-                            int kind2 = *(const int *)ft2;
-                            NSNumber *off2 = il.offsets[fn2];
-                            if (!off2) continue;
-                            uintptr_t o = [off2 unsignedLongValue];
-                            if (kind2 == 3) {
-                                int32_t v = 0;
-                                dc_vread(item + o, &v, 4);
-                                [self logEvent:[NSString stringWithFormat:@"      item.%@ = %d", fn2, v]];
-                            } else if (kind2 == 11 || kind2 == 12) {
-                                uintptr_t p = 0, ph = 0;
-                                if (!dc_vread(item + o, &p, 8) || !p) continue;
-                                DCClassInfo *pCls = dc_vread(p, &ph, 8) ? dc_class_for_type(ph) : nil;
-                                NSString *sv = nil;
-                                if (pCls && [pCls.name isEqualToString:@"String"]) sv = dc_hlstring(p);
-                                [self logEvent:[NSString stringWithFormat:@"      item.%@ -> %@%@",
-                                                fn2, pCls.name ?: @"?",
-                                                sv ? [@" = " stringByAppendingString:sv] : @""]];
-                            } else if (kind2 == 18) {
-                                uintptr_t p = 0;
-                                int32_t idx = -1;
-                                if (dc_vread(item + o, &p, 8) && p) dc_vread(p + 8, &idx, 4);
-                                [self logEvent:[NSString stringWithFormat:@"      item.%@ = 枚举#%d", fn2, idx]];
-                            }
-                        }
+                        dc_dump_fields(self, item, iCls, @"      item.", 48);
                     }
                 }
             }
@@ -1820,6 +1846,26 @@ static BOOL dc_live_init(DCMenu *menu) {
             if (invCls) {
                 dc_g_walkLines = 0;
                 dc_walk_obj(self, inv, invCls, 0, @"背包");
+                DCLayout *invl = dc_layout_rec(invCls);
+                NSNumber *itOff = invl.offsets[@"items"];
+                uintptr_t itemsObj = 0;
+                if (itOff && dc_vread(inv + [itOff unsignedLongValue], &itemsObj, 8) && itemsObj) {
+                    uintptr_t raw = dc_unwrap_array(itemsObj);
+                    int isz = 0;
+                    if (raw && dc_array_info(raw, NULL, &isz)) {
+                        int shown = 0;
+                        for (int i = 0; i < isz && shown < 6; i++) {
+                            uintptr_t e = dc_array_elem(raw, i);
+                            uintptr_t eh = 0;
+                            DCClassInfo *eCls = (e && dc_vread(e, &eh, 8)) ? dc_class_for_type(eh) : nil;
+                            if (!eCls || ![eCls.name isEqualToString:@"tool.InventItem"]) continue;
+                            shown++;
+                            [self logEvent:[NSString stringWithFormat:@"背包物品[%d] @0x%lx 字段：",
+                                            i, (unsigned long)e]];
+                            dc_dump_fields(self, e, eCls, @"  ", 56);
+                        }
+                    }
+                }
             }
         }
         dc_stage(@"阶段：读数完成（没闪退）");
