@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.9.1";
+static NSString * const kDCMenuVersion = @"v2.9.2";
 
 #pragma mark - Passthrough window
 
@@ -67,6 +67,7 @@ static NSString * const kDCMenuVersion = @"v2.9.1";
 @property (nonatomic, strong) NSMutableDictionary<NSString *, UITextField *> *liveFields;
 @property (nonatomic, strong) UIButton *lockBtn;
 @property (nonatomic, strong) NSTimer *lockTimer;
+@property (nonatomic, strong) NSTimer *atkTimer;
 @property (nonatomic, assign) double aEnemyHealth;
 @property (nonatomic, assign) double aEnemyDamage;
 @property (nonatomic, assign) double aTrapDamage;
@@ -543,6 +544,15 @@ static NSInteger dc_g_exitIdx = 0;
 static uintptr_t dc_g_weapItem[2] = {0, 0};
 static DCLayout *dc_g_weapItemLayout = nil;
 
+// Attack-target lock pairs: {addr, off, target, cls} re-stamped on a timer
+// so converted mobs keep attacking the designated public enemy.
+static NSMutableArray<NSDictionary *> *dc_g_atkPairs = nil;
+
+// Fake HL String (in dylib memory) for the affix-swap probe: the item's
+// affix array element is pointed at this object.
+static uint16_t dc_g_fakeStrBytes[32];
+static uint8_t dc_g_fakeStrObj[24];
+
 static BOOL dc_is_exit_class(DCClassInfo *ci) {
     if ([ci.name localizedCaseInsensitiveContainsString:@"exit"]) return YES;
     DCClassInfo *c = ci;
@@ -731,6 +741,30 @@ static void dc_census_array(DCMenu *menu, uintptr_t arr, NSString *label) {
             [menu logEvent:[NSString stringWithFormat:@"  刷怪器 %@ @0x%lx 字段：",
                             eci.name, (unsigned long)e]];
             dc_dump_fields(menu, e, eci, @"  刷怪器.", 44);
+        }
+        if ([eci.name hasPrefix:@"en.mob."]) {
+            DCLayout *ml = dc_layout_rec(eci);
+            NSString *tgt = @"?";
+            uintptr_t tp = 0;
+            if (ml.offsets[@"aTarget"] &&
+                dc_vread(e + [ml.offsets[@"aTarget"] unsignedLongValue], &tp, 8) && tp) {
+                uintptr_t th = 0;
+                DCClassInfo *tc = dc_vread(tp, &th, 8) ? dc_class_for_type(th) : nil;
+                tgt = tc.name ?: @"?";
+            }
+            NSString *tl = @"?";
+            uintptr_t tlp = 0;
+            if (ml.offsets[@"threatList"] &&
+                dc_vread(e + [ml.offsets[@"threatList"] unsignedLongValue], &tlp, 8) && tlp) {
+                uintptr_t th2 = 0;
+                DCClassInfo *tc2 = dc_vread(tlp, &th2, 8) ? dc_class_for_type(th2) : nil;
+                tl = tc2.name ?: @"?";
+            }
+            uintptr_t team = 0;
+            if (ml.offsets[@"_team"])
+                dc_vread(e + [ml.offsets[@"_team"] unsignedLongValue], &team, 8);
+            [menu logEvent:[NSString stringWithFormat:@"  怪 %@ aTarget->%@ threatList=%@ _team=0x%lx",
+                            eci.name, tgt, tl, (unsigned long)team]];
         }
     }
     for (NSString *cn in ec) {
@@ -1226,10 +1260,20 @@ static BOOL dc_live_init(DCMenu *menu) {
     [applyWeap addTarget:self action:@selector(onApplyWeapons) forControlEvents:UIControlEventTouchUpInside];
     [weaponPage addSubview:applyWeap];
 
-    UILabel *wHint = [[UILabel alloc] initWithFrame:CGRectMake(170, 92, pw - 170 - 16, 20)];
+    UIButton *testAffix = [UIButton buttonWithType:UIButtonTypeSystem];
+    testAffix.frame = CGRectMake(170, 88, 130, 28);
+    [testAffix setTitle:@"词缀测试" forState:UIControlStateNormal];
+    testAffix.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [testAffix setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    testAffix.backgroundColor = [UIColor colorWithRed:0.55 green:0.30 blue:0.65 alpha:1.0];
+    testAffix.layer.cornerRadius = 6;
+    [testAffix addTarget:self action:@selector(onTestAffix)
+        forControlEvents:UIControlEventTouchUpInside];
+    [weaponPage addSubview:testAffix];
+    UILabel *wHint = [[UILabel alloc] initWithFrame:CGRectMake(308, 92, pw - 308 - 16, 20)];
     wHint.textColor = [UIColor lightGrayColor];
     wHint.font = [UIFont systemFontOfSize:10];
-    wHint.text = @"换武器后重新侦查刷新；等级越高伤害越高";
+    wHint.text = @"换武器后重新侦查";
     [weaponPage addSubview:wHint];
 
     UITextView *log = [[UITextView alloc] initWithFrame:CGRectMake(12, 226, pw - 24, ph - 226 - 52)];
@@ -1469,6 +1513,48 @@ static BOOL dc_live_init(DCMenu *menu) {
     }
 }
 
+- (void)onTestAffix {
+    [self.panel endEditing:YES];
+    uintptr_t item = dc_g_weapItem[0];
+    if (!item || !dc_g_weapItemLayout) {
+        [self logEvent:@"先点实时侦查定位武器1"];
+        return;
+    }
+    uintptr_t ih = 0;
+    DCClassInfo *iCls = dc_vread(item, &ih, 8) ? dc_class_for_type(ih) : nil;
+    if (!iCls || ![iCls.name isEqualToString:@"tool.InventItem"]) {
+        [self logEvent:@"武器1已失效，重新侦查"];
+        return;
+    }
+    NSNumber *afOff = dc_g_weapItemLayout.offsets[@"affixes"];
+    uintptr_t afArr = 0;
+    if (!afOff || !dc_vread(item + [afOff unsignedLongValue], &afArr, 8) || !afArr) {
+        [self logEvent:@"武器1没有词缀数组"];
+        return;
+    }
+    uintptr_t raw = dc_unwrap_array(afArr);
+    uintptr_t aet = 0;
+    int afSz = 0;
+    if (!raw || !dc_array_info(raw, &aet, &afSz) || afSz < 1) {
+        [self logEvent:@"武器1词缀是空的"];
+        return;
+    }
+    uintptr_t e0 = dc_array_elem(raw, 0);
+    uintptr_t eh = 0;
+    if (!e0 || !dc_vread(e0, &eh, 8)) { [self logEvent:@"词缀[0]读不到"]; return; }
+    NSString *oldName = dc_hlstring(e0);
+    const char *txt = "FireDamage";
+    NSInteger n = strlen(txt);
+    for (NSInteger i = 0; i < n; i++) dc_g_fakeStrBytes[i] = (uint16_t)txt[i];
+    *(uintptr_t *)(dc_g_fakeStrObj + 0) = eh;
+    *(const void **)(dc_g_fakeStrObj + 8) = dc_g_fakeStrBytes;
+    *(int *)(dc_g_fakeStrObj + 16) = (int)n;
+    *(uintptr_t *)(raw + 24) = (uintptr_t)dc_g_fakeStrObj;
+    [self logEvent:[NSString stringWithFormat:@"已把武器1词缀[0]从「%@」换成「FireDamage」",
+                    oldName ?: @"?"]];
+    [self logEvent:@"丢下武器再捡起来（或换下再换上），看词缀显示和打怪效果，回我结果"];
+}
+
 - (void)onConvertMobs {
     [self.panel endEditing:YES];
     if (!dc_g_gameAddr || ![self resolveLive]) {
@@ -1504,36 +1590,96 @@ static BOOL dc_live_init(DCMenu *menu) {
         if (!eCls) continue;
         BOOL isMob = [eCls.name hasPrefix:@"en.mob."] || [eCls.name containsString:@".boss."];
         if (!isMob) continue;
-        [mobs addObject:@{@"addr": @(e), @"cls": eCls.name,
+        DCLayout *el0 = dc_layout_rec(eCls);
+        int32_t ml = 0;
+        if (el0.offsets[@"maxLife"]) dc_vread(e + [el0.offsets[@"maxLife"] unsignedLongValue], &ml, 4);
+        [mobs addObject:@{@"addr": @(e), @"cls": eCls.name, @"maxLife": @(ml),
                            @"boss": @([eCls.name containsString:@".boss."])}];
     }
     if (!mobs.count) { [self logEvent:@"这关 entities 里没找到怪（可能还没刷出来，走动一下再点）"]; return; }
-    NSInteger bossCount = 0, lastBoss = -1;
+    // Public enemy: prefer the last boss; otherwise the toughest mob.
+    NSInteger enemyIdx = -1;
     for (NSInteger i = 0; i < (NSInteger)mobs.count; i++)
-        if ([mobs[i][@"boss"] boolValue]) { bossCount++; lastBoss = i; }
-    NSInteger keepIdx = (bossCount >= 2) ? lastBoss : -1;
-    NSInteger converted = 0, already = 0;
-    for (NSInteger i = 0; i < (NSInteger)mobs.count; i++) {
-        if (i == keepIdx) {
-            [self logEvent:[NSString stringWithFormat:@"留下当对手：%@", mobs[i][@"cls"]]];
-            continue;
+        if ([mobs[i][@"boss"] boolValue]) enemyIdx = i;
+    if (enemyIdx < 0) {
+        int32_t best = -1;
+        for (NSInteger i = 0; i < (NSInteger)mobs.count; i++) {
+            int32_t ml = [mobs[i][@"maxLife"] intValue];
+            if (ml > best) { best = ml; enemyIdx = i; }
         }
+    }
+    NSDictionary *enemy = enemyIdx >= 0 ? mobs[enemyIdx] : nil;
+    uintptr_t enemyAddr = [enemy[@"addr"] unsignedLongValue];
+    [self logEvent:[NSString stringWithFormat:@"公敌：%@（血量上限 %d）",
+                    enemy[@"cls"], [enemy[@"maxLife"] intValue]]];
+    dc_g_atkPairs = [NSMutableArray array];
+    NSInteger converted = 0, already = 0;
+    uintptr_t champAddr = 0;
+    int32_t champLife = -1;
+    NSString *champCls = nil;
+    for (NSInteger i = 0; i < (NSInteger)mobs.count; i++) {
+        if (i == enemyIdx) continue;
         uintptr_t e = [mobs[i][@"addr"] unsignedLongValue];
         uintptr_t eh = 0;
         DCClassInfo *eCls = dc_vread(e, &eh, 8) ? dc_class_for_type(eh) : nil;
         if (!eCls) continue;
         DCLayout *el = dc_layout_rec(eCls);
         NSNumber *mtOff = el.offsets[@"_team"];
-        if (!mtOff) continue;
-        uintptr_t cur = 0;
-        dc_vread(e + [mtOff unsignedLongValue], &cur, 8);
-        if (cur == heroTeam) { already++; continue; }
-        *(uintptr_t *)((uint8_t *)e + [mtOff unsignedLongValue]) = heroTeam;
-        converted++;
-        [self logEvent:[NSString stringWithFormat:@"已转友军：%@", mobs[i][@"cls"]]];
+        if (mtOff) {
+            uintptr_t cur = 0;
+            dc_vread(e + [mtOff unsignedLongValue], &cur, 8);
+            if (cur == heroTeam) already++;
+            else {
+                *(uintptr_t *)((uint8_t *)e + [mtOff unsignedLongValue]) = heroTeam;
+                converted++;
+            }
+        }
+        NSNumber *atOff = el.offsets[@"aTarget"];
+        if (atOff && enemyAddr) {
+            *(uintptr_t *)((uint8_t *)e + [atOff unsignedLongValue]) = enemyAddr;
+            [dc_g_atkPairs addObject:@{@"addr": @(e), @"off": atOff,
+                                        @"target": @(enemyAddr), @"cls": eCls.name}];
+        }
+        int32_t ml = [mobs[i][@"maxLife"] intValue];
+        if (ml > champLife) { champLife = ml; champAddr = e; champCls = eCls.name; }
+        [self logEvent:[NSString stringWithFormat:@"已转友军：%@", eCls.name]];
     }
-    [self logEvent:[NSString stringWithFormat:@"完成：转了 %ld 只，原本同队 %ld 只，共 %lu 只怪",
-                    (long)converted, (long)already, (unsigned long)mobs.count]];
+    // Lock the public enemy's target onto the toughest converted mob, so
+    // it fights them instead of the player.
+    if (enemy && champAddr) {
+        uintptr_t eh = 0;
+        DCClassInfo *eCls = dc_vread(enemyAddr, &eh, 8) ? dc_class_for_type(eh) : nil;
+        if (eCls) {
+            DCLayout *el = dc_layout_rec(eCls);
+            NSNumber *atOff = el.offsets[@"aTarget"];
+            if (atOff) {
+                *(uintptr_t *)((uint8_t *)enemyAddr + [atOff unsignedLongValue]) = champAddr;
+                [dc_g_atkPairs addObject:@{@"addr": @(enemyAddr), @"off": atOff,
+                                            @"target": @(champAddr), @"cls": eCls.name}];
+                [self logEvent:[NSString stringWithFormat:@"公敌的目标锁定为：%@", champCls]];
+            }
+        }
+    }
+    if (dc_g_atkPairs.count) {
+        if (self.atkTimer) [self.atkTimer invalidate];
+        self.atkTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self
+                                                         selector:@selector(atkLockTick)
+                                                         userInfo:nil repeats:YES];
+    }
+    [self logEvent:[NSString stringWithFormat:@"完成：转了 %ld 只，原本同队 %ld 只，仇恨锁定 %lu 条",
+                    (long)converted, (long)already, (unsigned long)dc_g_atkPairs.count]];
+}
+
+- (void)atkLockTick {
+    if (!dc_g_atkPairs.count) return;
+    for (NSDictionary *p in dc_g_atkPairs) {
+        uintptr_t addr = [p[@"addr"] unsignedLongValue];
+        uintptr_t h = 0;
+        DCClassInfo *c = dc_vread(addr, &h, 8) ? dc_class_for_type(h) : nil;
+        if (!c || ![c.name isEqualToString:p[@"cls"]]) continue;
+        *(uintptr_t *)((uint8_t *)addr + [p[@"off"] unsignedLongValue]) =
+            [p[@"target"] unsignedLongValue];
+    }
 }
 
 - (void)onToggleLock {
@@ -2118,6 +2264,7 @@ static BOOL dc_live_init(DCMenu *menu) {
         dc_g_exitIdx = 0;
         dc_g_weapItem[0] = 0;
         dc_g_weapItem[1] = 0;
+        dc_g_atkPairs = [NSMutableArray array];
         dc_g_weapItemLayout = nil;
         NSNumber *clOff = gl.offsets[@"curLevel"];
         uintptr_t level = 0, levelHead = 0;
