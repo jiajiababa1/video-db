@@ -20,7 +20,7 @@
 
 static NSString * const kDCConfigURL = @"https://raw.githubusercontent.com/jiajiababa1/video-db/main/dc-menu/menu.json";
 static NSString * const kDCBundledBadge = @"版本 A";
-static NSString * const kDCMenuVersion = @"v2.8.3";
+static NSString * const kDCMenuVersion = @"v2.8.4";
 
 #pragma mark - Passthrough window
 
@@ -218,12 +218,23 @@ static NSString *dc_hlstring(uintptr_t obj) {
 static BOOL dc_array_info(uintptr_t addr, uintptr_t *elemTypeOut, int *sizeOut) {
     uintptr_t t = 0;
     if (!addr || !dc_vread(addr, &t, 8) || !t) return NO;
-    if (t < dc_g_typesLo || t >= dc_g_typesHi) return NO;
+    // Array types can live outside the static types window (parametrized
+    // array types are wired up in heap memory), so validate the type by
+    // structure instead of by address range.
+    if (!dc_readable2(t, 16)) return NO;
     if (*(const int *)t != 12) return NO; // HARRAY
+    uintptr_t et = *(const uintptr_t *)(t + 8);
+    if (et) {
+        if (!dc_readable2(et, 4)) return NO;
+        int ek = *(const int *)et;
+        if (ek < 0 || ek > 23) return NO;
+    }
     uintptr_t hdr[3];
     if (!dc_vread(addr, hdr, 24)) return NO;
-    if (elemTypeOut) *elemTypeOut = *(const uintptr_t *)(t + 8);
-    if (sizeOut) *sizeOut = (int)(hdr[2] & 0xFFFFFFFF);
+    int sz = (int)(hdr[2] & 0xFFFFFFFF);
+    if (sz < 0 || sz > 1000000) return NO;
+    if (elemTypeOut) *elemTypeOut = et;
+    if (sizeOut) *sizeOut = sz;
     return YES;
 }
 
@@ -248,8 +259,9 @@ static uintptr_t dc_unwrap_array(uintptr_t obj) {
     return 0;
 }
 
-// Diagnostic: log an object's first 6 qwords and mark which of them
-// reads as an array header.
+// Diagnostic: log an object's first 6 qwords, mark which of them reads
+// as an array header, and dump one level into each heap-looking qword
+// so an array header hiding behind a pointer is visible too.
 static void dc_dump_qwords(DCMenu *menu, uintptr_t obj, NSString *label) {
     uintptr_t q[6];
     if (!obj || !dc_vread(obj, q, sizeof(q))) return;
@@ -260,6 +272,15 @@ static void dc_dump_qwords(DCMenu *menu, uintptr_t obj, NSString *label) {
         int sz = 0;
         if (q[i] && dc_array_info(q[i], NULL, &sz)) {
             [menu logEvent:[NSString stringWithFormat:@"%@ 第%d格是数组 size=%d", label, i, sz]];
+        }
+        if (q[i] > 0x100000000) {
+            uintptr_t inner[5];
+            if (dc_vread(q[i], inner, sizeof(inner))) {
+                [menu logEvent:[NSString stringWithFormat:@"%@ 格%d指向：%lx %lx %lx %lx %lx",
+                                label, i, (unsigned long)inner[0], (unsigned long)inner[1],
+                                (unsigned long)inner[2], (unsigned long)inner[3],
+                                (unsigned long)inner[4]]];
+            }
         }
     }
 }
@@ -481,12 +502,14 @@ static void dc_census_array(DCMenu *menu, uintptr_t arr, NSString *label) {
     [menu logEvent:[NSString stringWithFormat:@"%@：数组 %d 个", label, arrSize]];
     int n = MIN(arrSize, 1500);
     NSMutableDictionary<NSString *, NSNumber *> *ec = [NSMutableDictionary dictionary];
+    NSInteger resolved = 0;
     for (int i = 0; i < n; i++) {
         uintptr_t e = dc_array_elem(arr, i);
         uintptr_t eh = 0;
         if (!e || !dc_vread(e, &eh, 8)) continue;
         DCClassInfo *eci = dc_class_for_type(eh);
         if (!eci) continue;
+        if (i < 8) resolved++;
         ec[eci.name] = @([ec[eci.name] unsignedLongLongValue] + 1);
         if (!dc_g_hasExit && dc_is_exit_class(eci)) {
             DCLayout *xl = dc_layout_rec(eci);
@@ -512,6 +535,9 @@ static void dc_census_array(DCMenu *menu, uintptr_t arr, NSString *label) {
     for (NSString *cn in ec) {
         dc_g_walkLines++;
         [menu logEvent:[NSString stringWithFormat:@"%@ 元素：%@ ×%@", label, cn, ec[cn]]];
+    }
+    if (arrSize > 0 && resolved == 0) {
+        [menu logEvent:[NSString stringWithFormat:@"%@ 元素不像对象，可能拆错了（把日志发我）", label]];
     }
 }
 
